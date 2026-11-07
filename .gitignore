@@ -1,0 +1,17 @@
+# Build trees (CMake presets put everything under build/)
+/build/
+/out/
+CMakeUserPresets.json
+
+# State of the ixodes check scripts; only the project config is versioned
+/.ixodes/*
+!/.ixodes/config.cmake
+
+# Large data sets are downloaded, never committed (see data/README.md when it appears)
+/data/download/
+
+# Editors
+.vs/
+.vscode/
+.idea/
+*.swp

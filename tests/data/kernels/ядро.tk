@@ -1,0 +1,11 @@
+KPL/MYB
+
+Test kernel with a non-ASCII (Cyrillic) file name: the path must reach the OS as
+UTF-16 on Windows and as UTF-8 bytes elsewhere.
+
+\begindata
+
+   TEST_PATH_CHECK = ( 1.5, 2.5 )
+   TEST_LABEL      = 'ядро'
+
+\begintext

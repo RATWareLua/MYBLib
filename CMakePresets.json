@@ -1,0 +1,100 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "description": "Clang targeting x86_64-w64-windows-gnu with the MSYS2 MINGW64 sysroot (no Visual Studio needed)",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/clang-mingw-w64.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-dev",
+      "displayName": "Windows: Debug, warnings as errors",
+      "inherits": "windows-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "MYB_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows: Release -O2, MYB_CHECK kept",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "windows-ubsan",
+      "displayName": "Windows: UBSan in trap mode (ASan runtime is not shipped for this target)",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "undefined",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "description": "Clang on Linux (Gentoo and others)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/clang-linux.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "linux-dev",
+      "displayName": "Linux: Debug, warnings as errors",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "MYB_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux: Release -O2, MYB_CHECK kept",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-asan",
+      "displayName": "Linux: ASan + UBSan, abort on first error",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "address",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-dev", "configurePreset": "windows-dev" },
+    { "name": "windows-release", "configurePreset": "windows-release" },
+    { "name": "windows-ubsan", "configurePreset": "windows-ubsan" },
+    { "name": "linux-dev", "configurePreset": "linux-dev" },
+    { "name": "linux-release", "configurePreset": "linux-release" },
+    { "name": "linux-asan", "configurePreset": "linux-asan" }
+  ],
+  "testPresets": [
+    { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } },
+    { "name": "windows-release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-ubsan", "configurePreset": "windows-ubsan", "output": { "outputOnFailure": true } },
+    { "name": "linux-dev", "configurePreset": "linux-dev", "output": { "outputOnFailure": true } },
+    { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
+    {
+      "name": "linux-asan",
+      "configurePreset": "linux-asan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_stack_use_after_return=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      }
+    }
+  ]
+}

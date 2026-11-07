@@ -1,0 +1,10 @@
+# Text files are stored with LF; Windows scripts keep CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Test vectors must be byte-identical on every platform.
+tests/data/** text eol=lf -diff
+
+# Data kernels are text with LF on every platform.
+data/** text eol=lf

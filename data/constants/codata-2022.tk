@@ -1,0 +1,26 @@
+KPL/MYB
+
+Physical constants: CODATA 2022 and SI defining constants
+=========================================================
+
+Every measured constant comes with its standard uncertainty (1 sigma, *_SIGMA),
+defining constants have none.
+
+   G   Newtonian constant of gravitation, m^3 kg^-1 s^-2.
+       6.674 30(15) x 10^-11, relative uncertainty 2.2e-5.
+       Source: CODATA 2022 recommended values (NIST, https://physics.nist.gov/cgi-bin/cuu/Value?bg).
+       Note: G is known about 10^4 times worse than the GM of major bodies. Use a
+       body's GM from its ephemeris or gravity field whenever one exists; G is only
+       for bodies given by mass (myb_gm_from_mass).
+
+   C   Speed of light in vacuum, m s^-1: 299 792 458 exactly (SI definition of
+       the metre, 1983; SI Brochure, 9th edition, 2019).
+
+\begindata
+
+   MYB_CONST_G       = 6.67430D-11
+   MYB_CONST_G_SIGMA = 0.00015D-11
+
+   MYB_CONST_C       = 299792458.0
+
+\begintext

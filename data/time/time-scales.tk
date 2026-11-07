@@ -1,0 +1,91 @@
+KPL/MYB
+
+Time scales of the IAU and IERS conventions
+===========================================
+
+myb knows no time scale by name: a scale is a node of a tree whose root is a
+realised atomic scale, and every other scale is defined by its relation to a
+parent. This kernel defines the conventional scales; a user may add others.
+
+Relation kinds (X is the scale being defined, FROM its parent; times in seconds
+since J2000.0 of the scale concerned, i.e. JD 2451545.0 on that scale):
+
+   OFFSET        X    = FROM + OFFSET
+   RATE          X    = FROM - RATE * (FROM - T0) + OFFSET        T0 on FROM
+   RATE_INVERSE  FROM = X    - RATE * (X    - T0) + OFFSET        T0 on X
+   SERIES        X    = FROM + S(X)    (S: series kernel named by _SERIES; solved
+                                        by fixed-point iteration, |dS/dX| < 1e-9)
+
+T0 is given as a two-part Julian date (_T0_JD) so that it is exact.
+
+Definitions
+-----------
+
+   TAI   International Atomic Time: root of the tree.
+
+   TT    Terrestrial Time.  TT = TAI + 32.184 s.
+         IAU 1991 Resolution A4 (Recommendation IV); IAU 2000 Resolution B1.9.
+
+   TCG   Geocentric Coordinate Time (time coordinate of the GCRS).
+         TT = TCG - L_G (TCG - T0),  L_G = 6.969290134e-10 (defining constant),
+         T0 = 1977-01-01T00:00:32.184 TCG = JD 2443144.5003725.
+         IAU 2000 Resolution B1.9.
+
+   TDB   Barycentric Dynamical Time.  Defined from TCB (below); its relation to
+         TT is the relativistic TCB-TCG transformation, represented here by the
+         Fairhead & Bretagnon series (kernel tdb-tt-fb1990.tk, accuracy a few ns
+         over 1950-2050). An ephemeris-based relation will replace it in module rel.
+
+   TCB   Barycentric Coordinate Time (time coordinate of the BCRS).
+         TDB = TCB - L_B (TCB - T0) + TDB0,  L_B = 1.550519768e-8,
+         TDB0 = -6.55e-5 s,  T0 = JD 2443144.5003725 TCB.
+         IAU 2006 Resolution B3.
+
+   GPS   GPS system time, nominally TAI - 19 s (GPS time started on
+         1980-01-06T00:00:00 UTC, when TAI - UTC was 19 s; IS-GPS-200).
+   GST   Galileo System Time, nominally aligned with GPS time: TAI - 19 s.
+   BDT   BeiDou Time, started on 2006-01-01T00:00:00 UTC when TAI - UTC was
+         33 s: TAI - 33 s.
+         The GNSS times are nominal: their realisations differ from TAI - n s by
+         nanoseconds, published by the system operators and the BIPM (Circular T).
+
+UTC is not a scale of this tree: it labels TAI with leap seconds and is defined by
+the table of kernel utc-tai.tk.
+
+\begindata
+
+   MYB_TIME_SCALES = ( 'TAI' 'TT' 'TCG' 'TDB' 'TCB' 'GPS' 'GST' 'BDT' )
+
+   MYB_TIME_TT_FROM    = 'TAI'
+   MYB_TIME_TT_KIND    = 'OFFSET'
+   MYB_TIME_TT_OFFSET  = 32.184
+
+   MYB_TIME_TCG_FROM   = 'TT'
+   MYB_TIME_TCG_KIND   = 'RATE_INVERSE'
+   MYB_TIME_TCG_RATE   = 6.969290134e-10
+   MYB_TIME_TCG_T0_JD  = ( 2443144.5  0.0003725 )
+   MYB_TIME_TCG_OFFSET = 0.0
+
+   MYB_TIME_TDB_FROM   = 'TT'
+   MYB_TIME_TDB_KIND   = 'SERIES'
+   MYB_TIME_TDB_SERIES = 'TDB_TT'
+
+   MYB_TIME_TCB_FROM   = 'TDB'
+   MYB_TIME_TCB_KIND   = 'RATE_INVERSE'
+   MYB_TIME_TCB_RATE   = 1.550519768e-8
+   MYB_TIME_TCB_T0_JD  = ( 2443144.5  0.0003725 )
+   MYB_TIME_TCB_OFFSET = -6.55e-5
+
+   MYB_TIME_GPS_FROM   = 'TAI'
+   MYB_TIME_GPS_KIND   = 'OFFSET'
+   MYB_TIME_GPS_OFFSET = -19.0
+
+   MYB_TIME_GST_FROM   = 'TAI'
+   MYB_TIME_GST_KIND   = 'OFFSET'
+   MYB_TIME_GST_OFFSET = -19.0
+
+   MYB_TIME_BDT_FROM   = 'TAI'
+   MYB_TIME_BDT_KIND   = 'OFFSET'
+   MYB_TIME_BDT_OFFSET = -33.0
+
+\begintext

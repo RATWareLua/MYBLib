@@ -1,0 +1,51 @@
+# clang-tidy for myb (C23). misc-no-recursion is an error: recursion is forbidden in the
+# project (see docs/PLAN.md, "Engineering rules"). It sees direct calls only; calls through
+# function pointers are checked in review.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cert-err33-c,
+  cert-err34-c,
+  cert-flp30-c,
+  cert-msc30-c,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  concurrency-*,
+  cppcoreguidelines-init-variables,
+  misc-*,
+  -misc-include-cleaner,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-uppercase-literal-suffix,
+  -readability-avoid-unconditional-preprocessor-if
+
+WarningsAsErrors: >
+  misc-no-recursion,
+  bugprone-infinite-loop,
+  bugprone-sizeof-expression,
+  bugprone-undefined-memory-manipulation,
+  clang-analyzer-core.*,
+  clang-analyzer-unix.Malloc,
+  cert-err33-c
+
+HeaderFilterRegex: '^(src|include)/'
+FormatStyle: file
+
+CheckOptions:
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.StructCase: lower_case
+  readability-identifier-naming.TypedefCase: lower_case
+  readability-identifier-naming.EnumConstantCase: UPPER_CASE
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  readability-function-size.LineThreshold: 80
+  readability-function-size.ParameterThreshold: 5
+  readability-function-size.NestingThreshold: 4
+  readability-implicit-bool-conversion.AllowPointerConditions: true
+  readability-braces-around-statements.ShortStatementLines: 1

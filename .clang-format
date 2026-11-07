@@ -1,0 +1,20 @@
+# Google style, 100 columns. Vendored code (third_party/) keeps its upstream formatting.
+BasedOnStyle: Google
+ColumnLimit: 100
+IndentWidth: 2
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<[a-z_/]+\.h>$'   # C and system headers
+    Priority: 1
+  - Regex: '^<.*>$'            # other angle-bracket headers (MPFR, ...)
+    Priority: 2
+  - Regex: '.*'                # project
+    Priority: 3
+SortIncludes: CaseSensitive
+InsertBraces: true
+SeparateDefinitionBlocks: Always
