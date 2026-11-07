@@ -5,9 +5,11 @@ from the projects below, under their own licences.
 
 ## CORE-MATH
 
-- Files: `third_party/core-math/binary64/sin/sin.c`, `third_party/core-math/binary64/cos/cos.c`
-  (modified, see `third_party/core-math/README.myb.md`);
-  test data `tests/data/core-math/sin.wc`, `tests/data/core-math/cos.wc` (samples).
+- Files: `third_party/core-math/binary64/<f>/` for sin, cos, tan, atan, atan2, asin, acos,
+  exp, expm1, log, log1p, sinh, cosh, tanh, asinh, acosh, atanh, cbrt, hypot (modified
+  mechanically by `third_party/core-math/import.cmake`, see
+  `third_party/core-math/README.myb.md`); test data `tests/data/core-math/*.wc` (samples of
+  the upstream worst cases).
 - Upstream: https://gitlab.inria.fr/core-math/core-math,
   revision `660067dfd3e751c8f07acc31c899ff410aa7206e`.
 - Copyright (c) Paul Zimmermann, Alexei Sibidanov and the CORE-MATH contributors.

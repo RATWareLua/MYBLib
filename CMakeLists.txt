@@ -33,9 +33,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ---- Vendored correctly rounded functions (CORE-MATH, MIT) ------------------------------
-add_library(myb_coremath OBJECT
-  third_party/core-math/binary64/sin/sin.c
-  third_party/core-math/binary64/cos/cos.c)
+file(GLOB _myb_coremath_sources CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/core-math/binary64/*/*.c")
+add_library(myb_coremath OBJECT ${_myb_coremath_sources})
 target_include_directories(myb_coremath PRIVATE src third_party/core-math)
 myb_apply_flags(myb_coremath THIRD_PARTY)
 
@@ -52,12 +52,18 @@ add_library(myb STATIC
   src/core/check.c
   src/core/status.c
   src/io/kpool.c
+  src/kepler/anomaly.c
+  src/kepler/elements.c
+  src/kepler/propagate.c
+  src/kepler/stumpff.c
   src/io/numparse.c
   src/num/dd.c
+  src/num/root.c
   src/num/series.c
   src/num/sum.c
   src/cmath/cmath.c
   src/time/instant.c
+  src/transfer/lambert.c
   src/time/timesys.c
   ${_myb_platform_sources}
   $<TARGET_OBJECTS:myb_coremath>)

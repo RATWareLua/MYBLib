@@ -11,10 +11,12 @@
 #include "mtest.h"
 #include "myb/cmath.h"
 #include "myb/io.h"
+#include "myb/kepler.h"
+#include "myb/lambert.h"
 #include "myb/num.h"
 #include "myb/time.h"
 
-static const uint64_t golden_hash = UINT64_C(0xf349e438512d4e3d);
+static const uint64_t golden_hash = UINT64_C(0xd1b4b6c88d9abd1c);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -168,6 +170,82 @@ static void workload_time(hasher* h, mt_rng* rng) {
   myb_timesys_destroy(system);
 }
 
+/* Every other elementary function, through a fixed set of arguments per function. */
+static void workload_functions(hasher* h, mt_rng* rng) {
+  for (int i = 0; i < 5000; ++i) {
+    const double x = mt_double(rng, -20, 9);
+    const double y = mt_double(rng, -20, 9);
+    const double unit = mt_double(rng, -30, -1);
+    hash_double(h, myb_tan(x));
+    hash_double(h, myb_atan(x));
+    hash_double(h, myb_atan2(y, x));
+    hash_double(h, myb_asin(unit));
+    hash_double(h, myb_acos(unit));
+    hash_double(h, myb_exp(x));
+    hash_double(h, myb_expm1(x));
+    hash_double(h, myb_log(__builtin_fabs(x)));
+    hash_double(h, myb_log1p(__builtin_fabs(x)));
+    hash_double(h, myb_sinh(x));
+    hash_double(h, myb_cosh(x));
+    hash_double(h, myb_tanh(x));
+    hash_double(h, myb_asinh(x));
+    hash_double(h, myb_acosh(1.0 + __builtin_fabs(x)));
+    hash_double(h, myb_atanh(unit));
+    hash_double(h, myb_cbrt(x));
+    hash_double(h, myb_hypot(x, y));
+  }
+}
+
+static void hash_pv(hasher* h, const myb_pv* pv) {
+  for (int k = 0; k < 3; ++k) {
+    hash_double(h, pv->r[k]);
+    hash_double(h, pv->v[k]);
+  }
+}
+
+static void workload_kepler(hasher* h, mt_rng* rng) {
+  const double mu = 3.986004418e14;
+  for (int i = 0; i < 2000; ++i) {
+    myb_elements el = {};
+    el.p = 7e6 + 3e7 * (double)(mt_next(rng) >> 11) * 0x1p-53;
+    const double e_draw = (double)(mt_next(rng) >> 11) * 0x1p-53;
+    el.e = (i % 3 == 0) ? 1.0 + 3.0 * e_draw : 0.99 * e_draw;
+    el.i = 3.0 * (double)(mt_next(rng) >> 11) * 0x1p-53;
+    el.raan = 6.0 * (double)(mt_next(rng) >> 11) * 0x1p-53;
+    el.argp = 6.0 * (double)(mt_next(rng) >> 11) * 0x1p-53;
+    el.nu = (el.e > 1.0 ? 1.0 : 3.0) * (2.0 * (double)(mt_next(rng) >> 11) * 0x1p-53 - 1.0);
+    myb_pv pv = {};
+    MT_CHECK(myb_pv_from_elements(mu, &el, &pv) == MYB_OK);
+    hash_pv(h, &pv);
+    myb_elements back = {};
+    MT_CHECK(myb_elements_from_pv(mu, &pv, &back) == MYB_OK);
+    hash_double(h, back.p);
+    hash_double(h, back.e);
+    hash_double(h, back.nu);
+    myb_equinoctial eq = {};
+    MT_CHECK(myb_equinoctial_from_pv(mu, &pv, &eq) == MYB_OK);
+    hash_double(h, eq.f);
+    hash_double(h, eq.l);
+    const double dt = mt_double(rng, 0, 14);
+    myb_pv later = {};
+    MT_CHECK(myb_kepler_propagate(mu, &pv, dt, &later) == MYB_OK);
+    hash_pv(h, &later);
+    myb_lambert_solution solutions[5];
+    size_t count = 0;
+    if (myb_lambert(mu, pv.r, later.r, dt, 0, 2, solutions, 5, &count) == MYB_OK) {
+      for (size_t j = 0; j < count; ++j) {
+        for (int k = 0; k < 3; ++k) {
+          hash_double(h, solutions[j].v1[k]);
+          hash_double(h, solutions[j].v2[k]);
+        }
+      }
+    }
+    double ecc = 0.0;
+    MT_CHECK(myb_kepler_elliptic(mt_double(rng, -5, 3), 0.999 * e_draw, &ecc) == MYB_OK);
+    hash_double(h, ecc);
+  }
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -176,6 +254,8 @@ int main(void) {
   workload_sums(&h, &rng);
   workload_parse(&h, &rng);
   workload_time(&h, &rng);
+  workload_functions(&h, &rng);
+  workload_kepler(&h, &rng);
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, golden_hash);
   MT_CHECK(h.state == golden_hash);

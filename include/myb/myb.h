@@ -7,6 +7,8 @@
 #include "myb/cmath.h"
 #include "myb/core.h"
 #include "myb/io.h"
+#include "myb/kepler.h"
+#include "myb/lambert.h"
 #include "myb/num.h"
 #include "myb/time.h"
 
