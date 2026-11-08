@@ -66,6 +66,31 @@ double myb_internal_stumpff_c2(double z) {
   return 2.0 * q * q;
 }
 
+/* sum_k (-z)^k / (2k + first)! / (1 / first!) in nested form; for |z| < 4 the 16th factor is
+ * below 2^-60. */
+static double stumpff_series(double z, int first) {
+  double inner = 1.0;
+  for (int k = 16; k >= 1; --k) {
+    const double m = (double)(2 * k + first - 1) * (double)(2 * k + first);
+    inner = 1.0 - z * inner / m;
+  }
+  return inner;
+}
+
+double myb_internal_stumpff_c4(double z) {
+  if (z > -4.0 && z < 4.0) {
+    return stumpff_series(z, 4) / 24.0;
+  }
+  return (0.5 - myb_internal_stumpff_c2(z)) / z; /* cancellation below a factor 3.5 */
+}
+
+double myb_internal_stumpff_c5(double z) {
+  if (z > -4.0 && z < 4.0) {
+    return stumpff_series(z, 5) / 120.0;
+  }
+  return (1.0 / 6.0 - myb_internal_stumpff_c3(z)) / z;
+}
+
 double myb_internal_stumpff_c0(double z) {
   if (z >= 0.0) {
     return myb_cos(sqrt(z));

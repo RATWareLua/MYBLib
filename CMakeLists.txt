@@ -51,6 +51,12 @@ add_library(myb STATIC
   src/core/alloc.c
   src/core/check.c
   src/core/status.c
+  src/integ/dop853.c
+  src/integ/event.c
+  src/integ/gauss_jackson.c
+  src/integ/ias15.c
+  src/integ/rkn12.c
+  src/integ/symplectic.c
   src/io/kpool.c
   src/kepler/anomaly.c
   src/kepler/elements.c

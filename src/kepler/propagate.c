@@ -199,6 +199,45 @@ static int hyperbola_periapsis(double mu, const myb_pv* pv0, double r0, double a
   return 1;
 }
 
+static const double two_pi_lo = 0x1.1a62633145c07p-52; /* 2 pi = two_pi_hi + two_pi_lo */
+
+/* |a|^2 as a double-word sum of exact products. */
+static myb_dd norm2_dd(const double a[3]) {
+  myb_dd sum = myb_dd_from_double(0.0);
+  for (int i = 0; i < 3; ++i) {
+    double err = 0.0;
+    const double p = myb_two_prod(a[i], a[i], &err);
+    sum = myb_dd_add(sum, (myb_dd){.hi = p, .lo = err});
+  }
+  return sum;
+}
+
+/* alpha = 2/|r0| - |v0|^2/mu in double-word arithmetic. The terms cancel by up to a factor
+ * 2a/r0 (39 at the periapsis of e = 0.95); in double that leaves several ulps of error in the
+ * period, i.e. a phase error growing with every period removed (measured before: 2.8e-11
+ * relative after 30 periods; now at the conditioning of the input). */
+static myb_dd alpha_dd(double mu, const myb_pv* pv0) {
+  const myb_dd r0 = myb_dd_sqrt(norm2_dd(pv0->r));
+  return myb_dd_sub(myb_dd_div(myb_dd_from_double(2.0), r0),
+                    myb_dd_div_d(norm2_dd(pv0->v), mu));
+}
+
+/* Ellipse: dt minus the nearest whole number of periods P = 2 pi / (sqrt(mu) alpha^(3/2)),
+ * in double-word arithmetic. *period receives P rounded to double. */
+static double reduce_periods(double mu, myb_dd alpha, double dt, double* turns,
+                             double* period) {
+  const myb_dd two_pi = {.hi = two_pi_hi, .lo = two_pi_lo};
+  const myb_dd denominator = myb_dd_mul(
+      myb_dd_mul(myb_dd_sqrt(myb_dd_from_double(mu)), alpha), myb_dd_sqrt(alpha));
+  const myb_dd p = myb_dd_div(two_pi, denominator);
+  *period = p.hi;
+  *turns = __builtin_roundeven(dt / p.hi);
+  if (*turns == 0.0) {
+    return dt;
+  }
+  return myb_dd_to_double(myb_dd_sub(myb_dd_from_double(dt), myb_dd_mul_d(p, *turns)));
+}
+
 myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv* pv) {
   MYB_CHECK(pv0 != NULL && pv != NULL);
   if (!(mu > 0.0) || !finite(mu) || !finite(dt) || !myb_vec3_finite(pv0->r) ||
@@ -213,7 +252,8 @@ myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv*
     *pv = *pv0;
     return MYB_OK;
   }
-  const double alpha = 2.0 / r0 - myb_vec3_dot(pv0->v, pv0->v) / mu;
+  const myb_dd alpha_w = alpha_dd(mu, pv0);
+  const double alpha = alpha_w.hi;
   if (alpha < 0.0) {
     myb_pv periapsis;
     double tau0 = 0.0;
@@ -231,18 +271,259 @@ myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv*
   }
   double t = dt;
   if (alpha > 0.0) {
-    /* Whole periods are removed exactly in double-word arithmetic. */
-    const double period = two_pi_hi / (sqrt(mu) * alpha * sqrt(alpha));
-    const double turns = __builtin_roundeven(dt / period);
-    if (turns != 0.0) {
-      double err;
-      const double p = myb_two_prod(turns, period, &err);
-      t = myb_dd_to_double(myb_dd_add_d(myb_dd_add_d(myb_dd_from_double(dt), -p), -err));
-    }
+    double turns = 0.0;
+    double period = 0.0;
+    t = reduce_periods(mu, alpha_w, dt, &turns, &period);
     if (t == 0.0) {
       *pv = *pv0;
       return MYB_OK;
     }
   }
   return universal_step(mu, pv0, r0, alpha, t, pv);
+}
+
+/* ---- State transition matrix ----------------------------------------------------------------
+ * The state after t is r = F r0 + G v0, v = Ft r0 + Gt v0 with
+ *   F = 1 - U2/r0, G = (r0 U1 + sigma0 U2)/sqrt(mu), Ft = -sqrt(mu) U1/(r r0), Gt = 1 - U2/r,
+ * functions of the scalars p = (r0, sigma0, alpha) of the initial state, directly and through
+ * the root chi of the universal Kepler equation K = r0 U1 + sigma0 U2 + U3 - sqrt(mu) t = 0
+ * (dK/dchi = r, dK/dr0 = U1, dK/dsigma0 = U2, dK/dalpha = r0 A1 + sigma0 A2 + A3, with
+ * A_n = dU_n/dalpha = -(chi U_{n+1} - n U_{n+2}) / 2 at fixed chi). Hence
+ *   Phi = [F I, G I; Ft I, Gt I] + [r0; 0] grad F + ... ,
+ * every gradient being a combination of grad r0 = (r0/|r0|, 0), grad sigma0 = (v0, r0)/sqrt(mu)
+ * and grad alpha = (-2 r0/|r0|^3, -2 v0/mu). */
+
+typedef struct u_values5 {
+  double u[6]; /* U0..U5 */
+} u_values5;
+
+static u_values5 u5_at(double alpha, double chi) {
+  const double z = alpha * chi * chi;
+  const double chi2 = chi * chi;
+  u_values5 out;
+  out.u[0] = myb_internal_stumpff_c0(z);
+  out.u[1] = chi * myb_internal_stumpff_c1(z);
+  out.u[2] = chi2 * myb_internal_stumpff_c2(z);
+  out.u[3] = chi2 * chi * myb_internal_stumpff_c3(z);
+  out.u[4] = chi2 * chi2 * myb_internal_stumpff_c4(z);
+  out.u[5] = chi2 * chi2 * chi * myb_internal_stumpff_c5(z);
+  return out;
+}
+
+/* d/dp of a quantity for p = r0, sigma0, alpha. */
+typedef struct partials {
+  double r0;
+  double sigma0;
+  double alpha;
+} partials;
+
+static void identity6(double stm[36]) {
+  for (int i = 0; i < 36; ++i) {
+    stm[i] = (i % 7 == 0) ? 1.0 : 0.0;
+  }
+}
+
+/* Row vector over the 6 initial components: d/dp r0 * grad r0 + ... */
+static void gradient(const partials* d, const double grad_r0[6], const double grad_s[6],
+                     const double grad_a[6], double out[6]) {
+  for (int j = 0; j < 6; ++j) {
+    out[j] = d->r0 * grad_r0[j] + d->sigma0 * grad_s[j] + d->alpha * grad_a[j];
+  }
+}
+
+static myb_status universal_stm(double mu, const myb_pv* pv0, double r0, double alpha, double t,
+                                myb_pv* pv, double stm[36]) {
+  if (t == 0.0) {
+    *pv = *pv0;
+    identity6(stm);
+    return MYB_OK;
+  }
+  const double sqrt_mu = sqrt(mu);
+  const universal k = {.r0 = r0,
+                       .sigma0 = myb_vec3_dot(pv0->r, pv0->v) / sqrt_mu,
+                       .alpha = alpha,
+                       .target = sqrt_mu * t};
+  double chi = 0.0;
+  const myb_status status = solve(&k, &chi);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const u_values5 uv = u5_at(alpha, chi);
+  const double* u = uv.u;
+  const double s0 = k.sigma0;
+  const double r = r0 * u[0] + s0 * u[1] + u[2];
+  /* A_n = dU_n/dalpha at fixed chi */
+  const double a0 = -0.5 * chi * u[1];
+  const double a1 = -0.5 * (chi * u[2] - u[3]);
+  const double a2 = -0.5 * (chi * u[3] - 2.0 * u[4]);
+  const double a3 = -0.5 * (chi * u[4] - 3.0 * u[5]);
+  /* chi_p = -K_p / r */
+  const partials chi_p = {.r0 = -u[1] / r,
+                          .sigma0 = -u[2] / r,
+                          .alpha = -(r0 * a1 + s0 * a2 + a3) / r};
+  /* r = r0 U0 + sigma0 U1 + U2; dr/dchi = -alpha r0 U1 + sigma0 U0 + U1 */
+  const double r_chi = -alpha * r0 * u[1] + s0 * u[0] + u[1];
+  const partials r_p = {.r0 = u[0] + r_chi * chi_p.r0,
+                        .sigma0 = u[1] + r_chi * chi_p.sigma0,
+                        .alpha = r0 * a0 + s0 * a1 + a2 + r_chi * chi_p.alpha};
+  const double f = 1.0 - u[2] / r0;
+  const double g = (r0 * u[1] + s0 * u[2]) / sqrt_mu;
+  const double ft = -sqrt_mu * u[1] / (r * r0);
+  const double gt = 1.0 - u[2] / r;
+  /* dU1 = U0 dchi + A1 dalpha, dU2 = U1 dchi + A2 dalpha */
+  const partials u1_p = {.r0 = u[0] * chi_p.r0,
+                         .sigma0 = u[0] * chi_p.sigma0,
+                         .alpha = u[0] * chi_p.alpha + a1};
+  const partials u2_p = {.r0 = u[1] * chi_p.r0,
+                         .sigma0 = u[1] * chi_p.sigma0,
+                         .alpha = u[1] * chi_p.alpha + a2};
+  const partials f_p = {.r0 = -u2_p.r0 / r0 + u[2] / (r0 * r0),
+                        .sigma0 = -u2_p.sigma0 / r0,
+                        .alpha = -u2_p.alpha / r0};
+  const partials g_p = {.r0 = (u[1] + r0 * u1_p.r0 + s0 * u2_p.r0) / sqrt_mu,
+                        .sigma0 = (r0 * u1_p.sigma0 + u[2] + s0 * u2_p.sigma0) / sqrt_mu,
+                        .alpha = (r0 * u1_p.alpha + s0 * u2_p.alpha) / sqrt_mu};
+  /* Ft = -sqrt(mu) U1 / (r r0): dFt = Ft (dU1/U1 - dr/r - dr0/r0), written without 1/U1 */
+  const double c = -sqrt_mu / (r * r0);
+  const partials ft_p = {.r0 = c * u1_p.r0 - ft * (r_p.r0 / r + 1.0 / r0),
+                         .sigma0 = c * u1_p.sigma0 - ft * r_p.sigma0 / r,
+                         .alpha = c * u1_p.alpha - ft * r_p.alpha / r};
+  /* Gt = 1 - U2 / r */
+  const partials gt_p = {.r0 = -u2_p.r0 / r + u[2] * r_p.r0 / (r * r),
+                         .sigma0 = -u2_p.sigma0 / r + u[2] * r_p.sigma0 / (r * r),
+                         .alpha = -u2_p.alpha / r + u[2] * r_p.alpha / (r * r)};
+  double grad_r0[6];
+  double grad_s[6];
+  double grad_a[6];
+  for (int j = 0; j < 3; ++j) {
+    grad_r0[j] = pv0->r[j] / r0;
+    grad_r0[3 + j] = 0.0;
+    grad_s[j] = pv0->v[j] / sqrt_mu;
+    grad_s[3 + j] = pv0->r[j] / sqrt_mu;
+    grad_a[j] = -2.0 * pv0->r[j] / (r0 * r0 * r0);
+    grad_a[3 + j] = -2.0 * pv0->v[j] / mu;
+  }
+  double df[6];
+  double dg[6];
+  double dft[6];
+  double dgt[6];
+  gradient(&f_p, grad_r0, grad_s, grad_a, df);
+  gradient(&g_p, grad_r0, grad_s, grad_a, dg);
+  gradient(&ft_p, grad_r0, grad_s, grad_a, dft);
+  gradient(&gt_p, grad_r0, grad_s, grad_a, dgt);
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      const double diag_r = (j == i) ? f : (j == 3 + i) ? g : 0.0;
+      const double diag_v = (j == i) ? ft : (j == 3 + i) ? gt : 0.0;
+      stm[6 * i + j] = diag_r + pv0->r[i] * df[j] + pv0->v[i] * dg[j];
+      stm[6 * (3 + i) + j] = diag_v + pv0->r[i] * dft[j] + pv0->v[i] * dgt[j];
+    }
+  }
+  myb_pv out;
+  myb_vec3_combine(pv0->r, f, pv0->v, g, out.r);
+  myb_vec3_combine(pv0->r, ft, pv0->v, gt, out.v);
+  if (!(r > 0.0) || !myb_vec3_finite(out.r) || !myb_vec3_finite(out.v)) {
+    return MYB_E_DOMAIN;
+  }
+  for (int i = 0; i < 36; ++i) {
+    if (!finite(stm[i])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  *pv = out;
+  return MYB_OK;
+}
+
+/* a = b c (6 x 6, row-major); a may not alias b or c. */
+static void multiply6(const double b[36], const double c[36], double a[36]) {
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      double sum = 0.0;
+      for (int k = 0; k < 6; ++k) {
+        sum += b[6 * i + k] * c[6 * k + j];
+      }
+      a[6 * i + j] = sum;
+    }
+  }
+}
+
+/* Inverse of a symplectic matrix [A B; C D]: [D^T -B^T; -C^T A^T] (exact, no division). */
+static void symplectic_inverse(const double m[36], double out[36]) {
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      out[6 * i + j] = m[6 * (3 + j) + (3 + i)];            /*  D^T */
+      out[6 * i + (3 + j)] = -m[6 * j + (3 + i)];           /* -B^T */
+      out[6 * (3 + i) + j] = -m[6 * (3 + j) + i];           /* -C^T */
+      out[6 * (3 + i) + (3 + j)] = m[6 * j + i];            /*  A^T */
+    }
+  }
+}
+
+myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt, myb_pv* pv, double stm[36]) {
+  MYB_CHECK(pv0 != NULL && pv != NULL && stm != NULL);
+  if (!(mu > 0.0) || !finite(mu) || !finite(dt) || !myb_vec3_finite(pv0->r) ||
+      !myb_vec3_finite(pv0->v)) {
+    return MYB_E_DOMAIN;
+  }
+  const double r0 = myb_vec3_norm(pv0->r);
+  if (!(r0 > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  if (dt == 0.0) {
+    *pv = *pv0;
+    identity6(stm);
+    return MYB_OK;
+  }
+  const myb_dd alpha_w = alpha_dd(mu, pv0);
+  const double alpha = alpha_w.hi;
+  if (alpha < 0.0) {
+    myb_pv periapsis;
+    double tau0 = 0.0;
+    if (hyperbola_periapsis(mu, pv0, r0, alpha, &periapsis, &tau0)) {
+      /* Phi(t0 -> t) = Phi(p -> t) Phi(p -> t0)^-1: both legs start at the periapsis. */
+      const double rp = myb_vec3_norm(periapsis.r);
+      const double alpha_p = 2.0 / rp - myb_vec3_dot(periapsis.v, periapsis.v) / mu;
+      double to_end[36];
+      double to_start[36];
+      double back[36];
+      myb_pv start;
+      myb_status status = universal_stm(mu, &periapsis, rp, alpha_p, tau0 + dt, pv, to_end);
+      if (status != MYB_OK) {
+        return status;
+      }
+      status = universal_stm(mu, &periapsis, rp, alpha_p, tau0, &start, to_start);
+      if (status != MYB_OK) {
+        return status;
+      }
+      symplectic_inverse(to_start, back);
+      multiply6(to_end, back, stm);
+      return MYB_OK;
+    }
+    return universal_stm(mu, pv0, r0, alpha, dt, pv, stm);
+  }
+  if (alpha > 0.0) {
+    double turns = 0.0;
+    double period = 0.0;
+    const double t = reduce_periods(mu, alpha_w, dt, &turns, &period);
+    if (turns != 0.0) {
+      const myb_status status = universal_stm(mu, pv0, r0, alpha, t, pv, stm);
+      if (status != MYB_OK) {
+        return status;
+      }
+      /* The reduced time t = dt - turns P(alpha) depends on the initial state through the
+       * period: dt/dx0 = turns 3 P / (2 alpha) grad alpha, carried by the end velocity and
+       * acceleration. */
+      const double r = myb_vec3_norm(pv->r);
+      const double w = turns * 1.5 * period / alpha;
+      for (int j = 0; j < 6; ++j) {
+        const double grad_a = j < 3 ? -2.0 * pv0->r[j] / (r0 * r0 * r0) : -2.0 * pv0->v[j - 3] / mu;
+        for (int i = 0; i < 3; ++i) {
+          stm[6 * i + j] += pv->v[i] * w * grad_a;
+          stm[6 * (3 + i) + j] += -mu * pv->r[i] / (r * r * r) * w * grad_a;
+        }
+      }
+      return MYB_OK;
+    }
+  }
+  return universal_stm(mu, pv0, r0, alpha, dt, pv, stm);
 }

@@ -112,14 +112,26 @@ MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial(double mu, const myb_eq
  *   sqrt(mu) dt = r0 U1 + sigma0 U2 + U3,   sigma0 = r0.v0 / sqrt(mu),
  *   f = 1 - U2/r0,  g = (r0 U1 + sigma0 U2) / sqrt(mu)   (no cancellation in g),
  *   fdot = -sqrt(mu) U1 / (r r0),  gdot = 1 - U2 / r.
- * For ellipses dt is first reduced modulo the period in double-word arithmetic. A hyperbola
- * started far from its periapsis (|H0| > 1) is restarted from the periapsis, where the
- * equation has no cancellation (measured: relative error <= 2e-14 against a 400-bit MPFR
- * reference for ellipses, hyperbolas, near-parabolic and near-circular orbits).
+ * For ellipses dt is first reduced modulo the period; alpha = 2/r0 - v0^2/mu and the period
+ * are computed in double-word arithmetic, so that no phase error accumulates with the periods
+ * removed. A hyperbola started far from its periapsis (|H0| > 1) is restarted from the
+ * periapsis, where the equation has no cancellation (measured: relative error <= 5e-15
+ * against a 400-bit MPFR reference for ellipses, also over 1 to 30 periods, hyperbolas,
+ * near-parabolic and near-circular orbits).
  * Errors: MYB_E_DOMAIN (mu <= 0, r0 = 0, non-finite input, or a state that overflows),
  * MYB_E_NOCONV (iteration budget exhausted; not expected). */
 MYB_API MYB_NODISCARD myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt,
                                                       myb_pv* pv);
+
+/* State after dt (as myb_kepler_propagate, same routes) and the state transition matrix
+ * stm[6 i + j] = d y_i / d y0_j, y = (r, v), in closed form: the Lagrange coefficients
+ * differentiated through the universal Kepler equation (cf. S. W. Shepperd, Celest. Mech. 35,
+ * 129, 1985; R. H. Battin 1999, §9.7). The whole periods removed for ellipses contribute their
+ * dependence on the energy explicitly (the secular term); a hyperbola far from its periapsis
+ * is composed of two legs from the periapsis, Phi = Phi(p -> t) Phi(p -> t0)^-1, the inverse
+ * of a symplectic matrix taken exactly. Errors as myb_kepler_propagate. */
+MYB_API MYB_NODISCARD myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt,
+                                                myb_pv* pv, double stm[36]);
 
 #ifdef __cplusplus
 }

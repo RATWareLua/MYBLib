@@ -295,10 +295,122 @@ static void test_propagation(void) {
   MT_CHECK(myb_kepler_propagate(mu_earth, &v0, 0.0, &out) == MYB_OK && out.r[0] == v0.r[0]);
 }
 
+/* ---- State transition matrix ------------------------------------------------------------------ */
+
+/* Scaled copy: positions in |r0|, velocities in |v0| (the matrix becomes dimensionless). */
+static void scale_stm(const double stm[36], const myb_pv* s0, double out[36]) {
+  const double rs = sqrt(s0->r[0] * s0->r[0] + s0->r[1] * s0->r[1] + s0->r[2] * s0->r[2]);
+  const double vs = sqrt(s0->v[0] * s0->v[0] + s0->v[1] * s0->v[1] + s0->v[2] * s0->v[2]);
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      out[6 * i + j] = stm[6 * i + j] * (j < 3 ? rs : vs) / (i < 3 ? rs : vs);
+    }
+  }
+}
+
+/* max |Phi^T J Phi - J| / max |Phi|^2 (J pairs r_k with v_k; the scaled matrix of scale_stm is
+ * symplectic with the same J). */
+static double symplectic_defect(const double phi[36]) {
+  double defect = 0.0;
+  double size = 0.0;
+  for (int i = 0; i < 36; ++i) {
+    size = fmax(size, fabs(phi[i]));
+  }
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      double s = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        s += phi[6 * k + i] * phi[6 * (3 + k) + j] - phi[6 * (3 + k) + i] * phi[6 * k + j];
+      }
+      const double target = (j == i + 3) ? 1.0 : (i == j + 3 ? -1.0 : 0.0);
+      defect = fmax(defect, fabs(s - target));
+    }
+  }
+  return defect / (size * size);
+}
+
+static void test_stm(void) {
+  mt_rng rng = {.state = 1985};
+  double worst_symplectic = 0.0;
+  double worst_composition = 0.0;
+  for (int i = 0; i < 3000; ++i) {
+    myb_elements el = {};
+    el.p = 7e6 * (1.0 + 5.0 * (double)(mt_next(&rng) >> 11) * 0x1p-53);
+    const int kind = i % 3;
+    el.e = kind == 0 ? 0.95 * (double)(mt_next(&rng) >> 11) * 0x1p-53
+                     : (kind == 1 ? 1.0 + fabs(mt_double(&rng, -6, 2))
+                                  : 1.0 + mt_double(&rng, -40, -12));
+    el.i = 3.0 * (double)(mt_next(&rng) >> 11) * 0x1p-53;
+    el.raan = 6.0 * (double)(mt_next(&rng) >> 11) * 0x1p-53;
+    el.argp = 6.0 * (double)(mt_next(&rng) >> 11) * 0x1p-53;
+    const double limit = el.e > 1.0 ? 0.9 * acos(-1.0 / el.e) : 3.0;
+    el.nu = limit * (2.0 * (double)(mt_next(&rng) >> 11) * 0x1p-53 - 1.0);
+    myb_pv s0 = {};
+    MT_CHECK(myb_pv_from_elements(mu_earth, &el, &s0) == MYB_OK);
+    const double t1 = mt_double(&rng, 0, 13);
+    const double t2 = mt_double(&rng, 0, 13);
+    myb_pv s1 = {};
+    myb_pv s2 = {};
+    myb_pv direct = {};
+    double phi1[36];
+    double phi2[36];
+    double phi_direct[36];
+    if (myb_kepler_stm(mu_earth, &s0, t1, &s1, phi1) != MYB_OK ||
+        myb_kepler_stm(mu_earth, &s1, t2, &s2, phi2) != MYB_OK ||
+        myb_kepler_stm(mu_earth, &s0, t1 + t2, &direct, phi_direct) != MYB_OK) {
+      continue;
+    }
+    double scaled[36];
+    scale_stm(phi_direct, &s0, scaled);
+    worst_symplectic = fmax(worst_symplectic, symplectic_defect(scaled));
+    /* Phi(t1 + t2) = Phi(t2; s1) Phi(t1; s0) */
+    double product[36];
+    for (int r = 0; r < 6; ++r) {
+      for (int c = 0; c < 6; ++c) {
+        double sum = 0.0;
+        for (int k = 0; k < 6; ++k) {
+          sum += phi2[6 * r + k] * phi1[6 * k + c];
+        }
+        product[6 * r + c] = sum;
+      }
+    }
+    double a[36];
+    double b[36];
+    scale_stm(product, &s0, a);
+    scale_stm(phi_direct, &s0, b);
+    double diff = 0.0;
+    double size = 0.0;
+    for (int k = 0; k < 36; ++k) {
+      diff = fmax(diff, fabs(a[k] - b[k]));
+      size = fmax(size, fabs(b[k]));
+    }
+    worst_composition = fmax(worst_composition, diff / size);
+  }
+  printf("state transition matrix: symplectic defect %.2e, composition %.2e (relative)\n",
+         worst_symplectic, worst_composition);
+  MT_CHECK(worst_symplectic < 1e-13);
+  MT_CHECK(worst_composition < 1e-9); /* the composition carries the conditioning of s1 */
+  /* dt = 0: identity and the same state; errors as the propagator. */
+  const myb_elements el = {.p = 8e6, .e = 0.1, .i = 0.5, .raan = 0.2, .argp = 0.3, .nu = 0.4};
+  myb_pv s0 = {};
+  MT_CHECK(myb_pv_from_elements(mu_earth, &el, &s0) == MYB_OK);
+  myb_pv out = {};
+  double phi[36];
+  MT_CHECK(myb_kepler_stm(mu_earth, &s0, 0.0, &out, phi) == MYB_OK);
+  for (int k = 0; k < 36; ++k) {
+    MT_CHECK(phi[k] == (k % 7 == 0 ? 1.0 : 0.0));
+  }
+  MT_CHECK(out.r[0] == s0.r[0] && out.v[2] == s0.v[2]);
+  MT_CHECK(myb_kepler_stm(-1.0, &s0, 10.0, &out, phi) == MYB_E_DOMAIN);
+  const myb_pv origin = {};
+  MT_CHECK(myb_kepler_stm(mu_earth, &origin, 10.0, &out, phi) == MYB_E_DOMAIN);
+}
+
 int main(void) {
   test_kepler_equation();
   test_anomalies();
   test_elements();
   test_propagation();
+  test_stm();
   return mt_finish("test_kepler");
 }

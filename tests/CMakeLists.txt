@@ -38,6 +38,11 @@ myb_add_test(test_time SOURCES unit/test_time.c)
 myb_add_test(test_body SOURCES unit/test_body.c)
 myb_add_test(test_kepler SOURCES unit/test_kepler.c)
 myb_add_test(test_lambert SOURCES unit/test_lambert.c)
+myb_add_test(test_dop853 SOURCES unit/test_dop853.c)
+myb_add_test(test_ias15 SOURCES unit/test_ias15.c)
+myb_add_test(test_symplectic SOURCES unit/test_symplectic.c)
+myb_add_test(test_gauss_jackson SOURCES unit/test_gauss_jackson.c)
+myb_add_test(test_rkn12 SOURCES unit/test_rkn12.c)
 myb_add_test(test_repro SOURCES repro/test_repro.c)
 
 # IAU SOFA reference through ERFA (BSD-3-Clause), compiled for the tests only.
@@ -90,6 +95,14 @@ if(MYB_MPFR_INCLUDE_DIR AND MYB_MPFR_LIBRARY AND MYB_GMP_LIBRARY)
   myb_add_test(test_mpfr_parse SOURCES mpfr/test_mpfr_parse.c
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
   myb_add_test(test_mpfr_kepler SOURCES mpfr/test_mpfr_kepler.c
+    LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
+  myb_add_test(test_mpfr_radau SOURCES mpfr/test_mpfr_radau.c
+    LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
+  myb_add_test(test_mpfr_yoshida SOURCES mpfr/test_mpfr_yoshida.c
+    LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
+  myb_add_test(test_mpfr_gauss_jackson SOURCES mpfr/test_mpfr_gauss_jackson.c
+    LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
+  myb_add_test(test_mpfr_rkn12 SOURCES mpfr/test_mpfr_rkn12.c
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
 else()
   message(WARNING "MPFR/GMP not found: correct-rounding tests are NOT built "

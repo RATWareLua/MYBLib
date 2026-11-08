@@ -10,13 +10,14 @@
 #include "core/fpguard.h"
 #include "mtest.h"
 #include "myb/cmath.h"
+#include "myb/integ.h"
 #include "myb/io.h"
 #include "myb/kepler.h"
 #include "myb/lambert.h"
 #include "myb/num.h"
 #include "myb/time.h"
 
-static const uint64_t golden_hash = UINT64_C(0xd1b4b6c88d9abd1c);
+static const uint64_t golden_hash = UINT64_C(0x49a0d3f351af2744);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -230,6 +231,12 @@ static void workload_kepler(hasher* h, mt_rng* rng) {
     myb_pv later = {};
     MT_CHECK(myb_kepler_propagate(mu, &pv, dt, &later) == MYB_OK);
     hash_pv(h, &later);
+    myb_pv same = {};
+    double stm[36];
+    MT_CHECK(myb_kepler_stm(mu, &pv, dt, &same, stm) == MYB_OK);
+    for (int k = 0; k < 36; ++k) {
+      hash_double(h, stm[k]);
+    }
     myb_lambert_solution solutions[5];
     size_t count = 0;
     if (myb_lambert(mu, pv.r, later.r, dt, 0, 2, solutions, 5, &count) == MYB_OK) {
@@ -246,6 +253,193 @@ static void workload_kepler(hasher* h, mt_rng* rng) {
   }
 }
 
+/* Earth with J2 (DOP853) and a planar three-body system (IAS15). */
+static myb_status j2_rhs(void* context, double t, const double* y, double* dydt) {
+  (void)context;
+  (void)t;
+  const double mu = 3.986004418e14;
+  const double j2 = 1.08262668e-3;
+  const double radius = 6378137.0;
+  const double r2 = y[0] * y[0] + y[1] * y[1] + y[2] * y[2];
+  const double r = __builtin_sqrt(r2);
+  const double k = -mu / (r2 * r);
+  const double q = 1.5 * j2 * radius * radius / r2;
+  const double z2 = y[2] * y[2] / r2;
+  dydt[0] = y[3];
+  dydt[1] = y[4];
+  dydt[2] = y[5];
+  dydt[3] = k * y[0] * (1.0 + q * (1.0 - 5.0 * z2));
+  dydt[4] = k * y[1] * (1.0 + q * (1.0 - 5.0 * z2));
+  dydt[5] = k * y[2] * (1.0 + q * (3.0 - 5.0 * z2));
+  return MYB_OK;
+}
+
+static myb_status three_body(void* context, double t, const double* x, const double* v,
+                             double* a) {
+  (void)context;
+  (void)t;
+  (void)v;
+  const double gm[3] = {1.0, 1e-3, 1e-6};
+  for (int i = 0; i < 9; ++i) {
+    a[i] = 0.0;
+  }
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      if (i == j) {
+        continue;
+      }
+      const double d[3] = {x[3 * j] - x[3 * i], x[3 * j + 1] - x[3 * i + 1],
+                           x[3 * j + 2] - x[3 * i + 2]};
+      const double r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+      const double k = gm[j] / (r2 * __builtin_sqrt(r2));
+      for (int c = 0; c < 3; ++c) {
+        a[3 * i + c] += k * d[c];
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+static myb_status three_body_x(void* context, double t, const double* x, double* a) {
+  return three_body(context, t, x, NULL, a);
+}
+
+static double radial_velocity(void* context, double t, const double* y) {
+  (void)context;
+  (void)t;
+  return y[0] * y[3] + y[1] * y[4] + y[2] * y[5];
+}
+
+static void hash_event(hasher* h, int found, double t_event) {
+  if (found) {
+    hash_double(h, t_event);
+  }
+}
+
+static void workload_integ(hasher* h) {
+  const myb_dop853_options dop_options = {.rtol = 1e-11, .atol = 1e-6};
+  myb_dop853* dop = NULL;
+  MT_CHECK(myb_dop853_create(6, &dop_options, NULL, &dop) == MYB_OK);
+  if (dop != NULL) {
+    const double y0[6] = {7.0e6, 0.0, 1.0e5, 0.0, 6.0e3, 4.5e3};
+    MT_CHECK(myb_dop853_start(dop, j2_rhs, NULL, 0.0, y0) == MYB_OK);
+    double t_previous = 0.0;
+    /* bound: 5 periods of about 6000 s; at most 10^5 steps */
+    for (int i = 0; i < 100000 && myb_dop853_time(dop) < 30000.0; ++i) {
+      MT_CHECK(myb_dop853_step(dop, 30000.0) == MYB_OK);
+      double y[6] = {};
+      const double t_now = myb_dop853_time(dop);
+      MT_CHECK(myb_dop853_dense(dop, t_previous + 0.3 * (t_now - t_previous), y) == MYB_OK);
+      t_previous = t_now;
+      for (int k = 0; k < 6; ++k) {
+        hash_double(h, myb_dop853_state(dop)[k]);
+        hash_double(h, y[k]);
+      }
+      int found = 0;
+      double t_event = 0.0;
+      MT_CHECK(myb_dop853_locate(dop, radial_velocity, NULL, &found, &t_event, NULL) == MYB_OK);
+      hash_event(h, found, t_event);
+    }
+    const myb_dop853_stats st = myb_dop853_statistics(dop);
+    hash_double(h, (double)st.accepted);
+    hash_double(h, (double)st.rejected);
+    myb_dop853_destroy(dop);
+  }
+  const myb_ias15_options ias_options = {.block = 3};
+  myb_ias15* ias = NULL;
+  MT_CHECK(myb_ias15_create(9, &ias_options, NULL, &ias) == MYB_OK);
+  if (ias != NULL) {
+    /* Star, planet at 1 on a slightly eccentric orbit, test-like body at 1.6 (units G = 1). */
+    const double y0[18] = {0.0, 0.0, 0.0, 1.0,  0.0, 0.01, 1.6, 0.0, -0.02,
+                           0.0, -1.1e-3, 0.0, 0.0, 1.1, 0.0, 0.0, 0.79, 0.01};
+    MT_CHECK(myb_ias15_start(ias, three_body, NULL, 0.0, y0) == MYB_OK);
+    const double t_end = 40.0;
+    double t_previous = 0.0;
+    /* bound: about 6 orbits of the planet; at most 10^5 steps */
+    for (int i = 0; i < 100000 && myb_ias15_time(ias) < t_end; ++i) {
+      MT_CHECK(myb_ias15_step(ias, t_end) == MYB_OK);
+      double y[18] = {};
+      const double t_now = myb_ias15_time(ias);
+      MT_CHECK(myb_ias15_dense(ias, t_previous + 0.3 * (t_now - t_previous), y) == MYB_OK);
+      t_previous = t_now;
+      for (int k = 0; k < 18; ++k) {
+        hash_double(h, myb_ias15_state(ias)[k]);
+        hash_double(h, y[k]);
+      }
+    }
+    const myb_ias15_stats st = myb_ias15_statistics(ias);
+    hash_double(h, (double)st.accepted);
+    hash_double(h, (double)st.rejected);
+    hash_double(h, (double)st.iterations);
+    myb_ias15_destroy(ias);
+  }
+  for (int order = 2; order <= 8; order += 2) {
+    myb_symplectic* sym = NULL;
+    MT_CHECK(myb_symplectic_create(9, order, NULL, &sym) == MYB_OK);
+    if (sym == NULL) {
+      continue;
+    }
+    const double y0[18] = {0.0, 0.0, 0.0, 1.0,  0.0, 0.01, 1.6, 0.0, -0.02,
+                           0.0, -1.1e-3, 0.0, 0.0, 1.1, 0.0, 0.0, 0.79, 0.01};
+    MT_CHECK(myb_symplectic_start(sym, three_body_x, NULL, 0.0, y0) == MYB_OK);
+    for (int k = 1; k <= 10; ++k) {
+      MT_CHECK(myb_symplectic_integrate(sym, 1.0 * k, 0.05) == MYB_OK);
+      for (int i = 0; i < 18; ++i) {
+        hash_double(h, myb_symplectic_state(sym)[i]);
+      }
+    }
+    myb_symplectic_destroy(sym);
+  }
+  const myb_rkn12_options rkn_options = {.rtol = 1e-12, .atol = 1e-12};
+  myb_rkn12* rkn = NULL;
+  MT_CHECK(myb_rkn12_create(9, &rkn_options, NULL, &rkn) == MYB_OK);
+  if (rkn != NULL) {
+    const double y0[18] = {0.0, 0.0, 0.0, 1.0,  0.0, 0.01, 1.6, 0.0, -0.02,
+                           0.0, -1.1e-3, 0.0, 0.0, 1.1, 0.0, 0.0, 0.79, 0.01};
+    MT_CHECK(myb_rkn12_start(rkn, three_body_x, NULL, 0.0, y0) == MYB_OK);
+    double t_previous = 0.0;
+    /* bound: about 6 orbits of the planet; at most 10^5 steps */
+    for (int i = 0; i < 100000 && myb_rkn12_time(rkn) < 40.0; ++i) {
+      MT_CHECK(myb_rkn12_step(rkn, 40.0) == MYB_OK);
+      const double t_now = myb_rkn12_time(rkn);
+      double y[18] = {};
+      if (i % 10 == 0) {
+        MT_CHECK(myb_rkn12_dense(rkn, t_previous + 0.3 * (t_now - t_previous), y) == MYB_OK);
+      }
+      for (int k = 0; k < 18; ++k) {
+        hash_double(h, myb_rkn12_state(rkn)[k]);
+        hash_double(h, y[k]);
+      }
+      t_previous = t_now;
+    }
+    const myb_rkn12_stats st = myb_rkn12_statistics(rkn);
+    hash_double(h, (double)st.accepted);
+    hash_double(h, (double)st.rejected);
+    myb_rkn12_destroy(rkn);
+  }
+  const myb_gauss_jackson_options gj_options = {.h = 0.02};
+  myb_gauss_jackson* gj = NULL;
+  MT_CHECK(myb_gauss_jackson_create(9, &gj_options, NULL, &gj) == MYB_OK);
+  if (gj != NULL) {
+    const double y0[18] = {0.0, 0.0, 0.0, 1.0,  0.0, 0.01, 1.6, 0.0, -0.02,
+                           0.0, -1.1e-3, 0.0, 0.0, 1.1, 0.0, 0.0, 0.79, 0.01};
+    MT_CHECK(myb_gauss_jackson_start(gj, three_body, NULL, 0.0, y0) == MYB_OK);
+    for (int k = 0; k < 500; ++k) {
+      MT_CHECK(myb_gauss_jackson_step(gj) == MYB_OK);
+      double y[18] = {};
+      MT_CHECK(myb_gauss_jackson_dense(gj, myb_gauss_jackson_time(gj) - 0.013, y) == MYB_OK);
+      for (int i = 0; i < 18; ++i) {
+        hash_double(h, myb_gauss_jackson_state(gj)[i]);
+        hash_double(h, y[i]);
+      }
+    }
+    const myb_gauss_jackson_stats st = myb_gauss_jackson_statistics(gj);
+    hash_double(h, (double)st.evaluations);
+    hash_double(h, st.max_difference);
+    myb_gauss_jackson_destroy(gj);
+  }
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -256,6 +450,7 @@ int main(void) {
   workload_time(&h, &rng);
   workload_functions(&h, &rng);
   workload_kepler(&h, &rng);
+  workload_integ(&h);
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, golden_hash);
   MT_CHECK(h.state == golden_hash);

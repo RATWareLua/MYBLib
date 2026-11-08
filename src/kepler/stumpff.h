@@ -13,6 +13,11 @@
 double myb_internal_stumpff_c2(double z);
 double myb_internal_stumpff_c3(double z);
 
+/* c4(z) = (1/2 - c2(z)) / z and c5(z) = (1/6 - c3(z)) / z (1/24 and 1/120 at z = 0), for the
+ * derivatives of the universal functions with respect to alpha. */
+double myb_internal_stumpff_c4(double z);
+double myb_internal_stumpff_c5(double z);
+
 /* cos(s) for z = s^2 > 0, cosh(s) for z = -s^2 < 0, 1 for z = 0. */
 double myb_internal_stumpff_c0(double z);
 
