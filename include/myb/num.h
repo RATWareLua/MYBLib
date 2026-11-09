@@ -94,6 +94,36 @@ MYB_API double myb_sum_acc_value(const myb_sum_acc* acc);
 MYB_API double myb_sum2(const double* x, size_t n);
 MYB_API double myb_dot2(const double* x, const double* y, size_t n);
 
+/* ---- Small dense linear algebra --------------------------------------------------------------
+ * Row-major matrices of order n <= 64, fixed operation order (reproducible bit for bit); for
+ * the solvers of myb (differential correction, estimation, stability of periodic orbits). */
+
+/* Solves A X = B (B: n x nrhs, overwritten by X) by LU with partial pivoting; A is destroyed.
+ * MYB_E_DOMAIN: singular or non-finite. */
+MYB_API MYB_NODISCARD myb_status myb_lu_solve(size_t n, double* a, double* b, size_t nrhs);
+
+/* A = L L^T for symmetric positive definite A; L overwrites A (upper part zeroed).
+ * MYB_E_DOMAIN: not positive definite. */
+MYB_API MYB_NODISCARD myb_status myb_cholesky(size_t n, double* a);
+MYB_API void myb_cholesky_solve(size_t n, const double* l, double* b); /* L L^T x = b */
+
+/* min |A x - b| for A of m x n (m >= n, full rank) by Householder QR; A and b are destroyed,
+ * x in b[0 .. n-1], the norm of the residual in *residual_norm (may be NULL).
+ * MYB_E_DOMAIN: rank deficient. */
+MYB_API MYB_NODISCARD myb_status myb_least_squares(size_t m, size_t n, double* a, double* b,
+                                                   double* residual_norm);
+
+/* Eigenvalues re + i im of a real matrix (destroyed): balancing, Hessenberg reduction, implicit
+ * double-shift QR (Golub & Van Loan, Alg. 7.5.2). Complex pairs are adjacent, positive
+ * imaginary part first. Order otherwise unspecified. MYB_E_NOCONV after 30 n sweeps,
+ * MYB_E_DOMAIN for non-finite input. */
+MYB_API MYB_NODISCARD myb_status myb_eigenvalues(size_t n, double* a, double* re, double* im);
+
+/* Unit eigenvector of A for the real eigenvalue lambda (inverse iteration), its largest
+ * component positive. */
+MYB_API MYB_NODISCARD myb_status myb_eigenvector_real(size_t n, const double* a, double lambda,
+                                                      double* v);
+
 #ifdef __cplusplus
 }
 #endif

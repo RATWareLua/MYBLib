@@ -4,8 +4,10 @@
 #define MYB_MYB_H_
 
 #include "myb/body.h"
+#include "myb/budget.h"
 #include "myb/cmath.h"
 #include "myb/core.h"
+#include "myb/cr3bp.h"
 #include "myb/dyn.h"
 #include "myb/force.h"
 #include "myb/frames.h"
@@ -15,9 +17,12 @@
 #include "myb/kepler.h"
 #include "myb/kin.h"
 #include "myb/lambert.h"
+#include "myb/model.h"
 #include "myb/num.h"
 #include "myb/pool.h"
 #include "myb/rel.h"
 #include "myb/time.h"
+#include "myb/transfer.h"
+#include "myb/uncert.h"
 
 #endif /* MYB_MYB_H_ */

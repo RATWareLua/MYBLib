@@ -9,10 +9,13 @@
  * not depend on any library function. */
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "core/fpguard.h"
 #include "mtest.h"
+#include "myb/budget.h"
 #include "myb/cmath.h"
+#include "myb/cr3bp.h"
 #include "myb/dyn.h"
 #include "myb/force.h"
 #include "myb/frames.h"
@@ -22,12 +25,15 @@
 #include "myb/kepler.h"
 #include "myb/kin.h"
 #include "myb/lambert.h"
+#include "myb/model.h"
 #include "myb/num.h"
 #include "myb/pool.h"
 #include "myb/rel.h"
 #include "myb/time.h"
+#include "myb/transfer.h"
+#include "myb/uncert.h"
 
-static const uint64_t golden_hash = UINT64_C(0xbd6bc51c0c5d4fda);
+static const uint64_t golden_hash = UINT64_C(0xb1b77fd24243268f);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -895,6 +901,162 @@ static void workload_grav(hasher* h, mt_rng* rng) {
   myb_gravity_field_destroy(f);
 }
 
+/* Phase 8: linear algebra, force models and variational equations, random numbers, the
+ * restricted three-body problem, B-plane, shooting, effect budgets. */
+typedef struct repro_central {
+  double gm;
+} repro_central;
+
+static myb_status repro_central_accel(void* c, double t, const double x[3], const double v[3],
+                                      double a[3]) {
+  (void)t;
+  (void)v;
+  const double r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+  const double k = -((const repro_central*)c)->gm / (r * r * r);
+  for (int i = 0; i < 3; ++i) {
+    a[i] = k * x[i];
+  }
+  return MYB_OK;
+}
+
+typedef struct repro_push {
+  double k;
+} repro_push;
+
+static myb_status repro_push_accel(void* c, double t, const double x[3], const double v[3],
+                                   double a[3]) {
+  (void)t;
+  (void)x;
+  const double s = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  const double k = ((const repro_push*)c)->k;
+  a[0] = k - 1e-9 * s * v[0];
+  a[1] = -0.5 * k - 1e-9 * s * v[1];
+  a[2] = -1e-9 * s * v[2];
+  return MYB_OK;
+}
+
+typedef struct repro_shot {
+  double r1[3];
+  double r2[3];
+} repro_shot;
+
+static myb_status repro_shot_f(void* c, const double* u, double* f, double* jac) {
+  const repro_shot* s = c;
+  const myb_pv p0 = {{s->r1[0], s->r1[1], s->r1[2]}, {u[0], u[1], u[2]}};
+  myb_pv p;
+  double phi[36];
+  const myb_status st = myb_kepler_stm(3.986004418e14, &p0, 4000.0, &p, phi);
+  if (st != MYB_OK) {
+    return st;
+  }
+  for (int i = 0; i < 3; ++i) {
+    f[i] = p.r[i] - s->r2[i];
+    if (jac != NULL) {
+      for (int j = 0; j < 3; ++j) {
+        jac[3 * i + j] = phi[i * 6 + 3 + j];
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+static void workload_phase8(hasher* h, mt_rng* rng) {
+  /* linear algebra */
+  double a[64];
+  double b[8];
+  for (int i = 0; i < 64; ++i) {
+    a[i] = mt_double(rng, -2, 2) * (mt_int(rng, 0, 1) ? 1.0 : -1.0) + (i % 9 == 0 ? 4.0 : 0.0);
+  }
+  for (int i = 0; i < 8; ++i) {
+    b[i] = mt_double(rng, -2, 2);
+  }
+  double e[64];
+  memcpy(e, a, sizeof e);
+  MT_CHECK(myb_lu_solve(8, a, b, 1) == MYB_OK);
+  double re[8];
+  double im[8];
+  MT_CHECK(myb_eigenvalues(8, e, re, im) == MYB_OK);
+  for (int i = 0; i < 8; ++i) {
+    hash_double(h, b[i]);
+    hash_double(h, re[i] * re[i] + im[i] * im[i]); /* order-independent per pair... */
+  }
+  /* random numbers */
+  myb_rng r;
+  myb_rng_seed(&r, 20261110);
+  for (int i = 0; i < 16; ++i) {
+    hash_double(h, myb_rng_normal(&r));
+  }
+  /* variational equations with a parameter */
+  repro_central c = {3.986004418e14};
+  repro_push p = {3e-7};
+  myb_force_model* m = NULL;
+  MT_CHECK(myb_force_model_create(NULL, &m) == MYB_OK);
+  MT_CHECK(myb_force_model_add(m, "earth", repro_central_accel, NULL, &c, NULL) == MYB_OK);
+  MT_CHECK(myb_force_model_add(m, "push", repro_push_accel, NULL, &p, NULL) == MYB_OK);
+  MT_CHECK(myb_force_model_add_parameter(m, "k", &p.k, 1e-9, NULL) == MYB_OK);
+  myb_variational* var = NULL;
+  MT_CHECK(myb_variational_create(m, NULL, NULL, &var) == MYB_OK);
+  const double y0[6] = {7.1e6, -2e5, 1e5, 100.0, 7.4e3, 1.2e3};
+  MT_CHECK(myb_variational_start(var, 0.0, y0) == MYB_OK);
+  MT_CHECK(myb_variational_integrate(var, 9000.0) == MYB_OK);
+  double y[6];
+  double phi[36];
+  double sens[6];
+  myb_variational_get(var, y, phi, sens);
+  for (int i = 0; i < 6; ++i) {
+    hash_double(h, y[i]);
+    hash_double(h, phi[i * 7]);
+    hash_double(h, sens[i]);
+  }
+  myb_variational_destroy(var);
+  /* budget */
+  myb_budget_entry entries[2];
+  const myb_budget_options bo = {.tolerance = 1.0, .samples = 8};
+  MT_CHECK(myb_budget(m, 0.0, y0, 7200.0, &bo, entries) == MYB_OK);
+  hash_double(h, entries[1].effect);
+  hash_double(h, entries[1].max_acceleration);
+  myb_force_model_destroy(m);
+  /* restricted three-body problem */
+  const double mu = 1.215058560962404e-02;
+  double l[5][3];
+  MT_CHECK(myb_cr3bp_lagrange(mu, l) == MYB_OK);
+  for (int k = 0; k < 3; ++k) {
+    hash_double(h, l[k][0]);
+  }
+  double halo[6];
+  double period = 0.0;
+  MT_CHECK(myb_cr3bp_richardson(mu, 2, 0.02, 1, halo, &period) == MYB_OK);
+  hash_double(h, halo[0]);
+  hash_double(h, period);
+  const myb_cr3bp_correction cc = {.symmetry = MYB_CR3BP_SYMMETRY_XZ, .fixed = 2};
+  MT_CHECK(myb_cr3bp_correct(mu, &cc, halo, &period) == MYB_OK);
+  hash_double(h, halo[0]);
+  hash_double(h, halo[4]);
+  hash_double(h, period);
+  double mono[36];
+  double index = 0.0;
+  MT_CHECK(myb_cr3bp_monodromy(mu, halo, period, mono) == MYB_OK);
+  MT_CHECK(myb_cr3bp_stability(mono, re, im, &index) == MYB_OK);
+  hash_double(h, index);
+  hash_double(h, myb_cr3bp_jacobi(mu, halo));
+  /* B-plane and shooting */
+  const double rr[3] = {-5e8, 3e7, 1e7};
+  const double vv[3] = {5000.0, 100.0, -40.0};
+  const double pole[3] = {0.0, 0.0, 1.0};
+  myb_bplane bp;
+  MT_CHECK(myb_bplane_compute(3.986004418e14, rr, vv, pole, &bp) == MYB_OK);
+  hash_double(h, bp.b_t);
+  hash_double(h, bp.b_r);
+  hash_double(h, bp.time_to_periapsis);
+  repro_shot shot = {{7e6, 1e6, -2e5}, {-3e6, 9e6, 2e6}};
+  double u[3] = {0.0, 7000.0, 1000.0};
+  const myb_shoot_options so = {.tolerance = 1e-6};
+  MT_CHECK(myb_shoot(repro_shot_f, &shot, 3, 3, u, &so, NULL, NULL) == MYB_OK);
+  for (int i = 0; i < 3; ++i) {
+    hash_double(h, u[i]);
+  }
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -918,11 +1080,16 @@ int main(void) {
   if (upto >= 7) {
     workload_grav(&h, &rng);
   }
+  if (upto >= 8) {
+    workload_phase8(&h, &rng);
+  }
   uint64_t expected = golden_hash;
   if (upto == 5) {
     expected = UINT64_C(0x38f060f6206c4bf6);
   } else if (upto == 6) {
     expected = UINT64_C(0x9cb768b2ccddf18b);
+  } else if (upto == 7) {
+    expected = UINT64_C(0xbd6bc51c0c5d4fda);
   }
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, expected);

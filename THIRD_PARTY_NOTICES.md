@@ -203,6 +203,11 @@ oracle only; no SPICE code is part of myb or of its tests.
 outputs of the JPL Horizons system (https://ssd.jpl.nasa.gov/horizons/, Solar System
 Dynamics Group, JPL/Caltech), obtained through its API on 2026-11-09.
 
+Spacecraft trajectories `tests/data/horizons/*.txt` (Tesla Roadster, OSIRIS-REx, JWST) and the
+periodic orbits `tests/data/cr3bp/jpl_periodic_orbits.txt` (NASA/JPL Three-Body Periodic Orbits
+API, https://ssd-api.jpl.nasa.gov/periodic_orbits.api) were obtained from the JPL Solar System
+Dynamics Group on 2026-11-10; the queries are recorded in the files.
+
 ## Test-only dependency (not distributed)
 
 GNU MPFR and GMP are used by `tests/mpfr/` as the arbitrary-precision reference. They are

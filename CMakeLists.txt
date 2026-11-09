@@ -52,6 +52,8 @@ add_library(myb STATIC
   src/core/check.c
   src/core/pool.c
   src/core/status.c
+  src/cr3bp/cr3bp.c
+  src/dyn/model.c
   src/dyn/nbody.c
   src/dyn/whfast.c
   src/frames/bpck.c
@@ -88,6 +90,7 @@ add_library(myb STATIC
   src/kepler/stumpff.c
   src/io/numparse.c
   src/num/dd.c
+  src/num/linalg.c
   src/num/poisson.c
   src/num/root.c
   src/num/series.c
@@ -96,6 +99,9 @@ add_library(myb STATIC
   src/cmath/cmath.c
   src/time/instant.c
   src/transfer/lambert.c
+  src/transfer/transfer.c
+  src/uncert/budget.c
+  src/uncert/uncert.c
   src/time/timesys.c
   ${_myb_platform_sources}
   $<TARGET_OBJECTS:myb_coremath>)
