@@ -7,7 +7,9 @@
 #include "myb/cmath.h"
 #include "myb/core.h"
 #include "myb/dyn.h"
+#include "myb/force.h"
 #include "myb/frames.h"
+#include "myb/grav.h"
 #include "myb/integ.h"
 #include "myb/io.h"
 #include "myb/kepler.h"
@@ -15,6 +17,7 @@
 #include "myb/lambert.h"
 #include "myb/num.h"
 #include "myb/pool.h"
+#include "myb/rel.h"
 #include "myb/time.h"
 
 #endif /* MYB_MYB_H_ */

@@ -316,6 +316,16 @@ static double reduce(double x, double turn) {
   return r;
 }
 
+void myb_internal_poisson_arguments(const myb_internal_poisson_group* g, double t,
+                                    double* angles) {
+  MYB_CHECK(g != NULL && angles != NULL);
+  for (int k = 0; k < g->arguments; ++k) {
+    const double* c = g->argument_polynomial[k];
+    const double value = c[0] + t * (c[1] + t * (c[2] + t * (c[3] + t * c[4])));
+    angles[k] = reduce(value, g->argument_turn[k]) * g->argument_scale[k];
+  }
+}
+
 void myb_internal_poisson_eval(const myb_internal_poisson_group* g, double t, double* values,
                                double* rates) {
   MYB_CHECK(g != NULL && values != NULL && rates != NULL);

@@ -28,7 +28,7 @@ enum {
   MYB_POISSON_MAX_MULTIPLE = 64, /* |n_k| */
   MYB_POISSON_MAX_POWER = 8,     /* j and the degree of the polynomial part */
   MYB_POISSON_ARGUMENT_DEGREE = 4,
-  MYB_POISSON_MAX_SERIES = 4
+  MYB_POISSON_MAX_SERIES = 8
 };
 
 typedef struct myb_internal_poisson_group {
@@ -66,6 +66,10 @@ typedef struct myb_internal_poisson_group {
 
 void myb_internal_poisson_free(myb_internal_poisson_group* group,
                                const myb_allocator* allocator);
+
+/* angles[k] = F_k(t) in radians, reduced to one turn. */
+void myb_internal_poisson_arguments(const myb_internal_poisson_group* group, double t,
+                                    double* angles);
 
 /* values[i] = series i at t and rates[i] = its derivative per unit of t, both multiplied by
  * the series' scale. */

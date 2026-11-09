@@ -1,0 +1,10 @@
+# Optional modules of empirical models of particular bodies (docs/PLAN.md §3): separate targets,
+# never part of libmyb.
+
+add_library(myb_nrlmsise00 STATIC nrlmsise00/nrlmsise00.c)
+add_library(myb::nrlmsise00 ALIAS myb_nrlmsise00)
+target_link_libraries(myb_nrlmsise00 PUBLIC myb)
+target_include_directories(myb_nrlmsise00
+  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/nrlmsise00"
+  PRIVATE "${PROJECT_SOURCE_DIR}/src")
+myb_apply_flags(myb_nrlmsise00)

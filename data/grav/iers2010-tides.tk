@@ -1,0 +1,217 @@
+KPL/MYB
+
+Tides of the Earth's gravity field after the IERS Conventions 2010 (IERS Technical Note 36,
+chapter 6, version of 2018-02-01), read by myb_tides_create (myb/grav.h) with the prefix
+'IERS10_TIDE'.
+
+Sources:
+  IERS Conventions 2010, chapter 6, https://iers-conventions.obspm.fr/content/chapter6/icc6.pdf,
+    SHA-256 abb3c0b0b6d2079b19893d6872a9d8e7320516d9a4736acb5eecaa79c4543388:
+    Table 6.3 (Love numbers of the anelastic Earth), eq. 6.14 (permanent tide), Tables 6.5a,
+    6.5b and 6.5c (frequency dependence of k21, k20, k22), section 6.4 (solid Earth pole tide),
+    eq. 6.24 (ocean pole tide, degree 2);
+  IERS Conventions 2010, chapter 7, https://iers-conventions.obspm.fr/content/chapter7/icc7.pdf,
+    SHA-256 ffe8ffb13c8bbc3b07ac298f458fcbb564974377b165fb93921a05bb0d55043d:
+    eq. 21 (secular pole, used for the wobble m1 = xp - xs, m2 = -(yp - ys)).
+  Downloaded on 2026-11-09. The 71 rows of Tables 6.5 were converted by a script that checks,
+  for every row, the Doodson number against its six multipliers and those against the five
+  Delaunay multipliers N (theta_f = m chi - N.F); amplitudes copied without change.
+
+Step 1 (eq. 6.6, 6.7): dC_nm - i dS_nm = k_nm / (2n + 1) sum_j (GM_j / GM)(R / r_j)^(n+1)
+  Pbar_nm(sin phi_j) exp(-i m lambda_j), n = 2, 3; degree 4 from the degree-2 tide with k_2m(+).
+  LOVE: rows of (n, m, Re k_nm, Im k_nm, k_nm(+)).
+Step 2 (eq. 6.8): series of dC20, dC21, dS21, dC22, dS22 over the arguments (chi, l, l', F, D,
+  Omega), chi = GMST + pi, in the form of data/frames/iau2006-cip.tk (columns: power j,
+  a_sin, a_cos, then the multipliers). For a row of Table 6.5 with amplitudes (ip, op):
+    m = 0: dC20 = ip cos(theta) - op sin(theta)
+    m = 1: dC21 = ip sin(theta) + op cos(theta),  dS21 = ip cos(theta) - op sin(theta)
+    m = 2: dC22 = ip cos(theta),                  dS22 = -ip sin(theta)
+  (the example of K1 in section 6.2.1: dC21 = 470.9e-12 sin(chi) - 30.2e-12 cos(chi)).
+  The argument t is in Julian centuries of 36525 days from J2000.0 of UT1 (chi is GMST); the
+  arguments are those of data/frames/eop-tides.tk.
+Step 3 (eq. 6.13, 6.14): for a zero-tide field the permanent part A0 H0 Re(k20) is removed
+  from dC20. PERMANENT = ( A0 H0 ) in m^-1 and m.
+Pole tide (sections 6.4, 6.5): dC21 = c1 (m1 + a1 m2), dS21 = c2 (m2 + a2 m1) with m1, m2 in
+  arcseconds; POLE_SOLID and POLE_OCEAN = ( c1 a1 c2 a2 ). SECULAR_POLE = ( xs0 xs1 ys0 ys1 )
+  in milliarcseconds: xs = xs0 + xs1 (t - 2000), t in Julian years.
+
+\begindata
+
+IERS10_TIDE_ARGUMENT_COUNT = 6
+IERS10_TIDE_ARGUMENT_NAMES = ( 'chi' 'l' 'l''' 'F' 'D' 'Omega' )
+IERS10_TIDE_ARGUMENT_SCALE = ( 4.848136811095359935899141D-6 4.848136811095359935899141D-6
+                               4.848136811095359935899141D-6 4.848136811095359935899141D-6
+                               4.848136811095359935899141D-6 4.848136811095359935899141D-6 )
+IERS10_TIDE_ARGUMENT_TURN  = ( 1296000 1296000 1296000 1296000 1296000 1296000 )
+IERS10_TIDE_ARGUMENT_POLYNOMIAL = (
+       1657658.22615  47466002772.19299            1.39656           -9.3D-5                  0
+       485868.249036    1717915923.2178            31.8792           0.051635        -0.00024470
+      1287104.793048     129596581.0481            -0.5532           0.000136        -0.00001149
+       335779.526232    1739527262.8478           -12.7512          -0.001037         0.00000417
+      1072260.703692    1602961601.2090            -6.3706           0.006593        -0.00003169
+       450160.398036      -6962890.5431             7.4722           0.007702        -0.00005939
+)
+
+IERS10_TIDE_LOVE = (
+   2  0   0.30190   0.00000  -0.00089
+   2  1   0.29830  -0.00144  -0.00080
+   2  2   0.30102  -0.00130  -0.00057
+   3  0   0.093     0         0
+   3  1   0.093     0         0
+   3  2   0.093     0         0
+   3  3   0.094     0         0
+)
+
+IERS10_TIDE_PERMANENT = ( 4.4228D-8 -0.31460 )
+
+IERS10_TIDE_POLE_SOLID   = ( -1.333D-9 0.0115 -1.333D-9 -0.0115 )
+IERS10_TIDE_POLE_OCEAN   = ( -2.1778D-10 -0.01724 -1.7232D-10 -0.03365 )
+IERS10_TIDE_SECULAR_POLE = ( 55.0 1.677 320.5 3.460 )
+
+IERS10_TIDE_C20_SCALE      = 1D-12
+IERS10_TIDE_C20_POLYNOMIAL = ( 0 )
+IERS10_TIDE_C20_TERMS      = (
+  0      6.7     16.6     0   0   0   0   0  -1
+  0     -0.1     -0.1     0   0   0   0   0  -2
+  0     -0.8     -1.2     0   0   1   0   0   0
+  0     -4.3     -5.5     0   0   0   2  -2   2
+  0      0.1      0.1     0   0   0   2  -2   1
+  0     -0.2     -0.3     0   0   1   2  -2   2
+  0     -0.7     -0.3     0  -1   0   0   2   0
+  0      0.2      0.1     0   1   0   0   0   1
+  0     -3.7     -1.2     0   1   0   0   0   0
+  0      0.2      0.1     0   1   0   0   0  -1
+  0      0.2      0.1     0  -1   0   2   0   2
+  0     -0.6      0.0     0   0   0   0   2   0
+  0     -0.3      0.0     0   2   0   0   0   0
+  0     -6.3      0.6     0   0   0   2   0   2
+  0     -2.6      0.2     0   0   0   2   0   1
+  0     -0.2      0.0     0   0   0   2   0   0
+  0     -0.2      0.1     0  -1   0   2   2   2
+  0     -1.1      0.4     0   1   0   2   0   2
+  0     -0.5      0.2     0   1   0   2   0   1
+  0     -0.2      0.1     0   0   0   2   2   2
+  0     -0.1      0.1     0   2   0   2   0   2
+)
+
+IERS10_TIDE_C21_SCALE      = 1D-12
+IERS10_TIDE_C21_POLYNOMIAL = ( 0 )
+IERS10_TIDE_C21_TERMS      = (
+  0     -0.1      0.0     1  -2   0  -2   0  -2
+  0     -0.1      0.0     1   0   0  -2  -2  -2
+  0     -0.1      0.0     1  -1   0  -2   0  -1
+  0     -0.7      0.1     1  -1   0  -2   0  -2
+  0     -0.1      0.0     1   1   0  -2  -2  -2
+  0     -1.3      0.1     1   0   0  -2   0  -1
+  0     -6.8      0.6     1   0   0  -2   0  -2
+  0      0.1      0.0     1   0   0   0  -2   0
+  0      0.1      0.0     1  -1   0  -2   2  -2
+  0      0.1      0.0     1   1   0  -2   0  -1
+  0      0.4      0.0     1   1   0  -2   0  -2
+  0      1.3     -0.1     1  -1   0   0   0   0
+  0      0.3      0.0     1  -1   0   0   0  -1
+  0      0.3      0.0     1   1   0   0  -2   0
+  0      0.1      0.0     1   1   0   0  -2  -1
+  0     -1.9      0.1     1   0  -1  -2   2  -2
+  0      0.5      0.0     1   0   0  -2   2  -1
+  0    -43.4      2.9     1   0   0  -2   2  -2
+  0      0.6      0.0     1   0   1  -2   2  -2
+  0      1.6     -0.1     1   0  -1   0   0   0
+  0      0.1      0.0     1   2   0  -2   0  -1
+  0      0.1      0.0     1   0   0   0   0   2
+  0     -8.8      0.5     1   0   0   0   0   1
+  0    470.9    -30.2     1   0   0   0   0   0
+  0     68.1     -4.6     1   0   0   0   0  -1
+  0     -1.6      0.1     1   0   0   0   0  -2
+  0      0.1      0.0     1   1   0   0  -1   0
+  0     -0.1      0.0     1   0   1   0   0   1
+  0    -20.6     -0.3     1   0   1   0   0   0
+  0      0.3      0.0     1   0  -1   2  -2   2
+  0     -0.3      0.0     1   0   1   0   0  -1
+  0     -0.2      0.0     1   2   0   0  -2   0
+  0     -0.1      0.0     1   2   0   0  -2  -1
+  0     -5.0      0.3     1   0   0   2  -2   2
+  0      0.2      0.0     1   0   0   2  -2   1
+  0     -0.2      0.0     1   0   1   2  -2   2
+  0     -0.5      0.0     1  -1   0   0   2   0
+  0     -0.1      0.0     1  -1   0   0   2  -1
+  0      0.1      0.0     1   1   0   0   0   1
+  0     -2.1      0.1     1   1   0   0   0   0
+  0     -0.4      0.0     1   1   0   0   0  -1
+  0     -0.2      0.0     1   0   0   0   2   0
+  0     -0.1      0.0     1   2   0   0   0   0
+  0     -0.6      0.0     1   0   0   2   0   2
+  0     -0.4      0.0     1   0   0   2   0   1
+  0     -0.1      0.0     1   0   0   2   0   0
+  0     -0.1      0.0     1   1   0   2   0   2
+  0     -0.1      0.0     1   1   0   2   0   1
+)
+
+IERS10_TIDE_S21_SCALE      = 1D-12
+IERS10_TIDE_S21_POLYNOMIAL = ( 0 )
+IERS10_TIDE_S21_TERMS      = (
+  0     -0.0     -0.1     1  -2   0  -2   0  -2
+  0     -0.0     -0.1     1   0   0  -2  -2  -2
+  0     -0.0     -0.1     1  -1   0  -2   0  -1
+  0     -0.1     -0.7     1  -1   0  -2   0  -2
+  0     -0.0     -0.1     1   1   0  -2  -2  -2
+  0     -0.1     -1.3     1   0   0  -2   0  -1
+  0     -0.6     -6.8     1   0   0  -2   0  -2
+  0     -0.0      0.1     1   0   0   0  -2   0
+  0     -0.0      0.1     1  -1   0  -2   2  -2
+  0     -0.0      0.1     1   1   0  -2   0  -1
+  0     -0.0      0.4     1   1   0  -2   0  -2
+  0      0.1      1.3     1  -1   0   0   0   0
+  0     -0.0      0.3     1  -1   0   0   0  -1
+  0     -0.0      0.3     1   1   0   0  -2   0
+  0     -0.0      0.1     1   1   0   0  -2  -1
+  0     -0.1     -1.9     1   0  -1  -2   2  -2
+  0     -0.0      0.5     1   0   0  -2   2  -1
+  0     -2.9    -43.4     1   0   0  -2   2  -2
+  0     -0.0      0.6     1   0   1  -2   2  -2
+  0      0.1      1.6     1   0  -1   0   0   0
+  0     -0.0      0.1     1   2   0  -2   0  -1
+  0     -0.0      0.1     1   0   0   0   0   2
+  0     -0.5     -8.8     1   0   0   0   0   1
+  0     30.2    470.9     1   0   0   0   0   0
+  0      4.6     68.1     1   0   0   0   0  -1
+  0     -0.1     -1.6     1   0   0   0   0  -2
+  0     -0.0      0.1     1   1   0   0  -1   0
+  0     -0.0     -0.1     1   0   1   0   0   1
+  0      0.3    -20.6     1   0   1   0   0   0
+  0     -0.0      0.3     1   0  -1   2  -2   2
+  0     -0.0     -0.3     1   0   1   0   0  -1
+  0     -0.0     -0.2     1   2   0   0  -2   0
+  0     -0.0     -0.1     1   2   0   0  -2  -1
+  0     -0.3     -5.0     1   0   0   2  -2   2
+  0     -0.0      0.2     1   0   0   2  -2   1
+  0     -0.0     -0.2     1   0   1   2  -2   2
+  0     -0.0     -0.5     1  -1   0   0   2   0
+  0     -0.0     -0.1     1  -1   0   0   2  -1
+  0     -0.0      0.1     1   1   0   0   0   1
+  0     -0.1     -2.1     1   1   0   0   0   0
+  0     -0.0     -0.4     1   1   0   0   0  -1
+  0     -0.0     -0.2     1   0   0   0   2   0
+  0     -0.0     -0.1     1   2   0   0   0   0
+  0     -0.0     -0.6     1   0   0   2   0   2
+  0     -0.0     -0.4     1   0   0   2   0   1
+  0     -0.0     -0.1     1   0   0   2   0   0
+  0     -0.0     -0.1     1   1   0   2   0   2
+  0     -0.0     -0.1     1   1   0   2   0   1
+)
+
+IERS10_TIDE_C22_SCALE      = 1D-12
+IERS10_TIDE_C22_POLYNOMIAL = ( 0 )
+IERS10_TIDE_C22_TERMS      = (
+  0      0.0     -0.3     2  -1   0  -2   0  -2
+  0      0.0     -1.2     2   0   0  -2   0  -2
+)
+
+IERS10_TIDE_S22_SCALE      = 1D-12
+IERS10_TIDE_S22_POLYNOMIAL = ( 0 )
+IERS10_TIDE_S22_TERMS      = (
+  0      0.3      0.0     2  -1   0  -2   0  -2
+  0      1.2      0.0     2   0   0  -2   0  -2
+)
+
+\begintext

@@ -150,6 +150,40 @@ Test data `tests/data/eop/` are excerpts of the IERS EOP 20 C04 series (IERS Ear
 Orientation Centre, Paris Observatory) and of `finals2000A.all` (IERS Rapid Service /
 Prediction Centre); `tests/data/eop/reference.txt` was computed from them by myb's authors.
 
+`data/grav/iers2010-tides.tk` holds the Love numbers, the tables of frequency-dependent
+corrections (Tables 6.3, 6.5a-c), the permanent-tide and pole-tide constants of chapter 6 and
+the secular pole of chapter 7 of the IERS Conventions (2010, version of 2018) — numbers only,
+with the SHA-256 of the source PDF in the kernel. `tests/data/grav/fes2004_excerpt.dat` is an
+unchanged excerpt of `fes2004_Cnm-Snm.dat` (FES2004 ocean tide model of F. Lyard et al.,
+converted to Stokes coefficients for the IERS Conventions).
+
+## Gravity field models (ICGEM)
+
+`tests/data/grav/EGM2008_n20.gfc` is EGM2008 (N. K. Pavlis, S. A. Holmes, S. C. Kenyon,
+J. K. Factor, U.S. National Geospatial-Intelligence Agency) truncated to degree 20, from the
+International Centre for Global Earth Models (ICGEM, GFZ Potsdam); coefficients unchanged.
+GOCO06s (A. Kvas et al., 2019, doi:10.5880/ICGEM.2019.002, CC BY 4.0) is downloaded by
+`scripts/fetch-data.cmd` and not distributed.
+
+## ILRS
+
+`tests/data/sp3/ilrsa.lageos1.250607.excerpt.sp3` is an excerpt (every third epoch) of the
+combined LAGEOS-1 orbit `ilrsa.orb.lageos1.250607.v80.sp3` of the International Laser Ranging
+Service (ILRS combination of the analysis centres ASI, BKG, CNES, DGFI, ESA, GFZ, JCET, NSGF),
+obtained from the EUROLAS Data Center (EDC, DGFI-TUM) on 2026-11-09; data of the ILRS are
+freely available, with acknowledgement of the ILRS (M. R. Pearlman et al., Adv. Space Res. 30,
+135, 2002).
+
+## NRLMSISE-00 (ext/nrlmsise00)
+
+The optional module `ext/nrlmsise00` (target `myb::nrlmsise00`, not part of libmyb) is
+derived from the C release of NRLMSISE-00 by Dominik Brodowski, placed by him in the public
+domain, of the model of J. M. Picone, A. E. Hedin and D. P. Drob (Naval Research Laboratory).
+Notice under 17 U.S.C. 403: the model, its algorithms and its coefficient tables are U.S.
+Government material, not subject to copyright protection. This module is not endorsed by, nor
+affiliated with, the Naval Research Laboratory. Details and the original statements:
+`ext/nrlmsise00/NOTICE`.
+
 ## NAIF (JPL)
 
 `tests/data/wgccre/pck00011.tpc` is NAIF's generic text PCK (WGCCRE 2015 rotation models and

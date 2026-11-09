@@ -1,0 +1,159 @@
+# Continuous integration of myb: the CMake presets of the repository on Linux (Clang, Ninja) and
+# Windows (Clang targeting x86_64-w64-windows-gnu with the MSYS2 MINGW64 sysroot), with the
+# sanitizers. Every job runs the whole test suite, the reproducibility hash included, so a
+# result that changes by one bit on one platform fails the build. Large data sets are fetched
+# by cmake/FetchData.cmake (SHA-256 checked) and cached between runs.
+name: CI
+
+# Until the library is complete (phase 10 of docs/PLAN.md) the workflow runs only on request;
+# then the triggers below are enabled:
+#   push: { branches: [main] }
+#   pull_request:
+#   schedule: [{ cron: "17 3 * * 1" }]  # weekly: also the slow ASan at -O0 and fresh EOP series
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  LLVM_VERSION: "20"
+  CTEST_TIMEOUT: "3600"
+
+jobs:
+  linux:
+    name: linux (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [linux-dev, linux-release, linux-asan, linux-ubsan, linux-lsan, linux-tsan]
+        include:
+          - preset: linux-asan-debug
+            weekly: true
+    steps:
+      - name: Skip the weekly-only preset outside the weekly run
+        id: gate
+        shell: bash
+        run: |
+          if [ "${{ matrix.weekly }}" = "true" ] && [ "${{ github.event_name }}" != "schedule" ] \
+             && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - name: Install Clang ${{ env.LLVM_VERSION }}, Ninja, MPFR
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh "$LLVM_VERSION"
+          sudo apt-get install -y --no-install-recommends \
+            "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "llvm-$LLVM_VERSION" \
+            ninja-build cmake libmpfr-dev libgmp-dev
+          echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+
+      - name: Allow the sanitizers' shadow memory (kernel ASLR entropy)
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Cache the downloaded data
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: data/download
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.event_name == 'schedule' && github.run_id || 'stable' }}
+          restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
+
+      - name: Fetch the data
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        run: cmake ${{ github.event_name == 'schedule' && '-DREFRESH=ON' || '' }} -P cmake/FetchData.cmake
+
+      - name: Configure
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        run: |
+          clang --version
+          cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        if: steps.gate.outputs.run == 'true'
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
+
+      - name: Test
+        if: steps.gate.outputs.run == 'true'
+        run: ctest --preset ${{ matrix.preset }} --parallel 4 --timeout ${{ env.CTEST_TIMEOUT }}
+
+  windows:
+    name: windows (${{ matrix.preset }})
+    runs-on: windows-2025
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [windows-dev, windows-release, windows-ubsan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSYS2 MINGW64 sysroot (headers, runtime, mingw32-make, MPFR, GMP)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-mpfr
+            mingw-w64-x86_64-gmp
+
+      - name: Clang ${{ env.LLVM_VERSION }} (LLVM for Windows)
+        shell: pwsh
+        run: |
+          $have = $null
+          if (Get-Command clang -ErrorAction SilentlyContinue) {
+            $have = [int]((clang --version | Select-Object -First 1) -replace '.*version (\d+).*', '$1')
+          }
+          if ($null -eq $have -or $have -lt 19) {
+            choco install llvm --version=20.1.8 --allow-downgrade -y --no-progress
+          }
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "MYB_MINGW_ROOT=${{ steps.msys2.outputs.msys2-location }}\mingw64" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Cache the downloaded data
+        uses: actions/cache@v4
+        with:
+          path: data/download
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.event_name == 'schedule' && github.run_id || 'stable' }}
+          restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
+
+      - name: Fetch the data
+        shell: pwsh
+        run: cmake ${{ github.event_name == 'schedule' && '-DREFRESH=ON' || '' }} -P cmake/FetchData.cmake
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          clang --version
+          cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
+
+      - name: Test
+        shell: pwsh
+        run: ctest --preset ${{ matrix.preset }} --parallel 4 --timeout ${{ env.CTEST_TIMEOUT }}

@@ -78,6 +78,36 @@ MYB_API void myb_spk_segment(const myb_spk* spk, size_t index, myb_spk_segment_i
 MYB_API MYB_NODISCARD myb_status myb_spk_state(const myb_spk* spk, int32_t target, int32_t center,
                                                myb_time t, double state[6], int32_t* frame);
 
+/* ---- SP3 precise orbits ---------------------------------------------------------------------
+ * SP3-c and SP3-d files (IGS, ILRS analysis centres): satellite positions (and velocities) at
+ * tabulated epochs, usually in an Earth-fixed frame (ITRF, SLRF) named by the header. Epochs are
+ * calendar labels in the file's time system ("GPS", "UTC", "TAI", ...), which the caller
+ * converts (myb_timesys_from_utc for UTC). Positions in m, velocities in m/s; positions given
+ * as 0, 0, 0 (bad or missing) are reported missing. */
+
+typedef struct myb_sp3 myb_sp3;
+
+/* Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM, MYB_E_OVERFLOW, MYB_E_IO (files). */
+MYB_API MYB_NODISCARD myb_status myb_sp3_load(const char* text, size_t size,
+                                              const myb_allocator* allocator, myb_sp3** sp3,
+                                              myb_diag* diag);
+MYB_API MYB_NODISCARD myb_status myb_sp3_load_file(const char* path,
+                                                   const myb_allocator* allocator,
+                                                   myb_sp3** sp3, myb_diag* diag);
+MYB_API void myb_sp3_destroy(myb_sp3* sp3); /* accepts NULL */
+
+MYB_API size_t myb_sp3_satellite_count(const myb_sp3* sp3);
+MYB_API const char* myb_sp3_satellite(const myb_sp3* sp3, size_t index); /* e.g. "L51" */
+MYB_API size_t myb_sp3_epoch_count(const myb_sp3* sp3);
+MYB_API const char* myb_sp3_time_system(const myb_sp3* sp3);
+MYB_API const char* myb_sp3_frame(const myb_sp3* sp3); /* coordinate system, e.g. "SLR20" */
+MYB_API void myb_sp3_epoch(const myb_sp3* sp3, size_t epoch, myb_calendar* label);
+
+/* Position and velocity of a satellite at an epoch (either output may be NULL); returns the
+ * flags of what the file gives: 1 = position, 2 = velocity. */
+MYB_API int myb_sp3_state(const myb_sp3* sp3, size_t satellite, size_t epoch, double position[3],
+                          double velocity[3]);
+
 #ifdef __cplusplus
 }
 #endif

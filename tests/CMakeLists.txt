@@ -52,6 +52,12 @@ myb_add_test(test_eop SOURCES unit/test_eop.c)
 myb_add_test(test_wgccre SOURCES unit/test_wgccre.c)
 myb_add_test(test_earth_frames SOURCES unit/test_earth_frames.c)
 myb_add_test(test_tkframe SOURCES unit/test_tkframe.c)
+myb_add_test(test_rel SOURCES unit/test_rel.c)
+myb_add_test(test_grav SOURCES unit/test_grav.c)
+myb_add_test(test_force SOURCES unit/test_force.c)
+myb_add_test(test_ellipsoidal SOURCES unit/test_ellipsoidal.c)
+myb_add_test(test_lageos SOURCES unit/test_lageos.c)
+myb_add_test(test_de440_rel SOURCES unit/test_de440_rel.c)
 myb_add_test(test_repro SOURCES repro/test_repro.c)
 
 # IAU SOFA reference through ERFA (BSD-3-Clause), compiled for the tests only.
@@ -62,6 +68,7 @@ target_include_directories(erfa_reference SYSTEM PUBLIC
 myb_apply_flags(erfa_reference THIRD_PARTY)
 myb_add_test(test_erfa_time SOURCES erfa/test_erfa_time.c LIBRARIES erfa_reference)
 myb_add_test(test_erfa_frames SOURCES erfa/test_erfa_frames.c LIBRARIES erfa_reference)
+myb_add_test(test_tides SOURCES unit/test_tides.c LIBRARIES erfa_reference)
 
 # MYB_CHECK must print one line and terminate the process.
 add_executable(check_death unit/check_death.c)
@@ -118,7 +125,14 @@ if(MYB_MPFR_INCLUDE_DIR AND MYB_MPFR_LIBRARY AND MYB_GMP_LIBRARY)
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
   myb_add_test(test_mpfr_frames SOURCES mpfr/test_mpfr_frames.c
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
+  myb_add_test(test_mpfr_grav SOURCES mpfr/test_mpfr_grav.c
+    LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
 else()
   message(WARNING "MPFR/GMP not found: correct-rounding tests are NOT built "
     "(MYB_MPFR_INCLUDE_DIR=${MYB_MPFR_INCLUDE_DIR}, MYB_MPFR_LIBRARY=${MYB_MPFR_LIBRARY})")
+endif()
+
+# ---- Optional modules (ext/) ----------------------------------------------------------------
+if(TARGET myb_nrlmsise00)
+  myb_add_test(test_nrlmsise00 SOURCES ext/test_nrlmsise00.c LIBRARIES myb_nrlmsise00)
 endif()

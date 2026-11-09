@@ -28,6 +28,7 @@
 #include "myb/core.h"
 #include "myb/num.h"
 #include "myb/pool.h"
+#include "myb/rel.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,11 +38,13 @@ extern "C" {
 
 typedef struct myb_nbody myb_nbody;
 
-/* How a source body acts on a receiver. Later model levels (gravity fields, relativity, tides)
- * extend this list; the default for every pair is MYB_INTERACTION_NEWTON. */
+/* How a source body acts on a receiver. Later model levels (gravity fields, tides) extend this
+ * list. The default for every pair is MYB_INTERACTION_NEWTON, or MYB_INTERACTION_EIH once
+ * myb_nbody_set_relativity has been called; pairs set explicitly keep their level. */
 typedef enum myb_interaction {
-  MYB_INTERACTION_NONE = 0,  /* the source does not act on the receiver */
-  MYB_INTERACTION_NEWTON = 1 /* point masses */
+  MYB_INTERACTION_NONE = 0,   /* the source does not act on the receiver */
+  MYB_INTERACTION_NEWTON = 1, /* point masses */
+  MYB_INTERACTION_EIH = 2     /* point masses with the 1PN terms (below) */
 } myb_interaction;
 
 /* massive >= 1 bodies with gm[0 .. massive-1] (finite, >= 0) and test >= 0 test bodies.
@@ -64,10 +67,30 @@ MYB_API void myb_nbody_set_pool(myb_nbody* nbody, myb_pool* pool);
 
 /* Level of the action of source on receiver (a directed edge: excluding only one direction of
  * a pair breaks the conservation of momentum, which is then the caller's choice). The source
- * must be massive and differ from the receiver. Errors: MYB_E_DOMAIN (indices, level),
- * MYB_E_NOMEM. */
+ * must be massive and differ from the receiver. Errors: MYB_E_DOMAIN (indices, level,
+ * MYB_INTERACTION_EIH without myb_nbody_set_relativity), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_nbody_set_interaction(myb_nbody* nbody, size_t receiver,
                                                            size_t source, myb_interaction level);
+
+/* First post-Newtonian N-body equations (Einstein-Infeld-Hoffmann with the PPN parameters;
+ * T. D. Moyer, DESCANSO Monograph 2 (2003) eq. 4-61, the equations of the JPL ephemerides,
+ * W. M. Folkner et al., IPN PR 42-196 (2014) eq. 1). For a receiver i and a source j with
+ * r_ij = |x_j - x_i|, the Newtonian term GM_j (x_j - x_i) / r_ij^3 is joined by
+ *   GM_j (x_j - x_i) / (c^2 r_ij^3) { -2 (beta + gamma) U_i - (2 beta - 1) U_j + gamma v_i^2
+ *       + (1 + gamma) v_j^2 - 2 (1 + gamma) v_i.v_j - 3/2 [(x_i - x_j).v_j / r_ij]^2
+ *       + 1/2 (x_j - x_i).a_j }
+ *   + GM_j / (c^2 r_ij^3) [(x_i - x_j).((2 + 2 gamma) v_i - (1 + 2 gamma) v_j)] (v_i - v_j)
+ *   + (3 + 4 gamma) GM_j a_j / (2 c^2 r_ij),
+ * with U_k the Newtonian potential and a_k the Newtonian acceleration of body k from its own
+ * sources (the graph), v_k its velocity. Checked against the Euler-Lagrange equations of the
+ * global PPN Lagrangian (C. Bernus et al., arXiv:2301.01186, app. B; tests/data/rel).
+ *
+ * myb_nbody_set_relativity stores the parameters and makes EIH the default level of every
+ * pair (NULL: back to Newtonian). The accelerations then depend on the velocities: only
+ * myb_nbody_acceleration_xv computes them (myb_nbody_acceleration fails with MYB_E_DOMAIN),
+ * and the Wisdom-Holman integrators reject the system. Errors: MYB_E_DOMAIN (invalid
+ * parameters). */
+MYB_API MYB_NODISCARD myb_status myb_nbody_set_relativity(myb_nbody* nbody, const myb_ppn* ppn);
 
 /* a = accelerations at positions x (3 per body) of the system nbody (a myb_nbody*: the
  * signature is myb_position_accel_function, so the system can be integrated directly by
@@ -78,7 +101,10 @@ MYB_API MYB_NODISCARD myb_status myb_nbody_set_interaction(myb_nbody* nbody, siz
 MYB_API MYB_NODISCARD myb_status myb_nbody_acceleration(void* nbody, double t, const double* x,
                                                         double* a);
 
-/* The same with velocities (ignored): the signature of myb_accel_function, for IAS15. */
+/* The same with velocities (used by the 1PN terms): the signature of myb_accel_function, for
+ * IAS15 and Gauss-Jackson. With 1PN terms no allocation either; the Newtonian part and the 1PN
+ * part are summed per receiver in a fixed order (Sum2), so the bits do not depend on the
+ * number of threads. */
 MYB_API MYB_NODISCARD myb_status myb_nbody_acceleration_xv(void* nbody, double t, const double* x,
                                                            const double* v, double* a);
 
@@ -102,6 +128,29 @@ typedef struct myb_nbody_invariants {
 MYB_API MYB_NODISCARD myb_status myb_nbody_invariants_of(const myb_nbody* nbody, const double* x,
                                                          const double* v,
                                                          myb_nbody_invariants* invariants);
+
+/* First post-Newtonian conserved quantities of the massive bodies for the parameters of
+ * myb_nbody_set_relativity (C. Bernus et al., arXiv:2301.01186, app. B), with GM in place of
+ * masses (every quantity carries one factor G), U_A = sum_{B != A} GM_B / r_AB:
+ *   energy   h = sum GM v^2/2 - 1/2 sum sum' GM_A GM_B / r_AB + 1/c^2 [ sum 3 GM v^4 / 8
+ *              + (2 beta - 1)/2 sum GM_A U_A^2 + 1/2 sum sum' GM_A GM_B / r_AB
+ *                ((2 gamma + 1) v_A^2 - (4 gamma + 3)/2 v_A.v_B - 1/2 (v_A.n)(v_B.n)) ]
+ *   momentum P = sum GM_A v_A [1 + (v_A^2 - U_A) / (2 c^2)]
+ *              - 1/(2 c^2) sum sum' GM_A GM_B / r_AB (n_AB.v_A) n_AB
+ *   centre  (the relativistic barycentre, origin of the BCRS of the JPL ephemerides) and its
+ *            velocity: sum GM*_A x_A / sum GM*_A and P / sum GM*_A,
+ *            GM*_A = GM_A [1 + (v_A^2 - U_A) / (2 c^2)].
+ * Errors: MYB_E_DOMAIN (no relativity parameters, coincident bodies, non-finite input). */
+typedef struct myb_nbody_pn_invariants {
+  myb_dd energy;
+  double momentum[3];
+  double center[3];
+  double center_velocity[3];
+} myb_nbody_pn_invariants;
+
+MYB_API MYB_NODISCARD myb_status myb_nbody_pn_invariants_of(const myb_nbody* nbody,
+                                                            const double* x, const double* v,
+                                                            myb_nbody_pn_invariants* invariants);
 
 /* ---- Wisdom-Holman splitting integrators ----------------------------------------------------
  * H = H_Kepler + H_interaction in canonical Jacobi coordinates (Wisdom & Holman 1991): body 0
@@ -149,8 +198,8 @@ typedef struct myb_wh_stats {
 
 typedef struct myb_wh myb_wh;
 
-/* The system must outlive the integrator. Errors: MYB_E_DOMAIN (options, GM_0 = 0),
- * MYB_E_OVERFLOW, MYB_E_NOMEM. */
+/* The system must outlive the integrator. Errors: MYB_E_DOMAIN (options, GM_0 = 0, 1PN
+ * terms in the system), MYB_E_OVERFLOW, MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_wh_create(myb_nbody* system, const myb_wh_options* options,
                                                const myb_allocator* allocator, myb_wh** wh);
 
@@ -158,7 +207,8 @@ MYB_API MYB_NODISCARD myb_status myb_wh_create(myb_nbody* system, const myb_wh_o
 MYB_API void myb_wh_destroy(myb_wh* wh);
 
 /* Starts at time t0 from inertial positions x and velocities v (3 per body of the system).
- * Errors: MYB_E_DOMAIN (non-finite input, coincident bodies), as for the drift and the kick. */
+ * Errors: MYB_E_DOMAIN (non-finite input, coincident bodies, 1PN terms in the system), as for
+ * the drift and the kick. */
 MYB_API MYB_NODISCARD myb_status myb_wh_start(myb_wh* wh, double t0, const double* x,
                                               const double* v);
 

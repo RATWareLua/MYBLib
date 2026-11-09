@@ -13,7 +13,12 @@
  * lane), the remainder one by one (sum_receiver, the scalar reference).
  *
  * Exclusions are kept sorted by (receiver, source); a receiver sums the gaps between its
- * excluded sources (and itself), so the inner loops have no branch. */
+ * excluded sources (and itself), so the inner loops have no branch.
+ *
+ * With the 1PN terms (myb_nbody_set_relativity) two more passes follow the Newtonian one, both
+ * per receiver in increasing source order: the potentials U_i, then the 1PN terms, which need
+ * the Newtonian accelerations and potentials of the sources. The 1PN terms enter their own
+ * Sum2 accumulator and are added to the Newtonian acceleration once. */
 #include <math.h> /* sqrt */
 #include <stdckdint.h>
 #include <string.h>
@@ -42,6 +47,13 @@ typedef struct accumulator {
   double c[3];
 } accumulator;
 
+/* A pair whose level was set explicitly to NEWTON or EIH (NONE pairs are exclusions). */
+typedef struct pn_edge {
+  size_t receiver;
+  size_t source;
+  int level;
+} pn_edge;
+
 struct myb_nbody {
   myb_allocator allocator;
   size_t massive;
@@ -58,6 +70,15 @@ struct myb_nbody {
   size_t* first; /* count + 1: excluded[first[i] .. first[i + 1]) have receiver i */
   int graph_valid;
   int reciprocal;
+  /* 1PN */
+  int relativity; /* parameters set: EIH is the default level */
+  myb_ppn ppn;
+  pn_edge* explicit_pn; /* sorted by (receiver, source) */
+  size_t explicit_count;
+  size_t explicit_capacity;
+  size_t* pn_first;  /* count + 1, as first[] for explicit_pn */
+  double* potential; /* count: U of each body (massive sources) */
+  double* newton;    /* 3 count: Newtonian accelerations of the current evaluation */
 };
 
 static int finite(double x) {
@@ -89,7 +110,7 @@ myb_status myb_nbody_create(size_t massive, size_t test, const double* gm,
   *s = (myb_nbody){.allocator = a, .massive = massive, .count = count};
   size_t doubles = 0;
   size_t firsts = 0;
-  if (ckd_mul(&doubles, count, (size_t)3) || ckd_add(&doubles, doubles, massive) ||
+  if (ckd_mul(&doubles, count, (size_t)7) || ckd_add(&doubles, doubles, massive) ||
       ckd_add(&firsts, count, (size_t)1)) {
     status = MYB_E_OVERFLOW;
     goto fail;
@@ -102,6 +123,8 @@ myb_status myb_nbody_create(size_t massive, size_t test, const double* gm,
   s->px = s->gm + massive;
   s->py = s->px + count;
   s->pz = s->py + count;
+  s->potential = s->pz + count;
+  s->newton = s->potential + count;
   memcpy(s->gm, gm, massive * sizeof(double));
   status = myb_internal_alloc_array(&a, count, sizeof(accumulator), &block);
   if (status != MYB_OK) {
@@ -113,10 +136,16 @@ myb_status myb_nbody_create(size_t massive, size_t test, const double* gm,
     goto fail;
   }
   s->first = block;
+  status = myb_internal_alloc_array(&a, firsts, sizeof(size_t), &block);
+  if (status != MYB_OK) {
+    goto fail;
+  }
+  s->pn_first = block;
   *nbody = s;
   return MYB_OK;
 
 fail:
+  myb_internal_release(&a, s->pn_first);
   myb_internal_release(&a, s->first);
   myb_internal_release(&a, s->acc);
   myb_internal_release(&a, s->gm);
@@ -130,6 +159,8 @@ void myb_nbody_destroy(myb_nbody* nbody) {
   }
   const myb_allocator a = nbody->allocator;
   myb_internal_release(&a, nbody->excluded);
+  myb_internal_release(&a, nbody->explicit_pn);
+  myb_internal_release(&a, nbody->pn_first);
   myb_internal_release(&a, nbody->first);
   myb_internal_release(&a, nbody->acc);
   myb_internal_release(&a, nbody->gm);
@@ -183,26 +214,20 @@ static int exclusion_found(const myb_nbody* s, size_t at, size_t receiver, size_
          s->excluded[at].source == source;
 }
 
-myb_status myb_nbody_set_interaction(myb_nbody* nbody, size_t receiver, size_t source,
-                                     myb_interaction level) {
-  MYB_CHECK(nbody != NULL);
-  myb_nbody* s = nbody;
-  if (receiver >= s->count || source >= s->massive || receiver == source ||
-      (level != MYB_INTERACTION_NONE && level != MYB_INTERACTION_NEWTON)) {
-    return MYB_E_DOMAIN;
-  }
+/* Removes the exclusion (receiver, source) if present. */
+static void exclusion_remove(myb_nbody* s, size_t receiver, size_t source) {
   const size_t at = exclusion_lower_bound(s, receiver, source);
-  const int present = exclusion_found(s, at, receiver, source);
-  if (level == MYB_INTERACTION_NEWTON) {
-    if (present) {
-      memmove(&s->excluded[at], &s->excluded[at + 1],
-              (s->excluded_count - at - 1) * sizeof(exclusion));
-      s->excluded_count--;
-      s->graph_valid = 0;
-    }
-    return MYB_OK;
+  if (exclusion_found(s, at, receiver, source)) {
+    memmove(&s->excluded[at], &s->excluded[at + 1],
+            (s->excluded_count - at - 1) * sizeof(exclusion));
+    s->excluded_count--;
+    s->graph_valid = 0;
   }
-  if (present) {
+}
+
+static myb_status exclusion_add(myb_nbody* s, size_t receiver, size_t source) {
+  const size_t at = exclusion_lower_bound(s, receiver, source);
+  if (exclusion_found(s, at, receiver, source)) {
     return MYB_OK;
   }
   if (s->excluded_count == s->excluded_capacity) {
@@ -230,6 +255,119 @@ myb_status myb_nbody_set_interaction(myb_nbody* nbody, size_t receiver, size_t s
   return MYB_OK;
 }
 
+/* First explicit 1PN-level edge whose key is not less than (receiver, source). */
+static size_t pn_lower_bound(const myb_nbody* s, size_t receiver, size_t source) {
+  size_t lo = 0;
+  size_t hi = s->explicit_count;
+  /* bound: the interval halves, at most 64 iterations */
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    const pn_edge* e = &s->explicit_pn[mid];
+    if (e->receiver < receiver || (e->receiver == receiver && e->source < source)) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+/* Records (or, for level < 0, forgets) the explicit level of a pair. */
+static myb_status pn_set(myb_nbody* s, size_t receiver, size_t source, int level) {
+  const size_t at = pn_lower_bound(s, receiver, source);
+  const int present = at < s->explicit_count && s->explicit_pn[at].receiver == receiver &&
+                      s->explicit_pn[at].source == source;
+  if (level < 0) {
+    if (present) {
+      memmove(&s->explicit_pn[at], &s->explicit_pn[at + 1],
+              (s->explicit_count - at - 1) * sizeof(pn_edge));
+      s->explicit_count--;
+      s->graph_valid = 0;
+    }
+    return MYB_OK;
+  }
+  if (present) {
+    s->explicit_pn[at].level = level;
+    return MYB_OK;
+  }
+  if (s->explicit_count == s->explicit_capacity) {
+    size_t capacity = s->explicit_capacity == 0 ? 16 : s->explicit_capacity;
+    if (s->explicit_capacity != 0 && ckd_mul(&capacity, capacity, (size_t)2)) {
+      return MYB_E_OVERFLOW;
+    }
+    void* block = NULL;
+    const myb_status status =
+        myb_internal_alloc_array(&s->allocator, capacity, sizeof(pn_edge), &block);
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (s->explicit_count != 0) {
+      memcpy(block, s->explicit_pn, s->explicit_count * sizeof(pn_edge));
+    }
+    myb_internal_release(&s->allocator, s->explicit_pn);
+    s->explicit_pn = block;
+    s->explicit_capacity = capacity;
+  }
+  memmove(&s->explicit_pn[at + 1], &s->explicit_pn[at],
+          (s->explicit_count - at) * sizeof(pn_edge));
+  s->explicit_pn[at] = (pn_edge){.receiver = receiver, .source = source, .level = level};
+  s->explicit_count++;
+  s->graph_valid = 0;
+  return MYB_OK;
+}
+
+myb_status myb_nbody_set_interaction(myb_nbody* nbody, size_t receiver, size_t source,
+                                     myb_interaction level) {
+  MYB_CHECK(nbody != NULL);
+  myb_nbody* s = nbody;
+  if (receiver >= s->count || source >= s->massive || receiver == source ||
+      (level != MYB_INTERACTION_NONE && level != MYB_INTERACTION_NEWTON &&
+       level != MYB_INTERACTION_EIH) ||
+      (level == MYB_INTERACTION_EIH && !s->relativity)) {
+    return MYB_E_DOMAIN;
+  }
+  if (level == MYB_INTERACTION_NONE) {
+    const myb_status status = exclusion_add(s, receiver, source);
+    if (status != MYB_OK) {
+      return status;
+    }
+    return pn_set(s, receiver, source, -1);
+  }
+  /* reserve the explicit edge first, so that a failure leaves the graph unchanged */
+  const myb_status status = pn_set(s, receiver, source, (int)level);
+  if (status != MYB_OK) {
+    return status;
+  }
+  exclusion_remove(s, receiver, source);
+  return MYB_OK;
+}
+
+myb_status myb_nbody_set_relativity(myb_nbody* nbody, const myb_ppn* ppn) {
+  MYB_CHECK(nbody != NULL);
+  myb_nbody* s = nbody;
+  if (ppn == NULL) {
+    /* back to Newtonian: pairs set to EIH become Newtonian */
+    for (size_t k = 0; k < s->explicit_count; ++k) {
+      if (s->explicit_pn[k].level == MYB_INTERACTION_EIH) {
+        s->explicit_pn[k].level = MYB_INTERACTION_NEWTON;
+      }
+    }
+    s->relativity = 0;
+    return MYB_OK;
+  }
+  if (myb_ppn_validate(ppn) != MYB_OK) {
+    return MYB_E_DOMAIN;
+  }
+  s->ppn = *ppn;
+  s->relativity = 1;
+  return MYB_OK;
+}
+
+int myb_internal_nbody_velocity_dependent(const myb_nbody* nbody) {
+  MYB_CHECK(nbody != NULL);
+  return nbody->relativity;
+}
+
 /* Index of the exclusions by receiver, and whether the massive part is reciprocal. */
 static void graph_update(myb_nbody* s) {
   if (s->graph_valid) {
@@ -242,6 +380,14 @@ static void graph_update(myb_nbody* s) {
       ++e;
     }
     s->first[i] = e;
+  }
+  size_t p = 0;
+  for (size_t i = 0; i <= s->count; ++i) {
+    /* bound: p only grows, to explicit_count */
+    while (p < s->explicit_count && s->explicit_pn[p].receiver < i) {
+      ++p;
+    }
+    s->pn_first[i] = p;
   }
   s->reciprocal = 1;
   for (size_t k = 0; k < s->excluded_count; ++k) {
@@ -472,10 +618,120 @@ static void sum_symmetric(myb_nbody* s, double* a) {
   }
 }
 
-myb_status myb_internal_nbody_acceleration_path(myb_nbody* nbody, const double* x, double* a,
-                                                myb_internal_nbody_path path) {
+/* ---- 1PN terms ------------------------------------------------------------------------------ */
+
+typedef struct pn_job {
+  const myb_nbody* s;
+  const double* v;
+  double* a;
+} pn_job;
+
+/* U_i = sum of GM_j / r_ij over the massive sources of i (Sum2, increasing j). */
+static void potential_range(void* context, size_t begin, size_t end) {
+  const pn_job* job = context;
+  const myb_nbody* s = job->s;
+  for (size_t i = begin; i < end; ++i) {
+    const double xi = s->px[i];
+    const double yi = s->py[i];
+    const double zi = s->pz[i];
+    size_t e = s->excluded_count == 0 ? 0 : s->first[i];
+    const size_t e_end = s->excluded_count == 0 ? 0 : s->first[i + 1];
+    double sum = 0.0;
+    double comp = 0.0;
+    for (size_t j = 0; j < s->massive; ++j) {
+      /* bound: e only grows, to e_end */
+      while (e < e_end && s->excluded[e].source < j) {
+        ++e;
+      }
+      if (j == i || (e < e_end && s->excluded[e].source == j)) {
+        continue;
+      }
+      const double dx = s->px[j] - xi;
+      const double dy = s->py[j] - yi;
+      const double dz = s->pz[j] - zi;
+      double err = 0.0;
+      sum = myb_eft_two_sum(sum, s->gm[j] / sqrt(dx * dx + dy * dy + dz * dz), &err);
+      comp += err;
+    }
+    s->potential[i] = sum + comp;
+  }
+}
+
+/* a_i = Newtonian a_i + the 1PN terms of its EIH sources (Sum2, increasing j). */
+static void pn_range(void* context, size_t begin, size_t end) {
+  const pn_job* job = context;
+  const myb_nbody* s = job->s;
+  const double beta = s->ppn.beta;
+  const double gamma = s->ppn.gamma;
+  const double inv_c2 = 1.0 / (s->ppn.c * s->ppn.c);
+  const int default_level = s->relativity ? MYB_INTERACTION_EIH : MYB_INTERACTION_NEWTON;
+  for (size_t i = begin; i < end; ++i) {
+    const double xi = s->px[i];
+    const double yi = s->py[i];
+    const double zi = s->pz[i];
+    const double* vi = job->v + 3 * i;
+    const double ui = s->potential[i];
+    const double vi2 = vi[0] * vi[0] + vi[1] * vi[1] + vi[2] * vi[2];
+    size_t e = s->excluded_count == 0 ? 0 : s->first[i];
+    const size_t e_end = s->excluded_count == 0 ? 0 : s->first[i + 1];
+    size_t p = s->explicit_count == 0 ? 0 : s->pn_first[i];
+    const size_t p_end = s->explicit_count == 0 ? 0 : s->pn_first[i + 1];
+    accumulator acc = {};
+    for (size_t j = 0; j < s->massive; ++j) {
+      /* bound: e and p only grow, to e_end and p_end */
+      while (e < e_end && s->excluded[e].source < j) {
+        ++e;
+      }
+      while (p < p_end && s->explicit_pn[p].source < j) {
+        ++p;
+      }
+      if (j == i || (e < e_end && s->excluded[e].source == j)) {
+        continue;
+      }
+      const int level =
+          (p < p_end && s->explicit_pn[p].source == j) ? s->explicit_pn[p].level : default_level;
+      if (level != MYB_INTERACTION_EIH) {
+        continue;
+      }
+      const double dx = s->px[j] - xi;
+      const double dy = s->py[j] - yi;
+      const double dz = s->pz[j] - zi;
+      const double r2 = dx * dx + dy * dy + dz * dz;
+      const double r = sqrt(r2);
+      const double* vj = job->v + 3 * j;
+      const double* aj = s->newton + 3 * j;
+      const double vj2 = vj[0] * vj[0] + vj[1] * vj[1] + vj[2] * vj[2];
+      const double vivj = vi[0] * vj[0] + vi[1] * vj[1] + vi[2] * vj[2];
+      const double dvj = dx * vj[0] + dy * vj[1] + dz * vj[2];
+      const double daj = dx * aj[0] + dy * aj[1] + dz * aj[2];
+      const double f = -2.0 * (beta + gamma) * ui - (2.0 * beta - 1.0) * s->potential[j] +
+                       gamma * vi2 + (1.0 + gamma) * vj2 - 2.0 * (1.0 + gamma) * vivj -
+                       1.5 * dvj * dvj / r2 + 0.5 * daj;
+      const double w0 = (2.0 + 2.0 * gamma) * vi[0] - (1.0 + 2.0 * gamma) * vj[0];
+      const double w1 = (2.0 + 2.0 * gamma) * vi[1] - (1.0 + 2.0 * gamma) * vj[1];
+      const double w2 = (2.0 + 2.0 * gamma) * vi[2] - (1.0 + 2.0 * gamma) * vj[2];
+      const double g = -(dx * w0 + dy * w1 + dz * w2);
+      const double s1 = s->gm[j] / (r2 * r);
+      const double s3 = (1.5 + 2.0 * gamma) * s->gm[j] / r;
+      const double tx = s1 * (f * dx + g * (vi[0] - vj[0])) + s3 * aj[0];
+      const double ty = s1 * (f * dy + g * (vi[1] - vj[1])) + s3 * aj[1];
+      const double tz = s1 * (f * dz + g * (vi[2] - vj[2])) + s3 * aj[2];
+      accumulate(&acc, tx * inv_c2, ty * inv_c2, tz * inv_c2);
+    }
+    for (int k = 0; k < 3; ++k) {
+      job->a[3 * i + (size_t)k] = s->newton[3 * i + (size_t)k] + (acc.s[k] + acc.c[k]);
+    }
+  }
+}
+
+myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const double* x,
+                                                   const double* v, double* a,
+                                                   myb_internal_nbody_path path) {
   MYB_CHECK(nbody != NULL && x != NULL && a != NULL);
   myb_nbody* s = nbody;
+  if (s->relativity && v == NULL) {
+    return MYB_E_DOMAIN;
+  }
   graph_update(s);
   for (size_t i = 0; i < s->count; ++i) {
     s->px[i] = x[3 * i];
@@ -494,12 +750,24 @@ myb_status myb_internal_nbody_acceleration_path(myb_nbody* nbody, const double* 
                ? MYB_NBODY_PATH_RECEIVER
                : MYB_NBODY_PATH_SYMMETRIC;
   }
+  double* newtonian = s->relativity ? s->newton : a;
   if (path == MYB_NBODY_PATH_SYMMETRIC && s->excluded_count == 0) {
-    sum_symmetric(s, a);
+    sum_symmetric(s, newtonian);
   } else {
-    receiver_job job = {.s = s, .a = a, .vector = path != MYB_NBODY_PATH_RECEIVER_SCALAR};
+    receiver_job job = {.s = s, .a = newtonian, .vector = path != MYB_NBODY_PATH_RECEIVER_SCALAR};
     const size_t grain = s->massive >= PART_PAIRS ? 1 : PART_PAIRS / s->massive;
     myb_internal_pool_for(s->pool, s->count, grain, receiver_range, &job);
+  }
+  if (s->relativity) {
+    for (size_t i = 0; i < 3 * s->count; ++i) {
+      if (!finite(v[i])) {
+        return MYB_E_DOMAIN;
+      }
+    }
+    pn_job job = {.s = s, .v = v, .a = a};
+    const size_t grain = s->massive >= PART_PAIRS ? 1 : PART_PAIRS / s->massive;
+    myb_internal_pool_for(s->pool, s->count, grain, potential_range, &job);
+    myb_internal_pool_for(s->pool, s->count, grain, pn_range, &job);
   }
   for (size_t i = 0; i < 3 * s->count; ++i) {
     if (!finite(a[i])) {
@@ -509,16 +777,21 @@ myb_status myb_internal_nbody_acceleration_path(myb_nbody* nbody, const double* 
   return MYB_OK;
 }
 
+myb_status myb_internal_nbody_acceleration_path(myb_nbody* nbody, const double* x, double* a,
+                                                myb_internal_nbody_path path) {
+  return myb_internal_nbody_acceleration_xv_path(nbody, x, NULL, a, path);
+}
+
 myb_status myb_nbody_acceleration(void* nbody, double t, const double* x, double* a) {
   (void)t;
-  return myb_internal_nbody_acceleration_path(nbody, x, a, MYB_NBODY_PATH_AUTO);
+  return myb_internal_nbody_acceleration_xv_path(nbody, x, NULL, a, MYB_NBODY_PATH_AUTO);
 }
 
 myb_status myb_nbody_acceleration_xv(void* nbody, double t, const double* x, const double* v,
                                      double* a) {
   (void)t;
-  (void)v;
-  return myb_internal_nbody_acceleration_path(nbody, x, a, MYB_NBODY_PATH_AUTO);
+  MYB_CHECK(v != NULL);
+  return myb_internal_nbody_acceleration_xv_path(nbody, x, v, a, MYB_NBODY_PATH_AUTO);
 }
 
 /* ---- Invariants ---------------------------------------------------------------------------- */
@@ -599,6 +872,86 @@ myb_status myb_nbody_invariants_of(const myb_nbody* nbody, const double* x, cons
     out.angular_momentum[k] = myb_dd_to_double(l[k]);
     out.center[k] = myb_dd_to_double(myb_dd_div(c[k], gm_sum));
     out.center_velocity[k] = myb_dd_to_double(myb_dd_div(p[k], gm_sum));
+  }
+  if (!finite(out.energy.hi)) {
+    return MYB_E_DOMAIN;
+  }
+  *invariants = out;
+  return MYB_OK;
+}
+
+myb_status myb_nbody_pn_invariants_of(const myb_nbody* nbody, const double* x, const double* v,
+                                      myb_nbody_pn_invariants* invariants) {
+  MYB_CHECK(nbody != NULL && x != NULL && v != NULL && invariants != NULL);
+  const myb_nbody* s = nbody;
+  if (!s->relativity) {
+    return MYB_E_DOMAIN;
+  }
+  myb_nbody_invariants newtonian;
+  const myb_status status = myb_nbody_invariants_of(nbody, x, v, &newtonian);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const size_t m = s->massive;
+  const double inv_c2 = 1.0 / (s->ppn.c * s->ppn.c);
+  const double beta = s->ppn.beta;
+  const double gamma = s->ppn.gamma;
+  myb_sum_acc energy = {0};
+  myb_sum_acc momentum[3] = {{0}};
+  myb_sum_acc center[3] = {{0}};
+  myb_sum_acc weight = {0};
+  for (size_t a = 0; a < m; ++a) {
+    const double* xa = x + 3 * a;
+    const double* va = v + 3 * a;
+    const double ga = s->gm[a];
+    const double va2 = va[0] * va[0] + va[1] * va[1] + va[2] * va[2];
+    /* U_a and the pair terms of a */
+    myb_sum_acc potential = {0};
+    myb_sum_acc pair_energy = {0};
+    myb_sum_acc pair_momentum[3] = {{0}};
+    for (size_t b = 0; b < m; ++b) {
+      if (b == a) {
+        continue;
+      }
+      const double* xb = x + 3 * b;
+      const double* vb = v + 3 * b;
+      const double d[3] = {xa[0] - xb[0], xa[1] - xb[1], xa[2] - xb[2]};
+      const double r = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      const double n[3] = {d[0] / r, d[1] / r, d[2] / r};
+      const double k = s->gm[b] / r; /* GM_b / r_ab */
+      const double nva = n[0] * va[0] + n[1] * va[1] + n[2] * va[2];
+      const double nvb = n[0] * vb[0] + n[1] * vb[1] + n[2] * vb[2];
+      const double vavb = va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2];
+      myb_sum_acc_add(&potential, k);
+      myb_sum_acc_add(&pair_energy, 0.5 * ga * k *
+                                        ((2.0 * gamma + 1.0) * va2 -
+                                         (2.0 * gamma + 1.5) * vavb - 0.5 * nva * nvb));
+      for (int c = 0; c < 3; ++c) {
+        myb_sum_acc_add(&pair_momentum[c], -0.5 * ga * k * nva * n[c]);
+      }
+    }
+    const double ua = myb_sum_acc_value(&potential);
+    const double factor = 1.0 + 0.5 * (va2 - ua) * inv_c2; /* GM*_a / GM_a */
+    myb_sum_acc_add(&energy, 0.375 * ga * va2 * va2 * inv_c2);
+    myb_sum_acc_add(&energy, 0.5 * (2.0 * beta - 1.0) * ga * ua * ua * inv_c2);
+    myb_sum_acc_add(&energy, myb_sum_acc_value(&pair_energy) * inv_c2);
+    myb_sum_acc_add(&weight, ga * factor);
+    for (int c = 0; c < 3; ++c) {
+      myb_sum_acc_add(&momentum[c], ga * factor * va[c]);
+      myb_sum_acc_add(&momentum[c], myb_sum_acc_value(&pair_momentum[c]) * inv_c2);
+      myb_sum_acc_add(&center[c], ga * factor * xa[c]);
+    }
+  }
+  const double total = myb_sum_acc_value(&weight);
+  if (!(total > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  myb_nbody_pn_invariants out = {
+      .energy = myb_dd_add_d(newtonian.energy, myb_sum_acc_value(&energy))};
+  for (int c = 0; c < 3; ++c) {
+    out.momentum[c] = myb_sum_acc_value(&momentum[c]);
+    out.center[c] = myb_sum_acc_value(&center[c]) / total;
+    out.center_velocity[c] = out.momentum[c] / total;
   }
   if (!finite(out.energy.hi)) {
     return MYB_E_DOMAIN;

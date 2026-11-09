@@ -1,0 +1,119 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+/* myb/force.h — forces on a body other than its own field's gravity: perturbations by point
+ * masses, radiation of a source (direct, reflected and emitted by a planet) and its shadows,
+ * atmospheric drag, empirical accelerations.
+ *
+ * Every function is a pure function of its arguments (positions and velocities in one frame,
+ * SI units); none knows a particular body: luminosities, radii, coefficients of a planet's
+ * albedo, densities of an atmosphere come from the caller. Accelerations are ADDED to a[3], so
+ * that a model is the sum of its calls. */
+#ifndef MYB_FORCE_H_
+#define MYB_FORCE_H_
+
+#include <stddef.h>
+
+#include "myb/core.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ---- Point masses -------------------------------------------------------------------------- */
+
+/* Perturbation of a third body of gravitational parameter gm at s (m, relative to the central
+ * body) on an object at r (relative to the central body): the direct term minus the indirect
+ * one, a += gm ((s - r)/|s - r|^3 - s/|s|^3), evaluated in R. H. Battin's form (An
+ * Introduction to the Mathematics and Methods of Astrodynamics, 1999, §8.4) without the
+ * cancellation of the two terms when |r| << |s|. */
+MYB_API void myb_force_third_body(double gm, const double s[3], const double r[3], double a[3]);
+
+/* ---- Radiation ------------------------------------------------------------------------------- */
+
+/* Flux (W m^-2) of a source of luminosity L (W) at distance d (m): L / (4 pi d^2). The pressure
+ * on a perfect absorber is flux / c. */
+MYB_API double myb_radiation_flux(double luminosity, double distance);
+
+/* A sphere (or an object treated as one): a += pressure * cr * area_over_mass * u, with u the
+ * unit direction of propagation (from the source to the object), cr = 1 + reflectivity. */
+MYB_API void myb_force_radiation_sphere(double pressure, double cr, double area_over_mass,
+                                        const double u[3], double a[3]);
+
+/* A flat plate: area (m^2), outward unit normal, fractions of the incoming light reflected
+ * specularly and diffusely (the rest is absorbed); thermal != 0 re-emits the absorbed part at
+ * once as a Lambertian emitter on the lit side. */
+typedef struct myb_plate {
+  double area;
+  double normal[3];
+  double specular;
+  double diffuse;
+  int thermal;
+} myb_plate;
+
+/* Sum over plates lit from the front (n.u < 0) of
+ *   F = pressure A cos(theta) [ (1 - specular) u - 2 (specular cos(theta) + diffuse / 3) n ]
+ *       (- (2/3) absorbed A cos(theta) pressure n with thermal re-emission),
+ * cos(theta) = -n.u (D. Vallado, Fundamentals of Astrodynamics, 2013, §9.6.3; Montenbruck &
+ * Gill, Satellite Orbits, 2000, eq. 3.75); a += F / mass. Plates, u and a share one frame
+ * (usually the body frame of the object). No self-shadowing. MYB_E_DOMAIN: mass <= 0, a plate
+ * with a negative area, a normal that is not unit to 1e-12, fractions outside [0, 1] or summing
+ * to more than 1. */
+MYB_API MYB_NODISCARD myb_status myb_force_radiation_plates(double pressure, double mass,
+                                                            const myb_plate* plates, size_t count,
+                                                            const double u[3], double a[3]);
+
+/* Fraction (0 .. 1) of the light of a spherical source still reaching an object when an
+ * occulting sphere stands in front: source and occulter are positions relative to the object
+ * (m), with their radii. Exact geometry on the sky sphere (the occulter's disk is a spherical
+ * cap, not a plane circle, which matters close to a planet), and the brightness of the source's
+ * disk I(mu) = 1 - u1 (1 - mu) - u2 (1 - mu)^2 (limb darkening; limb = NULL: uniform). Inside
+ * the occulter: 0; the occulter not in front (beyond the source or behind the object): 1.
+ * Integration over the source's disk by annuli, whose occulted arcs are exact, with Gauss-
+ * Legendre rules on the intervals between the kinks of the integrand: relative error < 1e-12. */
+MYB_API double myb_shadow_fraction(const double source[3], double source_radius,
+                                   const double occulter[3], double occulter_radius,
+                                   const double limb[2]);
+
+/* Radiation of a planet: sunlight reflected by its surface (albedo, Lambertian) and its own
+ * thermal emission (emissivity, the absorbed flux re-emitted uniformly over the sphere), both
+ * coefficients zonal functions a = a0 + a1 P1(sin phi) + a2 P2(sin phi) of the latitude, with
+ * a1 = c0 + c1 cos(w (t - t0)) + c2 sin(w (t - t0)) (seasonal) — the model of G. Knocke,
+ * J. Ries, B. Tapley (AIAA 88-4292, 1988). The visible cap of the planet is divided into a
+ * central disk and `rings` rings of 6 k elements of equal projected weight. */
+typedef struct myb_planet_radiation {
+  double radius;         /* m */
+  double albedo[5];      /* a0, c0, c1, c2, a2 */
+  double emissivity[5];  /* e0, k0, k1, k2, e2 */
+  double omega;          /* rad s^-1 of the seasonal term */
+} myb_planet_radiation;
+
+/* r: object, sun: source, both in the planet's body-fixed frame (z = rotation axis), m;
+ * solar_flux: the flux of the source at the planet (W m^-2); phase = omega (t - t0) (rad);
+ * cr_area_over_mass: cr A / m of the object treated as a sphere; rings: 1 .. 50.
+ * a += acceleration (same frame). MYB_E_DOMAIN: object inside the planet, invalid rings or
+ * values. */
+MYB_API MYB_NODISCARD myb_status myb_force_planet_radiation(const myb_planet_radiation* planet,
+                                                            const double r[3], const double sun[3],
+                                                            double solar_flux, double phase,
+                                                            double cr_area_over_mass, int rings,
+                                                            double a[3]);
+
+/* ---- Atmosphere -------------------------------------------------------------------------------- */
+
+/* Drag: a += -1/2 rho cd_area_over_mass |v| v, with v the velocity relative to the atmosphere
+ * (e.g. v - w x r for an atmosphere rotating with the planet) and rho in kg m^-3. */
+MYB_API void myb_force_drag(double density, double cd_area_over_mass, const double v[3],
+                            double a[3]);
+
+/* ---- Empirical ------------------------------------------------------------------------------- */
+
+/* An acceleration given in the radial, transverse (along-track for a circular orbit) and normal
+ * directions of the orbit (r, v): a += a_rtn[0] R + a_rtn[1] T + a_rtn[2] N. MYB_E_DOMAIN: r
+ * and v parallel or zero. */
+MYB_API MYB_NODISCARD myb_status myb_force_empirical_rtn(const double r[3], const double v[3],
+                                                         const double a_rtn[3], double a[3]);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MYB_FORCE_H_ */

@@ -61,7 +61,15 @@ add_library(myb STATIC
   src/frames/orbital.c
   src/frames/rotation.c
   src/frames/tkframe.c
+  src/force/force.c
+  src/force/radiation.c
   src/frames/wgccre.c
+  src/grav/ellipsoidal.c
+  src/grav/figure.c
+  src/grav/mascon.c
+  src/grav/polyhedron.c
+  src/grav/sh.c
+  src/grav/tides.c
   src/integ/dop853.c
   src/integ/event.c
   src/integ/gauss_jackson.c
@@ -73,6 +81,7 @@ add_library(myb STATIC
   src/kepler/anomaly.c
   src/kin/segset.c
   src/kin/spk.c
+  src/kin/sp3.c
   src/kin/spk_segment.c
   src/kepler/elements.c
   src/kepler/propagate.c
@@ -83,6 +92,7 @@ add_library(myb STATIC
   src/num/root.c
   src/num/series.c
   src/num/sum.c
+  src/rel/rel.c
   src/cmath/cmath.c
   src/time/instant.c
   src/transfer/lambert.c
@@ -116,6 +126,12 @@ if(CMAKE_CXX_COMPILER)
   set_target_properties(myb_headers_cxx17 PROPERTIES CXX_STANDARD 17 CXX_EXTENSIONS OFF)
   target_link_libraries(myb_headers_cxx17 PRIVATE myb)
   target_compile_options(myb_headers_cxx17 PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+# ---- Optional modules of particular bodies (ext/) -------------------------------------
+option(MYB_BUILD_EXT "Build the empirical models of ext/ (NRLMSISE-00)" ON)
+if(MYB_BUILD_EXT)
+  add_subdirectory(ext)
 endif()
 
 # ---- Tests ----------------------------------------------------------------------------

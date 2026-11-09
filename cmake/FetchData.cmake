@@ -18,6 +18,8 @@ set(_files
   "header.440|https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/de440/header.440|0f4636b663e6f00af9efa2b605ef23635489f56b23dd1a5e3821d3acc6ac3359|DE440 constants (AU, GM, ...)"
   "moon_pa_de440_200625.bpc|https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/moon_pa_de440_200625.bpc|60cd55aa401ea2ea97360636f567554bfe4e37bb829f901b4460a455dfaf783f|lunar principal-axis orientation of DE440 (binary PCK)"
   "pck00011.tpc|https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc|3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1|WGCCRE rotation models and radii (text PCK)"
+  "GOCO06s.gfc|https://icgem.gfz-potsdam.de/getmodel/gfc/32ec2884630a02670476f752d2a2bf1c395d8c8d6d768090ed95b4f04b0d5863/GOCO06s.gfc|351d9d20b84cd2c0f52ce77146b1e3b774f408200b579ffaf98593cf3d271819|GOCO06s gravity field, degree 300 with trends and annual terms (ICGEM, CC BY 4.0)"
+  "fes2004_Cnm-Snm.dat|https://iers-conventions.obspm.fr/content/chapter6/additional_info/tidemodels/fes2004_Cnm-Snm.dat|620dc48fd4d97baa14f532287b19788bd55dc2056e0b478ab0f928b951c194cf|FES2004 ocean tides as Stokes coefficients (IERS Conventions 2010, ch. 6)"
   "earth_latest_high_prec.bpc|https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/earth_latest_high_prec.bpc||ITRF93 Earth orientation from current EOP (binary PCK, updated daily)"
   "eopc04.1962-now|https://hpiers.obspm.fr/iers/eop/eopc04/eopc04.1962-now||IERS EOP 20 C04 daily series (updated weekly)"
   "finals2000A.all|https://datacenter.iers.org/data/9/finals2000A.all||IERS Bulletin A with predictions (updated daily)"

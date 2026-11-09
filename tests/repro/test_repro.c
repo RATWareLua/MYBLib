@@ -7,13 +7,16 @@
  *
  * Inputs come from SplitMix64 and are built from integer bits, so the workload itself does
  * not depend on any library function. */
+#include <math.h>
 #include <stdlib.h>
 
 #include "core/fpguard.h"
 #include "mtest.h"
 #include "myb/cmath.h"
 #include "myb/dyn.h"
+#include "myb/force.h"
 #include "myb/frames.h"
+#include "myb/grav.h"
 #include "myb/integ.h"
 #include "myb/io.h"
 #include "myb/kepler.h"
@@ -21,9 +24,10 @@
 #include "myb/lambert.h"
 #include "myb/num.h"
 #include "myb/pool.h"
+#include "myb/rel.h"
 #include "myb/time.h"
 
-static const uint64_t golden_hash = UINT64_C(0x38f060f6206c4bf6);
+static const uint64_t golden_hash = UINT64_C(0xbd6bc51c0c5d4fda);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -644,6 +648,253 @@ static void workload_frames(hasher* h, mt_rng* rng) {
   myb_kpool_destroy(pool);
 }
 
+/* Phase 6: EIH accelerations (1 and 4 threads compared bit for bit), 1PN invariants, the
+ * satellite terms of IERS 2010 eq. 10.12, the BCRS -> GCRS transformation. */
+static void workload_rel(hasher* h, mt_rng* rng) {
+  enum { M = 40, T = 5, N = M + T };
+  static double gm[M];
+  static double x[3 * N];
+  static double v[3 * N];
+  static double a1[3 * N];
+  static double a4[3 * N];
+  for (int i = 0; i < M; ++i) {
+    gm[i] = fabs(mt_double(rng, 10, 20));
+  }
+  for (int i = 0; i < 3 * N; ++i) {
+    x[i] = mt_double(rng, 30, 34) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+    v[i] = mt_double(rng, 10, 14) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+  }
+  myb_nbody* s = NULL;
+  myb_pool* pool = NULL;
+  MT_CHECK(myb_nbody_create(M, T, gm, NULL, &s) == MYB_OK);
+  MT_CHECK(myb_pool_create(4, NULL, &pool) == MYB_OK);
+  const myb_ppn ppn = {299792458.0, 1.0, 1.0};
+  MT_CHECK(myb_nbody_set_relativity(s, &ppn) == MYB_OK);
+  MT_CHECK(myb_nbody_set_interaction(s, 7, 3, MYB_INTERACTION_NEWTON) == MYB_OK);
+  MT_CHECK(myb_nbody_set_interaction(s, 3, 7, MYB_INTERACTION_NONE) == MYB_OK);
+  MT_CHECK(myb_nbody_acceleration_xv(s, 0.0, x, v, a1) == MYB_OK);
+  myb_nbody_set_pool(s, pool);
+  MT_CHECK(myb_nbody_acceleration_xv(s, 0.0, x, v, a4) == MYB_OK);
+  for (int i = 0; i < 3 * N; ++i) {
+    MT_CHECK(mt_bits(a1[i]) == mt_bits(a4[i]));
+    hash_double(h, a1[i]);
+  }
+  myb_nbody_pn_invariants inv;
+  MT_CHECK(myb_nbody_pn_invariants_of(s, x, v, &inv) == MYB_OK);
+  hash_dd(h, inv.energy);
+  for (int k = 0; k < 3; ++k) {
+    hash_double(h, inv.momentum[k]);
+    hash_double(h, inv.center[k]);
+  }
+  myb_nbody_destroy(s);
+  myb_pool_destroy(pool);
+  const double gm_e = 3.986004418e14;
+  const double j[3] = {0.0, 0.0, 9.8e8};
+  myb_rel_local_frame f = {.c = 299792458.0, .xe = {-2.6e10, 1.3e11, 5.7e10},
+                           .ve = {-2.98e4, -5.0e3, -2.2e3}, .ae = {1.5e-3, -5.6e-3, -2.4e-3},
+                           .w_ext = 8.9e8};
+  for (int k = 0; k < 50; ++k) {
+    const double r[3] = {mt_double(rng, 22, 25), -mt_double(rng, 22, 25), mt_double(rng, 20, 24)};
+    const double vel[3] = {mt_double(rng, 11, 13), mt_double(rng, 11, 13), -mt_double(rng, 9, 12)};
+    double out[3];
+    MT_CHECK(myb_rel_schwarzschild(&ppn, gm_e, r, vel, out) == MYB_OK);
+    hash_double(h, out[0]);
+    hash_double(h, out[2]);
+    MT_CHECK(myb_rel_lense_thirring(&ppn, gm_e, j, r, vel, out) == MYB_OK);
+    hash_double(h, out[1]);
+    MT_CHECK(myb_rel_de_sitter(&ppn, 1.32712440041279419e20, f.xe, f.ve, vel, out) == MYB_OK);
+    hash_double(h, out[0]);
+    const double xb[3] = {f.xe[0] + r[0], f.xe[1] + r[1], f.xe[2] + r[2]};
+    myb_rel_global_to_local(&f, xb, out);
+    hash_double(h, out[0] - r[0]);
+    myb_rel_local_to_global(&f, out, out);
+    hash_double(h, out[1]);
+    hash_double(h, myb_rel_local_time_shift(&f, xb));
+  }
+}
+
+/* Phase 7: gravity fields (spherical and ellipsoidal harmonics, polyhedra, mascons, two
+ * figures), tides, forces, SP3. */
+static void workload_grav(hasher* h, mt_rng* rng) {
+  myb_diag diag = {0};
+  /* spherical harmonics, degree 40 with random coefficients */
+  enum { N = 40 };
+  static double c[(N + 1) * (N + 2) / 2];
+  static double s[(N + 1) * (N + 2) / 2];
+  for (int k = 0; k < (N + 1) * (N + 2) / 2; ++k) {
+    c[k] = mt_double(rng, -30, -12) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+    s[k] = mt_double(rng, -30, -12) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+  }
+  c[0] = 1.0;
+  myb_gravity_field* f = NULL;
+  myb_gravity_work* w = NULL;
+  MT_CHECK(myb_gravity_field_create(3.986004415e14, 6378136.3, N, c, s, NULL, &f) == MYB_OK);
+  MT_CHECK(myb_gravity_work_create(N, NULL, &w) == MYB_OK);
+  for (int k = 0; k < 20; ++k) {
+    double r[3];
+    for (int i = 0; i < 3; ++i) {
+      r[i] = mt_double(rng, 22, 23) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+    }
+    double v = 0.0;
+    double a[3];
+    MT_CHECK(myb_gravity_field_eval(f, w, r, k % 3, -1, &v, a) == MYB_OK);
+    hash_double(h, v);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, a[i]);
+    }
+  }
+  /* time-variable terms (ICGEM 2.0) and tides of IERS 2010 on a degree-4 field */
+  myb_gravity_field* tv = NULL;
+  MT_CHECK(myb_gravity_field_load_icgem_file(MYB_TEST_DATA_DIR "/grav/synthetic2.gfc", 0, NULL,
+                                             &tv, &diag) == MYB_OK);
+  myb_kpool* pool = NULL;
+  myb_tides* tides = NULL;
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/grav/iers2010-tides.tk", &diag) == MYB_OK);
+  MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &tides, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_load_ocean_file(tides, MYB_TEST_DATA_DIR "/grav/fes2004_excerpt.dat", 3,
+                                     &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  for (int k = 0; k < 4; ++k) {
+    const myb_time t = myb_time_from_seconds(8.0e8 + 3.1e7 * k);
+    myb_gravity_field_set_time(tv, t);
+    const myb_tide_raiser raisers[2] = {{4.9028e12, {3.0e8, -2.2e8, 1.1e8 * k}},
+                                        {1.32712440018e20, {1.4e11, 4.0e10, -2.0e10}}};
+    const myb_tides_input in = {.raisers = raisers, .count = 2, .t = t, .xp = 7e-7,
+                                .yp = 1.6e-6, .flags = MYB_TIDES_ALL};
+    MT_CHECK(myb_tides_apply(tides, tv, &in) == MYB_OK);
+    for (int n = 0; n <= 3; ++n) {
+      for (int m = 0; m <= n; ++m) {
+        double cc = 0.0;
+        double ss = 0.0;
+        MT_CHECK(myb_gravity_field_coefficient(tv, n, m, &cc, &ss) == MYB_OK);
+        hash_double(h, cc);
+        hash_double(h, ss);
+      }
+    }
+  }
+  myb_tides_destroy(tides);
+  myb_gravity_field_destroy(tv);
+  /* polyhedron, mascons, two figures */
+  double vert[8][3];
+  for (int k = 0; k < 8; ++k) {
+    vert[k][0] = (k & 1) ? 2.0 : -1.0;
+    vert[k][1] = (k & 2) ? 1.5 : -0.5;
+    vert[k][2] = (k & 4) ? 0.7 : -2.0;
+  }
+  static const size_t faces[12][3] = {{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6},
+                                      {0, 1, 5}, {0, 5, 4}, {2, 6, 7}, {2, 7, 3},
+                                      {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+  myb_polyhedron* poly = NULL;
+  MT_CHECK(myb_polyhedron_create(&vert[0][0], 8, &faces[0][0], 12, 6.674e-8, NULL, &poly) ==
+           MYB_OK);
+  double gm[8];
+  for (int k = 0; k < 8; ++k) {
+    gm[k] = fabs(mt_double(rng, -2, 2));
+  }
+  for (int k = 0; k < 10; ++k) {
+    double r[3];
+    for (int i = 0; i < 3; ++i) {
+      r[i] = mt_double(rng, 0, 3) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+    }
+    double v = 0.0;
+    double a[3];
+    double lap = 0.0;
+    MT_CHECK(myb_polyhedron_eval(poly, r, &v, a, &lap) == MYB_OK);
+    hash_double(h, v);
+    hash_double(h, a[k % 3]);
+    hash_double(h, lap);
+    MT_CHECK(myb_mascons_eval(gm, &vert[0][0], 8, r, &v, a) == MYB_OK);
+    hash_double(h, v);
+    hash_double(h, a[2]);
+  }
+  myb_polyhedron_destroy(poly);
+  double qa[9];
+  double qb[9];
+  myb_quadrupole_from_coefficients(3.986e14, 6.378e6, (const double[3]){-4.8e-4, 1e-10, 2.4e-6},
+                                   (const double[2]){1.4e-9, -1.4e-6}, qa);
+  myb_quadrupole_from_coefficients(4.9e12, 1.738e6, (const double[3]){-9.1e-5, 0.0, 3.5e-5},
+                                   (const double[2]){0.0, 0.0}, qb);
+  const double rot[9] = {0.8, 0.6, 0.0, -0.6, 0.8, 0.0, 0.0, 0.0, 1.0};
+  double qr[9];
+  myb_quadrupole_rotate(rot, qb, qr);
+  double aa[3] = {0.0, 0.0, 0.0};
+  double ab[3] = {0.0, 0.0, 0.0};
+  MT_CHECK(myb_figure_figure(3.986e14, qa, 4.9e12, qr, (const double[3]){3.1e8, -2.2e8, 0.4e8},
+                             aa, ab) == MYB_OK);
+  for (int i = 0; i < 3; ++i) {
+    hash_double(h, aa[i]);
+    hash_double(h, ab[i]);
+  }
+  /* ellipsoidal harmonics, degree 6 */
+  double alpha[49];
+  for (int k = 0; k < 49; ++k) {
+    alpha[k] = mt_double(rng, -12, -2) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+  }
+  alpha[0] = 1.0;
+  myb_ellipsoidal_field* e = NULL;
+  MT_CHECK(myb_ellipsoidal_field_create(4.46e5, (const double[3]){20e3, 7e3, 5.5e3}, 6, alpha,
+                                        NULL, &e) == MYB_OK);
+  for (int k = 0; k < 8; ++k) {
+    const double r[3] = {(21e3 + 1e3 * k) * (k % 2 ? 1.0 : -1.0), 3e3 * k, -2e3 + 500.0 * k};
+    double v = 0.0;
+    double a[3];
+    MT_CHECK(myb_ellipsoidal_field_eval(e, r, &v, a) == MYB_OK);
+    hash_double(h, v);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, a[i]);
+    }
+  }
+  myb_ellipsoidal_field_destroy(e);
+  /* forces */
+  for (int k = 0; k < 10; ++k) {
+    double r[3];
+    double s3[3];
+    for (int i = 0; i < 3; ++i) {
+      r[i] = mt_double(rng, 22, 24) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+      s3[i] = mt_double(rng, 36, 37) * (mt_int(rng, 0, 1) ? 1.0 : -1.0);
+    }
+    double a[3] = {0.0, 0.0, 0.0};
+    myb_force_third_body(1.32712440018e20, s3, r, a);
+    myb_force_drag(1e-13, 0.02, r, a);
+    MT_CHECK(myb_force_empirical_rtn(r, s3, (const double[3]){1e-9, -2e-9, 3e-9}, a) == MYB_OK);
+    const double occ[3] = {-r[0], -r[1], -r[2]};
+    const double src[3] = {s3[0] - r[0], s3[1] - r[1], s3[2] - r[2]};
+    hash_double(h, myb_shadow_fraction(src, 6.957e8, occ, 6.378e6, (const double[2]){0.6, 0.1}));
+    const myb_plate plates[2] = {{1.5, {0.0, 0.0, 1.0}, 0.3, 0.2, 1},
+                                 {0.7, {0.6, 0.8, 0.0}, 0.1, 0.5, 0}};
+    const double nr = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    const double u[3] = {-r[0] / nr, -r[1] / nr, -r[2] / nr};
+    MT_CHECK(myb_force_radiation_plates(4.56e-6, 500.0, plates, 2, u, a) == MYB_OK);
+    const myb_planet_radiation knocke = {.radius = 6378137.0,
+                                         .albedo = {0.34, 0.0, 0.10, 0.0, 0.29},
+                                         .emissivity = {0.68, 0.0, -0.07, 0.0, -0.18},
+                                         .omega = 1.99e-7};
+    const double rr[3] = {r[0], r[1], r[2] + (r[2] < 0.0 ? -7e6 : 7e6)};
+    MT_CHECK(myb_force_planet_radiation(&knocke, rr, s3, 1361.0, 0.5, 7.8e-4, 3 + k, a) ==
+             MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, a[i]);
+    }
+  }
+  /* SP3 */
+  myb_sp3* sp3 = NULL;
+  MT_CHECK(myb_sp3_load_file(MYB_TEST_DATA_DIR "/sp3/ilrsa.lageos1.250607.excerpt.sp3", NULL, &sp3,
+                             &diag) == MYB_OK);
+  if (sp3 != NULL) {
+    for (size_t k = 0; k < myb_sp3_epoch_count(sp3); k += 97) {
+      double p[3];
+      double v[3];
+      MT_CHECK(myb_sp3_state(sp3, 0, k, p, v) == 3);
+      hash_double(h, p[k % 3]);
+      hash_double(h, v[(k + 1) % 3]);
+    }
+    myb_sp3_destroy(sp3);
+  }
+  myb_gravity_work_destroy(w);
+  myb_gravity_field_destroy(f);
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -656,9 +907,25 @@ int main(void) {
   workload_kepler(&h, &rng);
   workload_integ(&h);
   workload_dyn(&h, &rng);
-  workload_frames(&h, &rng);
+  workload_frames(&h, &rng); /* phase 5 */
+  /* MYB_REPRO_PREFIX=<phase>: hash only the workloads up to that phase and compare with its
+   * golden value, to show that adding a phase changed no earlier bit */
+  const char* prefix = getenv("MYB_REPRO_PREFIX");
+  const int upto = prefix != NULL ? atoi(prefix) : 99;
+  if (upto >= 6) {
+    workload_rel(&h, &rng);
+  }
+  if (upto >= 7) {
+    workload_grav(&h, &rng);
+  }
+  uint64_t expected = golden_hash;
+  if (upto == 5) {
+    expected = UINT64_C(0x38f060f6206c4bf6);
+  } else if (upto == 6) {
+    expected = UINT64_C(0x9cb768b2ccddf18b);
+  }
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
-         h.values, golden_hash);
-  MT_CHECK(h.state == golden_hash);
+         h.values, expected);
+  MT_CHECK(h.state == expected);
   return mt_finish("test_repro");
 }

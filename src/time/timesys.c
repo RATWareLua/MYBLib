@@ -23,7 +23,8 @@ enum {
   SCALE_NAME_MAX = 16,
   SERIES_NAME_MAX = 15,
   VAR_NAME_SIZE = 64,
-  SERIES_ITERATIONS = 3, /* |dS/dX| < 1e-9: three fixed-point steps reach 1e-27 s */
+  SERIES_ITERATIONS = 1, /* |dS/dX| < 1e-9, |S| < 2e-3 s: the first value is within 2e-12 s,
+                            one fixed-point step within 2e-21 s (resolution of myb_time 1e-16 s) */
   MJD_J2000_DAY = 51544  /* J2000.0 = MJD 51544.5 */
 };
 

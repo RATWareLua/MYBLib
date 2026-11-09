@@ -18,6 +18,15 @@ typedef enum myb_internal_nbody_path {
                                                               double* a,
                                                               myb_internal_nbody_path path);
 
+/* The same with velocities (v may be NULL when no 1PN term is active). */
+[[nodiscard]] myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody,
+                                                                 const double* x,
+                                                                 const double* v, double* a,
+                                                                 myb_internal_nbody_path path);
+
+/* 1 if the accelerations depend on the velocities (1PN terms). */
+int myb_internal_nbody_velocity_dependent(const myb_nbody* nbody);
+
 /* 1 if the massive bodies interact pairwise both ways (every exclusion between two massive
  * bodies is mirrored), so that sum GM_i a_i = 0 over the massive bodies (Newton's third law). */
 int myb_internal_nbody_reciprocal(myb_nbody* nbody);

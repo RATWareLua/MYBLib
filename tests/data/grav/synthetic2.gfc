@@ -1,0 +1,24 @@
+Synthetic ICGEM file of format 2.0 for the tests of myb (values invented).
+begin_of_head ==========================================================
+modelname              synthetic2
+product_type           gravity_field
+earth_gravity_constant 3.986004415e+14
+radius                 6.3781363e+06
+max_degree             3
+norm                   fully_normalized
+tide_system            zero_tide
+errors                 formal
+format                 icgem2.0
+key     L    M         C                   S                sigma C   sigma S   t0/period
+end_of_head ============================================================
+gfc     0    0  1.0                 0.0                 0.0       0.0
+gfct    2    0 -4.841694947139e-04  0.000000000000e+00  0.0  0.0 20100101
+trnd    2    0 -2.154662425317e-11  0.000000000000e+00  0.0  0.0
+acos    2    0  8.331958055607e-11  0.000000000000e+00  0.0  0.0 1.0
+asin    2    0  7.523339889891e-11  0.000000000000e+00  0.0  0.0 1.0
+gfct    2    1 -3.383273346550e-10  1.453697346412e-09  0.0  0.0 20100101.1200
+trnd    2    1  1.0e-12             -2.0e-12            0.0  0.0
+acos    2    1  3.0e-11              4.0e-11            0.0  0.0 0.5
+gfc     2    2  2.439383573283e-06 -1.400273687120e-06  0.0  0.0
+gfc     3    0  9.571612070934e-07  0.0                 0.0  0.0
+gfc     3    3  7.212144036300e-07  1.414349261929e-06  0.0  0.0

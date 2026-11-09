@@ -1,0 +1,30 @@
+NRLMSISE-00 in myb (ext/nrlmsise00)
+
+The NRLMSISE-00 model and its coefficients were developed by Mike Picone, Alan Hedin and Doug
+Drob (Naval Research Laboratory). The original Fortran code states:
+
+    The source code is in the public domain and not licensed or under copyright. The
+    information and software may be used freely by the public. As required by 17 U.S.C. 403,
+    third parties producing copyrighted works consisting predominantly of the material
+    produced by U.S. government agencies must provide notice with such work(s) identifying
+    the U.S. Government material incorporated and stating that such material is not subject
+    to copyright protection.
+
+    Derived works shall not identify themselves in a manner that implies an endorsement by or
+    an affiliation with the Naval Research Laboratory.
+
+    RECIPIENT BEARS ALL RISK RELATING TO QUALITY AND PERFORMANCE OF THE SOFTWARE AND ANY
+    RELATED MATERIALS, AND AGREES TO INDEMNIFY THE NAVAL RESEARCH LABORATORY FOR ALL
+    THIRD-PARTY CLAIMS RESULTING FROM THE ACTIONS OF RECIPIENT IN THE USE OF THE SOFTWARE.
+
+Notice under 17 U.S.C. 403: the model, its algorithms and its coefficient tables in
+nrlmsise00.c are U.S. Government material, not subject to copyright protection.
+
+The C translation is by Dominik Brodowski (https://git.linta.de/~brodo/nrlmsise-00.git,
+revision bc9a2feba4344e74201281e563332688a4d09cc3), who states:
+
+    I am placing my NRLMSISE-00 C code into the public domain contingent on the original
+    Fortran code not being subject to US copyright.
+
+myb's changes (listed at the top of nrlmsise00.c) are under myb's BSD-3-Clause licence. This
+module is not endorsed by, nor affiliated with, the Naval Research Laboratory.
