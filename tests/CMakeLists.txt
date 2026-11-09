@@ -43,6 +43,9 @@ myb_add_test(test_ias15 SOURCES unit/test_ias15.c)
 myb_add_test(test_symplectic SOURCES unit/test_symplectic.c)
 myb_add_test(test_gauss_jackson SOURCES unit/test_gauss_jackson.c)
 myb_add_test(test_rkn12 SOURCES unit/test_rkn12.c)
+myb_add_test(test_pool SOURCES unit/test_pool.c)
+myb_add_test(test_nbody SOURCES unit/test_nbody.c)
+myb_add_test(test_whfast SOURCES unit/test_whfast.c)
 myb_add_test(test_repro SOURCES repro/test_repro.c)
 
 # IAU SOFA reference through ERFA (BSD-3-Clause), compiled for the tests only.
@@ -101,6 +104,8 @@ if(MYB_MPFR_INCLUDE_DIR AND MYB_MPFR_LIBRARY AND MYB_GMP_LIBRARY)
   myb_add_test(test_mpfr_yoshida SOURCES mpfr/test_mpfr_yoshida.c
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
   myb_add_test(test_mpfr_gauss_jackson SOURCES mpfr/test_mpfr_gauss_jackson.c
+    LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
+  myb_add_test(test_mpfr_wh SOURCES mpfr/test_mpfr_wh.c
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")
   myb_add_test(test_mpfr_rkn12 SOURCES mpfr/test_mpfr_rkn12.c
     LIBRARIES ${_mpfr_libs} INCLUDES "${MYB_MPFR_INCLUDE_DIR}")

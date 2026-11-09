@@ -50,7 +50,10 @@ add_library(myb STATIC
   src/body/body.c
   src/core/alloc.c
   src/core/check.c
+  src/core/pool.c
   src/core/status.c
+  src/dyn/nbody.c
+  src/dyn/whfast.c
   src/integ/dop853.c
   src/integ/event.c
   src/integ/gauss_jackson.c
@@ -79,6 +82,12 @@ target_include_directories(myb
   PRIVATE src third_party/core-math)
 target_compile_definitions(myb PUBLIC MYB_STATIC)
 myb_apply_flags(myb)
+if(NOT WIN32)
+  # src/platform/platform_posix.c: the worker threads of myb_pool.
+  set(THREADS_PREFER_PTHREAD_FLAG ON)
+  find_package(Threads REQUIRED)
+  target_link_libraries(myb PUBLIC Threads::Threads)
+endif()
 
 # ---- Public headers stay valid C17 and C++17 -------------------------------------------
 add_library(myb_headers_c17 OBJECT tests/compat/headers_c17.c)

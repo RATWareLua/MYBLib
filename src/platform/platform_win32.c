@@ -102,3 +102,150 @@ void myb_platform_fatal_exit(void) {
    * process exit code is 0xC0000409. */
   __fastfail(7);
 }
+
+/* ---- Threads ----------------------------------------------------------------------------------
+ * Slim reader/writer lock and condition variables (Windows Vista and later): no kernel object
+ * per wait, and the workers stay parked between jobs. */
+typedef struct team_worker {
+  myb_platform_team* team;
+  int member;
+  HANDLE thread;
+} team_worker;
+
+struct myb_platform_team {
+  myb_allocator allocator;
+  int members;
+  team_worker* workers; /* members - 1 */
+  SRWLOCK lock;
+  CONDITION_VARIABLE wake;
+  CONDITION_VARIABLE done;
+  uint64_t generation; /* incremented once per job */
+  int pending;         /* workers that have not finished the current job */
+  int busy;
+  int quit;
+  myb_platform_job* job;
+  void* context;
+};
+
+static DWORD WINAPI team_worker_main(LPVOID parameter) {
+  team_worker* w = parameter;
+  myb_platform_team* t = w->team;
+  uint64_t seen = 0;
+  AcquireSRWLockExclusive(&t->lock);
+  /* bound: one iteration per job; ends when destroy sets quit */
+  for (;;) {
+    /* bound: leaves on a new job or quit; a spurious wake-up re-tests the condition */
+    while (t->generation == seen && !t->quit) {
+      SleepConditionVariableSRW(&t->wake, &t->lock, INFINITE, 0);
+    }
+    if (t->quit) {
+      break;
+    }
+    seen = t->generation;
+    myb_platform_job* job = t->job;
+    void* context = t->context;
+    ReleaseSRWLockExclusive(&t->lock);
+    job(context, w->member);
+    AcquireSRWLockExclusive(&t->lock);
+    t->pending--;
+    if (t->pending == 0) {
+      WakeConditionVariable(&t->done);
+    }
+  }
+  ReleaseSRWLockExclusive(&t->lock);
+  return 0;
+}
+
+/* Stops the first count workers and waits for them. */
+static void team_stop(myb_platform_team* t, int count) {
+  AcquireSRWLockExclusive(&t->lock);
+  t->quit = 1;
+  WakeAllConditionVariable(&t->wake);
+  ReleaseSRWLockExclusive(&t->lock);
+  for (int k = 0; k < count; ++k) {
+    WaitForSingleObject(t->workers[k].thread, INFINITE);
+    CloseHandle(t->workers[k].thread);
+  }
+}
+
+myb_status myb_platform_team_create(int members, const myb_allocator* allocator,
+                                    myb_platform_team** team) {
+  MYB_CHECK(members >= 1 && allocator != NULL && team != NULL);
+  void* block = NULL;
+  myb_status status = myb_internal_alloc_array(allocator, 1, sizeof(myb_platform_team), &block);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_platform_team* t = block;
+  *t = (myb_platform_team){.allocator = *allocator, .members = members};
+  InitializeSRWLock(&t->lock);
+  InitializeConditionVariable(&t->wake);
+  InitializeConditionVariable(&t->done);
+  int started = 0;
+  if (members > 1) {
+    status = myb_internal_alloc_array(allocator, (size_t)(members - 1), sizeof(team_worker), &block);
+    if (status != MYB_OK) {
+      goto fail;
+    }
+    t->workers = block;
+    for (int k = 1; k < members; ++k) {
+      team_worker* w = &t->workers[k - 1];
+      *w = (team_worker){.team = t, .member = k};
+      w->thread = CreateThread(NULL, 0, team_worker_main, w, 0, NULL);
+      if (w->thread == NULL) {
+        status = MYB_E_IO;
+        goto fail;
+      }
+      ++started;
+    }
+  }
+  *team = t;
+  return MYB_OK;
+
+fail:
+  team_stop(t, started);
+  myb_internal_release(allocator, t->workers);
+  myb_internal_release(allocator, t);
+  return status;
+}
+
+void myb_platform_team_destroy(myb_platform_team* team) {
+  if (team == NULL) {
+    return;
+  }
+  MYB_CHECK(!team->busy);
+  const myb_allocator allocator = team->allocator;
+  team_stop(team, team->members - 1);
+  myb_internal_release(&allocator, team->workers);
+  myb_internal_release(&allocator, team);
+}
+
+void myb_platform_team_run(myb_platform_team* team, myb_platform_job* job, void* context) {
+  MYB_CHECK(team != NULL && job != NULL);
+  myb_platform_team* t = team;
+  AcquireSRWLockExclusive(&t->lock);
+  MYB_CHECK(!t->busy);
+  t->busy = 1;
+  t->job = job;
+  t->context = context;
+  t->pending = t->members - 1;
+  t->generation++;
+  WakeAllConditionVariable(&t->wake);
+  ReleaseSRWLockExclusive(&t->lock);
+  job(context, 0);
+  AcquireSRWLockExclusive(&t->lock);
+  /* bound: leaves when the members - 1 workers have finished this job */
+  while (t->pending != 0) {
+    SleepConditionVariableSRW(&t->done, &t->lock, INFINITE, 0);
+  }
+  t->busy = 0;
+  ReleaseSRWLockExclusive(&t->lock);
+}
+
+int myb_platform_processor_count(void) {
+  const DWORD count = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+  if (count == 0) {
+    return 1;
+  }
+  return count > 4096 ? 4096 : (int)count;
+}

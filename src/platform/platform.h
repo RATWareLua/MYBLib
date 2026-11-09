@@ -25,4 +25,27 @@ void myb_platform_write_stderr(const char* data, size_t size);
 /* Terminates the process immediately, bypassing exception handlers and atexit hooks. */
 [[noreturn]] void myb_platform_fatal_exit(void);
 
+/* ---- Threads ----------------------------------------------------------------------------------
+ * A team of members threads: member 0 is the thread that calls myb_platform_team_run, members
+ * 1 .. members-1 are worker threads started once by create and parked on a condition variable
+ * between jobs (no thread is created or destroyed per job). */
+typedef struct myb_platform_team myb_platform_team;
+typedef void myb_platform_job(void* context, int member);
+
+/* members >= 1 (1 starts no thread). allocator is resolved (not NULL) and must outlive the
+ * team. Errors: MYB_E_NOMEM, MYB_E_IO (the system refused to start a thread). */
+[[nodiscard]] myb_status myb_platform_team_create(int members, const myb_allocator* allocator,
+                                                  myb_platform_team** team);
+
+/* Stops and joins the workers; accepts NULL. Must not be called while a job runs. */
+void myb_platform_team_destroy(myb_platform_team* team);
+
+/* Runs job(context, k) for every member k exactly once, k = 0 on the calling thread, and
+ * returns when all have returned. Everything the jobs wrote happens before the return. One job
+ * at a time per team (a second concurrent call is a contract violation). */
+void myb_platform_team_run(myb_platform_team* team, myb_platform_job* job, void* context);
+
+/* Logical processors available to the process (>= 1). */
+int myb_platform_processor_count(void);
+
 #endif /* MYB_SRC_PLATFORM_PLATFORM_H_ */

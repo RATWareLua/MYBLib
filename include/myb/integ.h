@@ -95,18 +95,21 @@ MYB_API MYB_NODISCARD myb_status myb_dop853_locate(myb_dop853* integrator, myb_e
  * predictor-corrector iteration until the correction reaches round-off. Step size from the
  * timescale of D. Pham, H. Rein, D. S. Spiegel (Open J. Astrophys. 7, 2024, eq. 15-17):
  *   tau^2 = 2 |a|^2 / (|a'|^2 + |a| |a''|),   dt = (7! epsilon)^(1/7) min tau,
- * a, a', a'' at the end of the step from the step's own polynomial, the minimum over blocks of
- * components (e.g. 3: the Cartesian vector of one body); the next step is at most 4 times the
- * last one, and a step whose successor would be below a quarter of it is rejected and redone.
+ * a, a', a'' at the end of the step from the step's own polynomial, each measured by the norm
+ * of eq. 7: the maximum over blocks of components (e.g. 3: the Cartesian vector of one body) of
+ * the Euclidean norm of the block, so a body whose acceleration passes through zero (the middle
+ * body of a symmetric collinear configuration) does not stall the step; the next step is at
+ * most 4 times the last one, and a step whose successor would be below a quarter of it is
+ * rejected and redone.
  * With the default epsilon = 1e-9 the truncation error stays below round-off, so the energy
  * error of a conservative system grows like a random walk (Brouwer's law).
  *
  * The state is y = (x[0..n-1], v[0..n-1]): 2n values. The acceleration may depend on v.
  *
- * Limitation of the published criterion: tau is relative to |a| of the block, so it shrinks to
- * zero where the block's acceleration vector vanishes. A body in space always feels some
- * acceleration (and three components rarely vanish at once), but a one-dimensional
- * oscillator, whose acceleration changes sign, stalls with MYB_E_STEP_MIN: use DOP853 there. */
+ * Limitation of the published criterion: tau is relative to the norm of a, so it shrinks to
+ * zero where the acceleration of the whole state vanishes (every block at once). A system of
+ * bodies never gets there, but a one-dimensional oscillator, whose acceleration changes sign,
+ * stalls with MYB_E_STEP_MIN: use DOP853 there. */
 
 typedef myb_status (*myb_accel_function)(void* context, double t, const double* x,
                                          const double* v, double* a);

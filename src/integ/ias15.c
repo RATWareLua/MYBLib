@@ -329,15 +329,21 @@ static myb_status sweeps(myb_ias15* s, double dt) {
   return MYB_OK;
 }
 
-/* Proposed next step after an attempt with dt; NaN if the series is not finite. */
+/* Proposed next step after an attempt with dt; NaN if the series is not finite. The norm of
+ * each derivative over the whole state is the maximum over blocks of the Euclidean norm of the
+ * block (Pham, Rein & Spiegel 2024, eq. 7), taken separately for a, a' and a'' before eq. 16:
+ * a block whose acceleration passes through zero (the middle body of a symmetric collinear
+ * configuration) does not shrink the step, as a minimum of per-block timescales would. */
 static double proposed_step(const myb_ias15* s, double dt) {
   const size_t n = s->n;
   const size_t m = s->options.block;
-  double tau2 = (double)INFINITY;
+  double y2 = 0.0; /* max over blocks of |a|^2, |dt a'|^2, |dt^2 a''|^2 */
+  double y3 = 0.0;
+  double y4 = 0.0;
   for (size_t first = 0; first < n; first += m) {
-    double y2 = 0.0;
-    double y3 = 0.0;
-    double y4 = 0.0;
+    double b2 = 0.0;
+    double b3 = 0.0;
+    double b4 = 0.0;
     for (size_t i = first; i < first + m; ++i) {
       const double* b = s->b + (size_t)ORDER * i;
       /* a, dt a', dt^2 a'' at h = 1 */
@@ -346,22 +352,26 @@ static double proposed_step(const myb_ias15* s, double dt) {
           b[0] + 2.0 * b[1] + 3.0 * b[2] + 4.0 * b[3] + 5.0 * b[4] + 6.0 * b[5] + 7.0 * b[6];
       const double k =
           2.0 * b[1] + 6.0 * b[2] + 12.0 * b[3] + 20.0 * b[4] + 30.0 * b[5] + 42.0 * b[6];
-      y2 += a * a;
-      y3 += j * j;
-      y4 += k * k;
+      b2 += a * a;
+      b3 += j * j;
+      b4 += k * k;
     }
-    if (!finite(y2) || !finite(y3) || !finite(y4)) {
+    if (!finite(b2) || !finite(b3) || !finite(b4)) {
       return (double)NAN;
     }
-    if (y2 > 0.0) {
-      /* tau^2 / dt^2 = 2 / (y3 / y2 + sqrt(y4 / y2)), free of overflow in y4 y2 */
-      const double denominator = y3 / y2 + sqrt(y4 / y2);
-      if (denominator > 0.0 && 2.0 / denominator < tau2) {
-        tau2 = 2.0 / denominator;
-      }
-    }
+    y2 = b2 > y2 ? b2 : y2;
+    y3 = b3 > y3 ? b3 : y3;
+    y4 = b4 > y4 ? b4 : y4;
   }
-  return tau2 == (double)INFINITY ? (double)INFINITY : s->eta * sqrt(tau2) * dt;
+  if (!(y2 > 0.0)) {
+    return (double)INFINITY; /* no acceleration anywhere: no timescale */
+  }
+  /* tau^2 / dt^2 = 2 / (y3 / y2 + sqrt(y4 / y2)), free of overflow in y4 y2 */
+  const double denominator = y3 / y2 + sqrt(y4 / y2);
+  if (!(denominator > 0.0)) {
+    return (double)INFINITY;
+  }
+  return s->eta * sqrt(2.0 / denominator) * dt;
 }
 
 static double power_int(double q, int k) {

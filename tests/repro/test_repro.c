@@ -7,17 +7,21 @@
  *
  * Inputs come from SplitMix64 and are built from integer bits, so the workload itself does
  * not depend on any library function. */
+#include <stdlib.h>
+
 #include "core/fpguard.h"
 #include "mtest.h"
 #include "myb/cmath.h"
+#include "myb/dyn.h"
 #include "myb/integ.h"
 #include "myb/io.h"
 #include "myb/kepler.h"
 #include "myb/lambert.h"
 #include "myb/num.h"
+#include "myb/pool.h"
 #include "myb/time.h"
 
-static const uint64_t golden_hash = UINT64_C(0x49a0d3f351af2744);
+static const uint64_t golden_hash = UINT64_C(0xde3d79ea60027aae);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -440,6 +444,109 @@ static void workload_integ(hasher* h) {
   }
 }
 
+/* N-body accelerations with 1 and 4 threads (must agree bit for bit, then hashed once), the
+ * invariants, the figure eight by IAS15, and Wisdom-Holman schemes on a two-planet system. */
+static void workload_dyn(hasher* h, mt_rng* rng) {
+  enum { MASSIVE = 300, TEST = 21 };
+  double* gm = malloc(MASSIVE * sizeof(double));
+  double* x = malloc(3 * (MASSIVE + TEST) * sizeof(double));
+  double* v = malloc(3 * (MASSIVE + TEST) * sizeof(double));
+  double* a1 = malloc(3 * (MASSIVE + TEST) * sizeof(double));
+  double* a4 = malloc(3 * (MASSIVE + TEST) * sizeof(double));
+  MT_CHECK(gm != NULL && x != NULL && v != NULL && a1 != NULL && a4 != NULL);
+  for (size_t i = 0; i < MASSIVE; ++i) {
+    gm[i] = 1e8 * (1.0 + (double)(mt_next(rng) >> 11) * 0x1p-53);
+  }
+  for (size_t i = 0; i < 3 * (MASSIVE + TEST); ++i) {
+    x[i] = 1e9 * ((double)(mt_next(rng) >> 11) * 0x1p-52 - 1.0);
+    v[i] = 1e2 * ((double)(mt_next(rng) >> 11) * 0x1p-52 - 1.0);
+  }
+  myb_nbody* s = NULL;
+  MT_CHECK(myb_nbody_create(MASSIVE, TEST, gm, NULL, &s) == MYB_OK);
+  myb_pool* pool = NULL;
+  MT_CHECK(myb_pool_create(4, NULL, &pool) == MYB_OK);
+  if (s != NULL && pool != NULL) {
+    MT_CHECK(myb_nbody_set_interaction(s, 7, 3, MYB_INTERACTION_NONE) == MYB_OK);
+    MT_CHECK(myb_nbody_acceleration(s, 0.0, x, a1) == MYB_OK);
+    myb_nbody_set_pool(s, pool);
+    MT_CHECK(myb_nbody_acceleration(s, 0.0, x, a4) == MYB_OK);
+    myb_nbody_set_pool(s, NULL);
+    int same = 1;
+    for (size_t i = 0; i < 3 * (MASSIVE + TEST); ++i) {
+      same = same && mt_same(a1[i], a4[i]);
+      hash_double(h, a1[i]);
+    }
+    MT_CHECK(same);
+    myb_nbody_invariants inv = {};
+    MT_CHECK(myb_nbody_invariants_of(s, x, v, &inv) == MYB_OK);
+    hash_dd(h, inv.energy);
+    for (int k = 0; k < 3; ++k) {
+      hash_double(h, inv.momentum[k]);
+      hash_double(h, inv.angular_momentum[k]);
+      hash_double(h, inv.center[k]);
+    }
+  }
+  myb_nbody_destroy(s);
+  myb_pool_destroy(pool);
+  free(gm);
+  free(x);
+  free(v);
+  free(a1);
+  free(a4);
+  /* Figure eight (start refined by tests/unit/test_nbody.c), one period by IAS15. */
+  const double ones[3] = {1.0, 1.0, 1.0};
+  MT_CHECK(myb_nbody_create(3, 0, ones, NULL, &s) == MYB_OK);
+  const double p1 = 0.3471168881189257;
+  const double p2 = 0.5327249453880308;
+  const double y0[18] = {-1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         p1,   p2,  0.0, p1,  p2,  0.0, -2.0 * p1, -2.0 * p2, 0.0};
+  const myb_ias15_options o = {.block = 3};
+  myb_ias15* ias = NULL;
+  MT_CHECK(myb_ias15_create(9, &o, NULL, &ias) == MYB_OK);
+  if (ias != NULL && s != NULL) {
+    MT_CHECK(myb_ias15_start(ias, myb_nbody_acceleration_xv, s, 0.0, y0) == MYB_OK);
+    MT_CHECK(myb_ias15_integrate(ias, 6.3259139829262061) == MYB_OK);
+    for (int k = 0; k < 18; ++k) {
+      hash_double(h, myb_ias15_state(ias)[k]);
+    }
+    hash_double(h, (double)myb_ias15_statistics(ias).accepted);
+  }
+  myb_ias15_destroy(ias);
+  myb_nbody_destroy(s);
+  /* Star, two planets, a test body: Wisdom-Holman schemes. */
+  const double gm3[3] = {1.0, 9.5e-4, 2.85e-4};
+  MT_CHECK(myb_nbody_create(3, 1, gm3, NULL, &s) == MYB_OK);
+  const double xs[12] = {0.0, 0.0, 0.0, 1.0, 0.0, 0.02, -1.4, 1.1, 0.0, 0.0, 2.6, 0.1};
+  const double vs[12] = {0.0, -1.2e-3, 0.0, 0.0, 1.0, 0.0, -0.45, -0.57, 0.01, -0.62, 0.0, 0.0};
+  const myb_wh_options options[3] = {{.h = 0.05, .scheme = MYB_WH_DKD, .corrector = 11},
+                                     {.h = 0.08, .scheme = MYB_WH_SABA3},
+                                     {.h = 0.08, .scheme = MYB_WH_SBAB2}};
+  for (int k = 0; k < 3 && s != NULL; ++k) {
+    myb_wh* w = NULL;
+    MT_CHECK(myb_wh_create(s, &options[k], NULL, &w) == MYB_OK);
+    if (w == NULL) {
+      continue;
+    }
+    MT_CHECK(myb_wh_start(w, 0.0, xs, vs) == MYB_OK);
+    MT_CHECK(myb_wh_integrate(w, 40.0) == MYB_OK);
+    double xo[12];
+    double vo[12];
+    MT_CHECK(myb_wh_state(w, xo, vo) == MYB_OK);
+    for (int i = 0; i < 12; ++i) {
+      hash_double(h, xo[i]);
+      hash_double(h, vo[i]);
+    }
+    MT_CHECK(myb_wh_dense(w, myb_wh_time(w) + 0.3 * options[k].h, xo, vo) == MYB_OK);
+    for (int i = 0; i < 12; ++i) {
+      hash_double(h, xo[i]);
+      hash_double(h, vo[i]);
+    }
+    hash_double(h, (double)myb_wh_statistics(w).evaluations);
+    myb_wh_destroy(w);
+  }
+  myb_nbody_destroy(s);
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -451,6 +558,7 @@ int main(void) {
   workload_functions(&h, &rng);
   workload_kepler(&h, &rng);
   workload_integ(&h);
+  workload_dyn(&h, &rng);
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, golden_hash);
   MT_CHECK(h.state == golden_hash);

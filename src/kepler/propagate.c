@@ -9,6 +9,7 @@
 #include <math.h> /* sqrt, fabs */
 
 #include "core/base.h"
+#include "kepler/drift.h"
 #include "kepler/stumpff.h"
 #include "myb/cmath.h"
 #include "myb/kepler.h"
@@ -125,9 +126,13 @@ static myb_status solve(const universal* k, double* chi_out) {
 }
 
 /* Universal propagation of pv0 (|r0| = r0, alpha = 2/r0 - v0^2/mu) by t, without period
- * reduction. */
-static myb_status universal_step(double mu, const myb_pv* pv0, double r0, double alpha, double t,
-                                 myb_pv* pv) {
+ * reduction, as the increment of the state:
+ *   dr = (f - 1) r0 + g v0,  dv = fdot r0 + (gdot - 1) v0,  f - 1 = -U2/r0,  gdot - 1 = -U2/r.
+ * The increments are computed without forming f and gdot, whose difference from 1 would be
+ * rounded away on a short arc; pv0 + delta then rounds once (half an ulp) where f r0 + g v0
+ * would round three times. */
+static myb_status universal_delta(double mu, const myb_pv* pv0, double r0, double alpha,
+                                  double t, myb_pv* delta) {
   const double sqrt_mu = sqrt(mu);
   const universal k = {.r0 = r0,
                        .sigma0 = myb_vec3_dot(pv0->r, pv0->v) / sqrt_mu,
@@ -140,18 +145,41 @@ static myb_status universal_step(double mu, const myb_pv* pv0, double r0, double
   }
   const u_values u = u_at(&k, chi);
   const double r = radius(&k, &u);
-  const double f = 1.0 - u.u2 / r0;
+  const double f_minus_1 = -u.u2 / r0;
   const double g = (r0 * u.u1 + k.sigma0 * u.u2) / sqrt_mu;
   const double fdot = -sqrt_mu * u.u1 / (r * r0);
-  const double gdot = 1.0 - u.u2 / r;
+  const double gdot_minus_1 = -u.u2 / r;
   myb_pv out;
-  myb_vec3_combine(pv0->r, f, pv0->v, g, out.r);
-  myb_vec3_combine(pv0->r, fdot, pv0->v, gdot, out.v);
+  myb_vec3_combine(pv0->r, f_minus_1, pv0->v, g, out.r);
+  myb_vec3_combine(pv0->r, fdot, pv0->v, gdot_minus_1, out.v);
   if (!(r > 0.0) || !myb_vec3_finite(out.r) || !myb_vec3_finite(out.v)) {
+    return MYB_E_DOMAIN;
+  }
+  *delta = out;
+  return MYB_OK;
+}
+
+static myb_status add_delta(const myb_pv* pv0, const myb_pv* delta, myb_pv* pv) {
+  myb_pv out;
+  for (int i = 0; i < 3; ++i) {
+    out.r[i] = pv0->r[i] + delta->r[i];
+    out.v[i] = pv0->v[i] + delta->v[i];
+  }
+  if (!myb_vec3_finite(out.r) || !myb_vec3_finite(out.v)) {
     return MYB_E_DOMAIN;
   }
   *pv = out;
   return MYB_OK;
+}
+
+static myb_status universal_step(double mu, const myb_pv* pv0, double r0, double alpha, double t,
+                                 myb_pv* pv) {
+  myb_pv delta;
+  const myb_status status = universal_delta(mu, pv0, r0, alpha, t, &delta);
+  if (status != MYB_OK) {
+    return status;
+  }
+  return add_delta(pv0, &delta, pv);
 }
 
 /* Hyperbola far from its periapsis (|H0| > 1): periapsis state and time since periapsis.
@@ -238,8 +266,12 @@ static double reduce_periods(double mu, myb_dd alpha, double dt, double* turns,
   return myb_dd_to_double(myb_dd_sub(myb_dd_from_double(dt), myb_dd_mul_d(p, *turns)));
 }
 
-myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv* pv) {
-  MYB_CHECK(pv0 != NULL && pv != NULL);
+/* What a route of the propagator delivers: the increment of the state, or the state itself
+ * (no arc, or the hyperbola restarted from its periapsis). */
+typedef enum route_kind { ROUTE_DELTA, ROUTE_STATE } route_kind;
+
+static myb_status propagate_route(double mu, const myb_pv* pv0, double dt, myb_pv* out,
+                                  route_kind* kind) {
   if (!(mu > 0.0) || !finite(mu) || !finite(dt) || !myb_vec3_finite(pv0->r) ||
       !myb_vec3_finite(pv0->v)) {
     return MYB_E_DOMAIN;
@@ -248,8 +280,9 @@ myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv*
   if (!(r0 > 0.0)) {
     return MYB_E_DOMAIN;
   }
+  *kind = ROUTE_STATE;
   if (dt == 0.0) {
-    *pv = *pv0;
+    *out = *pv0;
     return MYB_OK;
   }
   const myb_dd alpha_w = alpha_dd(mu, pv0);
@@ -262,12 +295,13 @@ myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv*
       const double alpha_p = 2.0 / rp - myb_vec3_dot(periapsis.v, periapsis.v) / mu;
       const double tau = tau0 + dt;
       if (tau == 0.0) {
-        *pv = periapsis;
+        *out = periapsis;
         return MYB_OK;
       }
-      return universal_step(mu, &periapsis, rp, alpha_p, tau, pv);
+      return universal_step(mu, &periapsis, rp, alpha_p, tau, out);
     }
-    return universal_step(mu, pv0, r0, alpha, dt, pv);
+    *kind = ROUTE_DELTA;
+    return universal_delta(mu, pv0, r0, alpha, dt, out);
   }
   double t = dt;
   if (alpha > 0.0) {
@@ -275,11 +309,45 @@ myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv*
     double period = 0.0;
     t = reduce_periods(mu, alpha_w, dt, &turns, &period);
     if (t == 0.0) {
-      *pv = *pv0;
+      *out = *pv0;
       return MYB_OK;
     }
   }
-  return universal_step(mu, pv0, r0, alpha, t, pv);
+  *kind = ROUTE_DELTA;
+  return universal_delta(mu, pv0, r0, alpha, t, out);
+}
+
+myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt, myb_pv* pv) {
+  MYB_CHECK(pv0 != NULL && pv != NULL);
+  myb_pv out;
+  route_kind kind = ROUTE_STATE;
+  const myb_status status = propagate_route(mu, pv0, dt, &out, &kind);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (kind == ROUTE_STATE) {
+    *pv = out;
+    return MYB_OK;
+  }
+  return add_delta(pv0, &out, pv);
+}
+
+myb_status myb_internal_kepler_delta(double mu, const myb_pv* pv0, double dt, myb_pv* delta) {
+  MYB_CHECK(pv0 != NULL && delta != NULL);
+  myb_pv out;
+  route_kind kind = ROUTE_STATE;
+  const myb_status status = propagate_route(mu, pv0, dt, &out, &kind);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (kind == ROUTE_STATE) {
+    for (int i = 0; i < 3; ++i) {
+      out.r[i] -= pv0->r[i];
+      out.v[i] -= pv0->v[i];
+    }
+  }
+  *delta = out;
+  return MYB_OK;
 }
 
 /* ---- State transition matrix ----------------------------------------------------------------
@@ -419,10 +487,12 @@ static myb_status universal_stm(double mu, const myb_pv* pv0, double r0, double 
       stm[6 * (3 + i) + j] = diag_v + pv0->r[i] * dft[j] + pv0->v[i] * dgt[j];
     }
   }
+  /* The state as in universal_delta, so that it is the one of myb_kepler_propagate. */
+  myb_pv delta;
+  myb_vec3_combine(pv0->r, -u[2] / r0, pv0->v, g, delta.r);
+  myb_vec3_combine(pv0->r, ft, pv0->v, -u[2] / r, delta.v);
   myb_pv out;
-  myb_vec3_combine(pv0->r, f, pv0->v, g, out.r);
-  myb_vec3_combine(pv0->r, ft, pv0->v, gt, out.v);
-  if (!(r > 0.0) || !myb_vec3_finite(out.r) || !myb_vec3_finite(out.v)) {
+  if (!(r > 0.0) || add_delta(pv0, &delta, &out) != MYB_OK) {
     return MYB_E_DOMAIN;
   }
   for (int i = 0; i < 36; ++i) {
