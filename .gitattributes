@@ -8,3 +8,7 @@ tests/data/** text eol=lf -diff
 
 # Data kernels are text with LF on every platform.
 data/** text eol=lf
+
+# NAIF binary kernels (DAF: SPK, PCK) are binary everywhere, never converted.
+*.bsp binary
+*.bpc binary

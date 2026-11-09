@@ -18,6 +18,23 @@
 [[nodiscard]] myb_status myb_platform_read_file(const char* path, const myb_allocator* allocator,
                                                 size_t max_size, char** data, size_t* size);
 
+/* A read-only view of a whole file, mapped into the address space: large data files (planetary
+ * ephemerides reach gigabytes) are read on demand by the virtual memory system, without a
+ * system call per access. The view stays valid until myb_platform_unmap_file; the file must
+ * not be truncated meanwhile (an access beyond the new end is a fatal fault, by design). */
+typedef struct myb_platform_mapping {
+  const unsigned char* data;
+  size_t size;
+} myb_platform_mapping;
+
+/* path is UTF-8 on every platform. Errors: MYB_E_IO (cannot open or map, empty file),
+ * MYB_E_OVERFLOW (does not fit the address space). Output untouched on error. */
+[[nodiscard]] myb_status myb_platform_map_file(const char* path, const myb_allocator* allocator,
+                                               myb_platform_mapping* mapping);
+
+/* Releases a view from myb_platform_map_file; accepts a zeroed mapping. */
+void myb_platform_unmap_file(myb_platform_mapping* mapping);
+
 /* Writes bytes to the standard error descriptor with one unbuffered call; best effort, used
  * only on the fatal-error path. Must not allocate and must not take stdio locks. */
 void myb_platform_write_stderr(const char* data, size_t size);

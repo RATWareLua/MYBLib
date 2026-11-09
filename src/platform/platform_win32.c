@@ -92,6 +92,58 @@ out:
   return status;
 }
 
+myb_status myb_platform_map_file(const char* path, const myb_allocator* allocator,
+                                 myb_platform_mapping* mapping) {
+  MYB_CHECK(path != NULL && allocator != NULL && mapping != NULL);
+  wchar_t* wide = NULL;
+  myb_status status = wide_path(path, allocator, &wide);
+  if (status != MYB_OK) {
+    return status;
+  }
+  HANDLE file = CreateFileW(wide, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, NULL);
+  myb_internal_release(allocator, wide);
+  if (file == INVALID_HANDLE_VALUE) {
+    return MYB_E_IO;
+  }
+  HANDLE section = NULL;
+  LARGE_INTEGER length;
+  status = MYB_E_IO;
+  if (!GetFileSizeEx(file, &length) || length.QuadPart <= 0) {
+    goto out;
+  }
+  if ((uint64_t)length.QuadPart > (uint64_t)SIZE_MAX) {
+    status = MYB_E_OVERFLOW;
+    goto out;
+  }
+  section = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL);
+  if (section == NULL) {
+    goto out;
+  }
+  /* The view keeps the section and the file open after their handles are closed. */
+  const void* view = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 0);
+  if (view != NULL) {
+    mapping->data = view;
+    mapping->size = (size_t)length.QuadPart;
+    status = MYB_OK;
+  }
+out:
+  if (section != NULL) {
+    CloseHandle(section);
+  }
+  CloseHandle(file);
+  return status;
+}
+
+void myb_platform_unmap_file(myb_platform_mapping* mapping) {
+  MYB_CHECK(mapping != NULL);
+  if (mapping->data != NULL) {
+    MYB_CHECK(UnmapViewOfFile(mapping->data));
+  }
+  mapping->data = NULL;
+  mapping->size = 0;
+}
+
 void myb_platform_write_stderr(const char* data, size_t size) {
   /* The fatal message is at most 1 KiB, so the conversion to unsigned is exact. */
   (void)_write(2, data, (unsigned)size);

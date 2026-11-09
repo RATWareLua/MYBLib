@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -59,6 +60,44 @@ out:
   myb_internal_release(allocator, buffer);
   close(fd);
   return status;
+}
+
+myb_status myb_platform_map_file(const char* path, const myb_allocator* allocator,
+                                 myb_platform_mapping* mapping) {
+  MYB_CHECK(path != NULL && allocator != NULL && mapping != NULL);
+  const int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return MYB_E_IO;
+  }
+  myb_status status = MYB_E_IO;
+  struct stat info;
+  if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0) {
+    goto out;
+  }
+  if ((uint64_t)info.st_size > (uint64_t)SIZE_MAX) {
+    status = MYB_E_OVERFLOW;
+    goto out;
+  }
+  const size_t bytes = (size_t)info.st_size;
+  /* The mapping keeps the file referenced after the descriptor is closed. */
+  void* view = mmap(NULL, bytes, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (view != MAP_FAILED) {
+    mapping->data = view;
+    mapping->size = bytes;
+    status = MYB_OK;
+  }
+out:
+  close(fd);
+  return status;
+}
+
+void myb_platform_unmap_file(myb_platform_mapping* mapping) {
+  MYB_CHECK(mapping != NULL);
+  if (mapping->data != NULL) {
+    MYB_CHECK(munmap((void*)(uintptr_t)mapping->data, mapping->size) == 0);
+  }
+  mapping->data = NULL;
+  mapping->size = 0;
 }
 
 void myb_platform_write_stderr(const char* data, size_t size) {

@@ -13,15 +13,17 @@
 #include "mtest.h"
 #include "myb/cmath.h"
 #include "myb/dyn.h"
+#include "myb/frames.h"
 #include "myb/integ.h"
 #include "myb/io.h"
 #include "myb/kepler.h"
+#include "myb/kin.h"
 #include "myb/lambert.h"
 #include "myb/num.h"
 #include "myb/pool.h"
 #include "myb/time.h"
 
-static const uint64_t golden_hash = UINT64_C(0xde3d79ea60027aae);
+static const uint64_t golden_hash = UINT64_C(0x38f060f6206c4bf6);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -547,6 +549,101 @@ static void workload_dyn(hasher* h, mt_rng* rng) {
   myb_nbody_destroy(s);
 }
 
+/* Phase 5: every SPK type (tests/data/spk), the IAU 2006/2000A CIP model, ERA, EOP with tidal
+ * corrections, WGCCRE rotation, geodetic coordinates and orbital frames. */
+static void workload_frames(hasher* h, mt_rng* rng) {
+  const char* files[] = {"t01.bsp", "t02_03.bsp", "t05.bsp", "t08_09_12_13.bsp", "t14.bsp",
+                         "t17.bsp", "t18_19.bsp", "t20.bsp", "eros.bsp"};
+  myb_spk* spk = NULL;
+  MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+  for (size_t i = 0; i < sizeof files / sizeof files[0]; ++i) {
+    char path[512];
+    snprintf(path, sizeof path, "%s/spk/%s", MYB_TEST_DATA_DIR, files[i]);
+    MT_CHECK(myb_spk_load_file(spk, path, NULL) == MYB_OK);
+  }
+  for (size_t i = 0; i < myb_spk_segment_count(spk); ++i) {
+    myb_spk_segment_info info;
+    myb_spk_segment(spk, i, &info);
+    for (int k = 0; k < 8; ++k) {
+      const double u = (double)mt_int(rng, 0, 1 << 30) / (double)(1 << 30);
+      const double t = info.start + u * (info.stop - info.start);
+      double state[6];
+      MT_CHECK(myb_spk_state(spk, info.target, info.center, myb_time_from_seconds(t), state,
+                             NULL) == MYB_OK);
+      for (int c = 0; c < 6; ++c) {
+        hash_double(h, state[c]);
+      }
+    }
+  }
+  myb_spk_destroy(spk);
+
+  myb_kpool* pool = NULL;
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  const char* kernels[] = {"/time/time-scales.tk", "/time/tdb-tt-fb1990.tk", "/time/utc-tai.tk",
+                           "/frames/iau2006-cip.tk", "/frames/eop-tides.tk"};
+  for (size_t i = 0; i < sizeof kernels / sizeof kernels[0]; ++i) {
+    char path[512];
+    snprintf(path, sizeof path, "%s%s", MYB_DATA_DIR, kernels[i]);
+    MT_CHECK(myb_kpool_load_file(pool, path, NULL) == MYB_OK);
+  }
+  MT_CHECK(myb_kpool_load_file(pool, MYB_TEST_DATA_DIR "/wgccre/pck00011.tpc", NULL) == MYB_OK);
+  myb_timesys* sys = NULL;
+  myb_cip* cip = NULL;
+  myb_eop* eop = NULL;
+  myb_wgccre* mars = NULL;
+  myb_scale tt = {0};
+  MT_CHECK(myb_timesys_create(pool, NULL, &sys, NULL) == MYB_OK);
+  MT_CHECK(myb_timesys_scale(sys, "TT", &tt) == MYB_OK);
+  MT_CHECK(myb_cip_create(pool, "IAU2006A", NULL, &cip, NULL) == MYB_OK);
+  MT_CHECK(myb_wgccre_create(pool, 499, NULL, &mars, NULL) == MYB_OK);
+  MT_CHECK(myb_eop_create(NULL, &eop) == MYB_OK);
+  MT_CHECK(myb_eop_load_c04_file(eop, MYB_TEST_DATA_DIR "/eop/eopc04-excerpt.txt", NULL) ==
+           MYB_OK);
+  MT_CHECK(myb_eop_set_tides(eop, pool, "IERS10_EOPT", NULL) == MYB_OK);
+  const myb_ellipsoid wgs84 = {6378137.0, 1.0 / 298.257223563};
+  for (int k = 0; k < 40; ++k) {
+    /* 2020-01-03 .. 2020-12-28 TT */
+    const myb_time t = {631411200 + (int64_t)mt_int(rng, 0, 31000000), 0.125};
+    myb_eop_values v;
+    myb_time ut1;
+    MT_CHECK(myb_eop_at(eop, sys, t, tt, &v, &ut1) == MYB_OK);
+    hash_double(h, v.xp);
+    hash_double(h, v.dut1);
+    hash_double(h, v.lod);
+    myb_rotation m;
+    myb_cip_terrestrial(cip, t, ut1, &v, &m);
+    for (int i = 0; i < 9; ++i) {
+      hash_double(h, m.m[i]);
+      hash_double(h, m.dm[i]);
+    }
+    myb_wgccre_rotation(mars, t, &m);
+    for (int i = 0; i < 9; ++i) {
+      hash_double(h, m.m[i]);
+      hash_double(h, m.dm[i]);
+    }
+    const double xyz[3] = {mt_double(rng, 20, 25), -mt_double(rng, 18, 24),
+                           mt_double(rng, 10, 24)};
+    double lon;
+    double lat;
+    double height;
+    MT_CHECK(myb_geodetic_from_cartesian(&wgs84, xyz, &lon, &lat, &height) == MYB_OK);
+    hash_double(h, lon);
+    hash_double(h, lat);
+    hash_double(h, height);
+    const double state[6] = {xyz[0], xyz[1], xyz[2], 1.1e3, 7.4e3, -0.6e3};
+    const double acc[3] = {-1.0, 0.5, 0.25};
+    MT_CHECK(myb_orbital_rotation(MYB_ORBITAL_LVLH, state, acc, &m) == MYB_OK);
+    for (int i = 0; i < 9; ++i) {
+      hash_double(h, m.dm[i]);
+    }
+  }
+  myb_eop_destroy(eop);
+  myb_wgccre_destroy(mars);
+  myb_cip_destroy(cip);
+  myb_timesys_destroy(sys);
+  myb_kpool_destroy(pool);
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -559,6 +656,7 @@ int main(void) {
   workload_kepler(&h, &rng);
   workload_integ(&h);
   workload_dyn(&h, &rng);
+  workload_frames(&h, &rng);
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, golden_hash);
   MT_CHECK(h.state == golden_hash);

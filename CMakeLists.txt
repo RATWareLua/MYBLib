@@ -54,19 +54,32 @@ add_library(myb STATIC
   src/core/status.c
   src/dyn/nbody.c
   src/dyn/whfast.c
+  src/frames/bpck.c
+  src/frames/cip.c
+  src/frames/eop.c
+  src/frames/geodetic.c
+  src/frames/orbital.c
+  src/frames/rotation.c
+  src/frames/tkframe.c
+  src/frames/wgccre.c
   src/integ/dop853.c
   src/integ/event.c
   src/integ/gauss_jackson.c
   src/integ/ias15.c
   src/integ/rkn12.c
   src/integ/symplectic.c
+  src/io/daf.c
   src/io/kpool.c
   src/kepler/anomaly.c
+  src/kin/segset.c
+  src/kin/spk.c
+  src/kin/spk_segment.c
   src/kepler/elements.c
   src/kepler/propagate.c
   src/kepler/stumpff.c
   src/io/numparse.c
   src/num/dd.c
+  src/num/poisson.c
   src/num/root.c
   src/num/series.c
   src/num/sum.c
