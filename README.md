@@ -63,7 +63,10 @@ ctest --preset linux-dev
 ```
 
 Пресеты: `*-dev` (Debug, `-Werror`), `*-release` (`-O2`, проверки контрактов сохраняются),
-`windows-ubsan` (UBSan в режиме trap), `linux-asan` (ASan + UBSan).
+`windows-ubsan` (UBSan в режиме trap); на Linux — санитайзеры с остановкой на первой ошибке:
+`linux-asan` (ASan + UBSan + LeakSanitizer, `-O2`), `linux-asan-debug` (то же при `-O0` и
+проверка пар указателей `pointer-compare`/`pointer-subtract`), `linux-ubsan` (UBSan с отчётом и
+стеком), `linux-lsan` (отдельный LeakSanitizer).
 
 Тест `test_repro` сравнивает хеш результатов с эталоном: он обязан совпасть на любой
 платформе, при любом уровне оптимизации и ISA (x86-64-v2/v3).

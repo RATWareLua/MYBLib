@@ -344,24 +344,27 @@ typedef struct accumulator4 {
   v4d c[3];
 } accumulator4;
 
-static inline v4d splat(double x) {
-  return (v4d){x, x, x, x};
-}
+/* Vectors never cross a function boundary by value: on x86-64 SysV a 32-byte vector argument
+ * would take a different ABI with and without AVX (-Wpsabi). */
+#define MYB_SPLAT(x) ((v4d){(x), (x), (x), (x)})
 
-static inline void accumulate4(accumulator4* a, int k, v4d x) {
-  const v4d s = a->s[k] + x;
-  const v4d a_rounded = s - x;
+static inline void accumulate4(accumulator4* a, int k, const v4d* x) {
+  const v4d s = a->s[k] + *x;
+  const v4d a_rounded = s - *x;
   const v4d b_rounded = s - a_rounded;
   const v4d a_error = a->s[k] - a_rounded;
-  const v4d b_error = x - b_rounded;
+  const v4d b_error = *x - b_rounded;
   a->s[k] = s;
   a->c[k] += a_error + b_error;
 }
 
 /* Sources [begin, end) on the four receivers at (xi, yi, zi); lanes whose receiver index
  * equals the source are masked when mask is set (receivers i0 .. i0 + 3). */
-static void sum_sources4(const myb_nbody* s, v4d xi, v4d yi, v4d zi, size_t begin, size_t end,
+static void sum_sources4(const myb_nbody* s, const v4d receiver[3], size_t begin, size_t end,
                          int mask, size_t i0, accumulator4* acc) {
+  const v4d xi = receiver[0];
+  const v4d yi = receiver[1];
+  const v4d zi = receiver[2];
   const double* gm = s->gm;
   const double* px = s->px;
   const double* py = s->py;
@@ -369,12 +372,12 @@ static void sum_sources4(const myb_nbody* s, v4d xi, v4d yi, v4d zi, size_t begi
   const v4i lane_index = {(long long)i0, (long long)i0 + 1, (long long)i0 + 2,
                           (long long)i0 + 3};
   for (size_t j = begin; j < end; ++j) {
-    const v4d dx = splat(px[j]) - xi;
-    const v4d dy = splat(py[j]) - yi;
-    const v4d dz = splat(pz[j]) - zi;
+    const v4d dx = MYB_SPLAT(px[j]) - xi;
+    const v4d dy = MYB_SPLAT(py[j]) - yi;
+    const v4d dz = MYB_SPLAT(pz[j]) - zi;
     const v4d r2 = dx * dx + dy * dy + dz * dz;
-    const v4d q = splat(1.0) / (r2 * __builtin_elementwise_sqrt(r2));
-    const v4d sj = splat(gm[j]) * q;
+    const v4d q = MYB_SPLAT(1.0) / (r2 * __builtin_elementwise_sqrt(r2));
+    const v4d sj = MYB_SPLAT(gm[j]) * q;
     v4d t[3] = {sj * dx, sj * dy, sj * dz};
     if (mask) {
       const v4i keep = lane_index != (v4i){(long long)j, (long long)j, (long long)j, (long long)j};
@@ -383,23 +386,23 @@ static void sum_sources4(const myb_nbody* s, v4d xi, v4d yi, v4d zi, size_t begi
       }
     }
     for (int k = 0; k < 3; ++k) {
-      accumulate4(acc, k, t[k]);
+      accumulate4(acc, k, &t[k]);
     }
   }
 }
 
 /* Receivers i0 .. i0 + 3, none of which has an exclusion. */
 static void sum_receivers4(const myb_nbody* s, size_t i0, double* a) {
-  const v4d xi = {s->px[i0], s->px[i0 + 1], s->px[i0 + 2], s->px[i0 + 3]};
-  const v4d yi = {s->py[i0], s->py[i0 + 1], s->py[i0 + 2], s->py[i0 + 3]};
-  const v4d zi = {s->pz[i0], s->pz[i0 + 1], s->pz[i0 + 2], s->pz[i0 + 3]};
+  const v4d receiver[3] = {{s->px[i0], s->px[i0 + 1], s->px[i0 + 2], s->px[i0 + 3]},
+                           {s->py[i0], s->py[i0 + 1], s->py[i0 + 2], s->py[i0 + 3]},
+                           {s->pz[i0], s->pz[i0 + 1], s->pz[i0 + 2], s->pz[i0 + 3]}};
   accumulator4 acc = {};
   const size_t m = s->massive;
   const size_t lo = i0 < m ? i0 : m;          /* sources below every lane: no mask */
   const size_t hi = i0 + LANES < m ? i0 + LANES : m; /* [lo, hi): one lane is the source */
-  sum_sources4(s, xi, yi, zi, 0, lo, 0, i0, &acc);
-  sum_sources4(s, xi, yi, zi, lo, hi, 1, i0, &acc);
-  sum_sources4(s, xi, yi, zi, hi, m, 0, i0, &acc);
+  sum_sources4(s, receiver, 0, lo, 0, i0, &acc);
+  sum_sources4(s, receiver, lo, hi, 1, i0, &acc);
+  sum_sources4(s, receiver, hi, m, 0, i0, &acc);
   for (int k = 0; k < 3; ++k) {
     const v4d sum = acc.s[k] + acc.c[k];
     for (size_t lane = 0; lane < LANES; ++lane) {

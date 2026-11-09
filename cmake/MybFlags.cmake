@@ -20,9 +20,12 @@
 #                           not optional: below v2 (no SSE4.1) CORE-MATH's roundeven becomes a
 #                           C runtime call, absent from mingw-w64. Results are bit-identical
 #                           for v2 and v3 (tests/repro): contraction is off, fma is myb_fma.
-#   MYB_SANITIZE            "" | address | undefined
-#       address   — ASan + UBSan, abort on first error (Linux)
-#       undefined — UBSan in trap mode, no runtime library (works on the Windows target too)
+#   MYB_SANITIZE            "" | address | undefined | leak
+#       address   — ASan + UBSan (LeakSanitizer included on Linux), abort on first error; in
+#                   Debug also the checks of pointer pairs (pointer-compare/-subtract)
+#       undefined — UBSan: with its runtime (report and stack, abort on the first error) where
+#                   the runtime exists; in trap mode on the Windows target, which has none
+#       leak      — standalone LeakSanitizer (Linux): leaks without ASan's instrumentation
 include_guard(GLOBAL)
 include(CheckCCompilerFlag)
 
@@ -30,8 +33,8 @@ option(MYB_WARNINGS_AS_ERRORS "Treat warnings as errors in project code" OFF)
 option(MYB_HARDENING "Enable hardening flags" ON)
 set(MYB_X64_BASELINE "x86-64-v2" CACHE STRING "x86-64 ISA baseline: x86-64-v2 or x86-64-v3")
 set_property(CACHE MYB_X64_BASELINE PROPERTY STRINGS x86-64-v2 x86-64-v3)
-set(MYB_SANITIZE "" CACHE STRING "Sanitizer: empty, address or undefined")
-set_property(CACHE MYB_SANITIZE PROPERTY STRINGS "" address undefined)
+set(MYB_SANITIZE "" CACHE STRING "Sanitizer: empty, address, undefined or leak")
+set_property(CACHE MYB_SANITIZE PROPERTY STRINGS "" address undefined leak)
 
 # ---- Compiler gate ----------------------------------------------------------------------
 set(MYB_MIN_CLANG_VERSION 19)
@@ -118,10 +121,25 @@ if(MYB_SANITIZE STREQUAL "address")
   set(_myb_san_compile -fsanitize=address,undefined -fno-sanitize-recover=all
     -fno-omit-frame-pointer)
   set(_myb_san_link -fsanitize=address,undefined)
-elseif(MYB_SANITIZE STREQUAL "undefined")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # Relations between pointers into different objects (run time:
+    # ASAN_OPTIONS=detect_invalid_pointer_pairs=2). Only without optimisation: at -O2 Clang 21
+    # instruments comparisons the optimiser synthesises (a pointer against -9) and reports
+    # pairs that do not exist in the source.
+    list(APPEND _myb_san_compile -fsanitize=pointer-compare,pointer-subtract)
+    list(APPEND _myb_san_link -fsanitize=pointer-compare,pointer-subtract)
+  endif()
+elseif(MYB_SANITIZE STREQUAL "undefined" AND WIN32)
   # Trap mode: UB becomes an immediate crash at the faulting instruction, no runtime needed.
   set(_myb_san_compile -fsanitize=undefined -fsanitize-trap=undefined -fno-omit-frame-pointer)
   set(_myb_san_link -fsanitize=undefined -fsanitize-trap=undefined)
+elseif(MYB_SANITIZE STREQUAL "undefined")
+  # With the runtime: a report with the stack, then abort (no recovery).
+  set(_myb_san_compile -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  set(_myb_san_link -fsanitize=undefined)
+elseif(MYB_SANITIZE STREQUAL "leak")
+  set(_myb_san_compile -fsanitize=leak -fno-omit-frame-pointer)
+  set(_myb_san_link -fsanitize=leak)
 elseif(NOT MYB_SANITIZE STREQUAL "")
   message(FATAL_ERROR "MYB_SANITIZE: unknown value '${MYB_SANITIZE}'")
 endif()

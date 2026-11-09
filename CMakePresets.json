@@ -64,11 +64,41 @@
     },
     {
       "name": "linux-asan",
-      "displayName": "Linux: ASan + UBSan, abort on first error",
+      "displayName": "Linux: ASan + UBSan + LeakSanitizer, abort on first error",
       "inherits": "linux-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "MYB_SANITIZE": "address",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-asan-debug",
+      "displayName": "Linux: ASan + UBSan + LeakSanitizer + pointer pairs, -O0",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MYB_SANITIZE": "address",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-ubsan",
+      "displayName": "Linux: UBSan with its runtime (report, stack, abort)",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "undefined",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-lsan",
+      "displayName": "Linux: standalone LeakSanitizer",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "leak",
         "MYB_WARNINGS_AS_ERRORS": "ON"
       }
     }
@@ -79,7 +109,10 @@
     { "name": "windows-ubsan", "configurePreset": "windows-ubsan" },
     { "name": "linux-dev", "configurePreset": "linux-dev" },
     { "name": "linux-release", "configurePreset": "linux-release" },
-    { "name": "linux-asan", "configurePreset": "linux-asan" }
+    { "name": "linux-asan", "configurePreset": "linux-asan" },
+    { "name": "linux-asan-debug", "configurePreset": "linux-asan-debug" },
+    { "name": "linux-ubsan", "configurePreset": "linux-ubsan" },
+    { "name": "linux-lsan", "configurePreset": "linux-lsan" }
   ],
   "testPresets": [
     { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } },
@@ -92,8 +125,35 @@
       "configurePreset": "linux-asan",
       "output": { "outputOnFailure": true },
       "environment": {
-        "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_stack_use_after_return=1",
+        "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_leaks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:strict_string_checks=1:detect_invalid_pointer_pairs=2",
+        "LSAN_OPTIONS": "report_objects=1",
         "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      }
+    },
+    {
+      "name": "linux-asan-debug",
+      "configurePreset": "linux-asan-debug",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_leaks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:strict_string_checks=1:detect_invalid_pointer_pairs=2",
+        "LSAN_OPTIONS": "report_objects=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      }
+    },
+    {
+      "name": "linux-ubsan",
+      "configurePreset": "linux-ubsan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "UBSAN_OPTIONS": "halt_on_error=1:abort_on_error=1:print_stacktrace=1:report_error_type=1"
+      }
+    },
+    {
+      "name": "linux-lsan",
+      "configurePreset": "linux-lsan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "LSAN_OPTIONS": "report_objects=1:exitcode=23"
       }
     }
   ]

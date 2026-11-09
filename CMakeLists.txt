@@ -100,6 +100,9 @@ if(NOT WIN32)
   set(THREADS_PREFER_PTHREAD_FLAG ON)
   find_package(Threads REQUIRED)
   target_link_libraries(myb PUBLIC Threads::Threads)
+  # glibc keeps the floating-point environment functions (fegetround, feraiseexcept, used by
+  # CORE-MATH) in libm; tests/tools/check_imports.cmake still forbids its inexact functions.
+  target_link_libraries(myb PUBLIC m)
 endif()
 
 # ---- Public headers stay valid C17 and C++17 -------------------------------------------

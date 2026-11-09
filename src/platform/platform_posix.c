@@ -1,4 +1,8 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
+/* POSIX.1-2008 (O_CLOEXEC, pthread, mmap): the library is built as strict C23, without the
+ * C library's extensions. */
+#define _POSIX_C_SOURCE 200809L
+
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
