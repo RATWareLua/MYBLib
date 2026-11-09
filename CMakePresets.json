@@ -101,6 +101,16 @@
         "MYB_SANITIZE": "leak",
         "MYB_WARNINGS_AS_ERRORS": "ON"
       }
+    },
+    {
+      "name": "linux-tsan",
+      "displayName": "Linux: ThreadSanitizer, abort on the first report",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "thread",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -112,7 +122,8 @@
     { "name": "linux-asan", "configurePreset": "linux-asan" },
     { "name": "linux-asan-debug", "configurePreset": "linux-asan-debug" },
     { "name": "linux-ubsan", "configurePreset": "linux-ubsan" },
-    { "name": "linux-lsan", "configurePreset": "linux-lsan" }
+    { "name": "linux-lsan", "configurePreset": "linux-lsan" },
+    { "name": "linux-tsan", "configurePreset": "linux-tsan" }
   ],
   "testPresets": [
     { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } },
@@ -154,6 +165,14 @@
       "output": { "outputOnFailure": true },
       "environment": {
         "LSAN_OPTIONS": "report_objects=1:exitcode=23"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "configurePreset": "linux-tsan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:abort_on_error=1:second_deadlock_stack=1:report_signal_unsafe=1:history_size=7"
       }
     }
   ]

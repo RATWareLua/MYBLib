@@ -66,7 +66,8 @@ ctest --preset linux-dev
 `windows-ubsan` (UBSan в режиме trap); на Linux — санитайзеры с остановкой на первой ошибке:
 `linux-asan` (ASan + UBSan + LeakSanitizer, `-O2`), `linux-asan-debug` (то же при `-O0` и
 проверка пар указателей `pointer-compare`/`pointer-subtract`), `linux-ubsan` (UBSan с отчётом и
-стеком), `linux-lsan` (отдельный LeakSanitizer).
+стеком), `linux-lsan` (отдельный LeakSanitizer), `linux-tsan` (ThreadSanitizer: гонки данных и
+порядок блокировок пула потоков). Результаты проверки на Gentoo — `docs/PLAN.md`, §12.
 
 Тест `test_repro` сравнивает хеш результатов с эталоном: он обязан совпасть на любой
 платформе, при любом уровне оптимизации и ISA (x86-64-v2/v3).

@@ -26,6 +26,8 @@
 #       undefined — UBSan: with its runtime (report and stack, abort on the first error) where
 #                   the runtime exists; in trap mode on the Windows target, which has none
 #       leak      — standalone LeakSanitizer (Linux): leaks without ASan's instrumentation
+#       thread    — ThreadSanitizer (Linux): data races and lock-order inversions of the
+#                   thread team (myb_pool) and of everything run on it
 include_guard(GLOBAL)
 include(CheckCCompilerFlag)
 
@@ -33,8 +35,8 @@ option(MYB_WARNINGS_AS_ERRORS "Treat warnings as errors in project code" OFF)
 option(MYB_HARDENING "Enable hardening flags" ON)
 set(MYB_X64_BASELINE "x86-64-v2" CACHE STRING "x86-64 ISA baseline: x86-64-v2 or x86-64-v3")
 set_property(CACHE MYB_X64_BASELINE PROPERTY STRINGS x86-64-v2 x86-64-v3)
-set(MYB_SANITIZE "" CACHE STRING "Sanitizer: empty, address, undefined or leak")
-set_property(CACHE MYB_SANITIZE PROPERTY STRINGS "" address undefined leak)
+set(MYB_SANITIZE "" CACHE STRING "Sanitizer: empty, address, undefined, leak or thread")
+set_property(CACHE MYB_SANITIZE PROPERTY STRINGS "" address undefined leak thread)
 
 # ---- Compiler gate ----------------------------------------------------------------------
 set(MYB_MIN_CLANG_VERSION 19)
@@ -140,6 +142,9 @@ elseif(MYB_SANITIZE STREQUAL "undefined")
 elseif(MYB_SANITIZE STREQUAL "leak")
   set(_myb_san_compile -fsanitize=leak -fno-omit-frame-pointer)
   set(_myb_san_link -fsanitize=leak)
+elseif(MYB_SANITIZE STREQUAL "thread")
+  set(_myb_san_compile -fsanitize=thread -fno-omit-frame-pointer)
+  set(_myb_san_link -fsanitize=thread)
 elseif(NOT MYB_SANITIZE STREQUAL "")
   message(FATAL_ERROR "MYB_SANITIZE: unknown value '${MYB_SANITIZE}'")
 endif()
