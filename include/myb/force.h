@@ -292,6 +292,16 @@ MYB_API MYB_NODISCARD myb_status myb_force_yarkovsky(const myb_yarkovsky* body,
                                                      const double spin[3], double flux, double c,
                                                      const double to_sun[3], double a[3]);
 
+/* The derivative of that acceleration in the position of the body, dadr[3 i + j] =
+ * d a_i / d r_j (written, not added), the Sun fixed: d is the vector from the body to the Sun
+ * (m) and flux the flux there, falling as 1 / |d|^2. The response R depends on the flux only
+ * through the thermal parameter, in which 1 / R is linear: dR / d theta = -R (1 - R) / theta.
+ * Errors: MYB_E_DOMAIN. */
+MYB_API MYB_NODISCARD myb_status myb_force_yarkovsky_gradient(const myb_yarkovsky* body,
+                                                              const double spin[3], double flux,
+                                                              double c, const double d[3],
+                                                              double dadr[9]);
+
 /* The seasonal Yarkovsky effect on an orbit of any eccentricity up to 0.95: the part of the
  * recoil along the spin axis. It follows the heating of the two hemispheres over the whole
  * orbit, so it belongs to an orbit and not to an instant: the heating along the axis,
@@ -322,6 +332,11 @@ MYB_API void myb_yarkovsky_season_destroy(myb_yarkovsky_season* season); /* acce
  * orbit. */
 MYB_API void myb_force_yarkovsky_season(const myb_yarkovsky_season* season, const double r[3],
                                         double a[3]);
+
+/* The derivative of that acceleration in r (written, not added): the series differentiated in
+ * the mean anomaly, which r fixes through its direction in the plane of the orbit. */
+MYB_API void myb_force_yarkovsky_season_gradient(const myb_yarkovsky_season* season,
+                                                 const double r[3], double dadr[9]);
 
 /* The drift of the semi-major axis (m/s) averaged over the orbit — inwards —, and the number
  * of harmonics kept. */

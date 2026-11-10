@@ -300,10 +300,9 @@ typedef struct myb_drag_term {
 
 MYB_API MYB_NODISCARD myb_status myb_term_drag(void* term, double t, const double x[3],
                                                const double v[3], double a[3]);
-/* Analytic in the velocity and in the rotation of the atmosphere; the gradient of the density
- * by central differences of the density function over 1e-7 of the distance from the body's
- * centre (about 1e-9 of the gradient for a scale height of tens of kilometres). The gradient
- * of a wind is left out. */
+/* Analytic in the velocity and in the rotation of the atmosphere; the gradients of the density
+ * and of the wind by central differences of their functions over 1e-7 of the distance from
+ * the body's centre (about 1e-9 of the gradient for a scale height of tens of kilometres). */
 MYB_API MYB_NODISCARD myb_status myb_term_drag_jacobian(void* term, double t, const double x[3],
                                                         const double v[3], double dadx[9],
                                                         double dadv[9]);
@@ -359,9 +358,7 @@ MYB_API MYB_NODISCARD myb_status myb_term_nongrav_jacobian(void* term, double t,
 
 /* The Yarkovsky acceleration of a body lit by `source`, its spin axis (unit) fixed in the
  * inertial axes: the diurnal part (myb_force_yarkovsky) and, with `season`, the seasonal one
- * (myb_force_yarkovsky_season; made for the orbit of the body about the source). Its
- * Jacobian is left to the differences of the model: the answer of the body to the heating
- * has no closed derivative, and the term is 1e-12 of the attraction. */
+ * (myb_force_yarkovsky_season; made for the orbit of the body about the source). */
 typedef struct myb_yarkovsky_term {
   myb_env* env;
   size_t source;
@@ -373,6 +370,11 @@ typedef struct myb_yarkovsky_term {
 
 MYB_API MYB_NODISCARD myb_status myb_term_yarkovsky(void* term, double t, const double x[3],
                                                     const double v[3], double a[3]);
+/* Analytic (myb_force_yarkovsky_gradient, myb_force_yarkovsky_season_gradient). */
+MYB_API MYB_NODISCARD myb_status myb_term_yarkovsky_jacobian(void* term, double t,
+                                                             const double x[3],
+                                                             const double v[3], double dadx[9],
+                                                             double dadv[9]);
 
 /* The lagging tide that the object raises on a body of the environment
  * (myb_force_tidal_lag): the motion of a moon about its planet. The rotation of the body is

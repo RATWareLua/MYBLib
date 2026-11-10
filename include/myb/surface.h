@@ -164,6 +164,20 @@ typedef struct myb_surface_radiation_term {
 MYB_API MYB_NODISCARD myb_status myb_term_surface_radiation(void* term, double t,
                                                             const double x[3], const double v[3],
                                                             double a[3]);
+/* The Jacobians of the three terms of this header are analytic: the force in the body of the
+ * object is differentiated as it is written, and so is the attitude when its law is one of
+ * the four of this header (it is known by its address). The derivatives of an attitude law
+ * of the caller's own are central differences of that law over 6e-6 of |x| and of |v| —
+ * 12 calls of the law, not of the term. Where the force is not smooth the derivative is
+ * that of the side the object is on: a plate that the light or the flow just grazes, the
+ * parts of a mesh that are lit now. In a penumbra the light changes over tens of kilometres
+ * and the Jacobian of this term is central differences of the term, as that of
+ * myb_term_radiation. */
+MYB_API MYB_NODISCARD myb_status myb_term_surface_radiation_jacobian(void* term, double t,
+                                                                     const double x[3],
+                                                                     const double v[3],
+                                                                     double dadx[9],
+                                                                     double dadv[9]);
 
 /* The free-molecular flow of the atmosphere of a body on the plates of the object
  * (myb_force_gas_plates): density and wind as in myb_drag_term. */
@@ -191,6 +205,12 @@ typedef struct myb_surface_drag_term {
 
 MYB_API MYB_NODISCARD myb_status myb_term_surface_drag(void* term, double t, const double x[3],
                                                        const double v[3], double a[3]);
+/* As above; the gradients of the density and of the wind are central differences of their
+ * functions, as in myb_term_drag_jacobian. */
+MYB_API MYB_NODISCARD myb_status myb_term_surface_drag_jacobian(void* term, double t,
+                                                                const double x[3],
+                                                                const double v[3],
+                                                                double dadx[9], double dadv[9]);
 
 /* The recoil of radiation that the object sends out in a direction fixed in its body: the
  * heat of a radioisotope generator or of the electronics, the beam of an antenna —
@@ -212,6 +232,10 @@ typedef struct myb_recoil_term {
 
 MYB_API MYB_NODISCARD myb_status myb_term_recoil(void* term, double t, const double x[3],
                                                  const double v[3], double a[3]);
+/* As above: the recoil is fixed in the body, so its derivatives are those of the attitude. */
+MYB_API MYB_NODISCARD myb_status myb_term_recoil_jacobian(void* term, double t,
+                                                          const double x[3], const double v[3],
+                                                          double dadx[9], double dadv[9]);
 
 #ifdef __cplusplus
 }

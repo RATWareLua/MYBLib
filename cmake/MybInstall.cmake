@@ -1,7 +1,7 @@
 # MybInstall.cmake — install rules of myb: libraries, headers, data kernels, licences, the
 # CMake package (find_package(myb)) and a pkg-config file.
 #
-#   <prefix>/include/myb/*.h, include/myb_<ext>.h
+#   <prefix>/include/myb/*.h, include/myb_<ext>.h; include/myb/myb.hpp (C++, target myb::cpp)
 #   <prefix>/lib/libmyb.a [libmyb.so, libmyb.dll.a], libmyb_<ext>.a ...; bin/libmyb.dll
 #   <prefix>/lib/cmake/myb/mybConfig.cmake ...     targets myb::myb, myb::myb_shared,
 #                                                  myb::<ext>, myb::<ext>_shared; myb_DATA_DIR
@@ -11,7 +11,7 @@
 include_guard(GLOBAL)
 include(CMakePackageConfigHelpers)
 
-set(_myb_targets myb)
+set(_myb_targets myb myb_cpp)
 if(MYB_BUILD_SHARED)
   list(APPEND _myb_targets myb_shared)
 endif()
@@ -33,6 +33,8 @@ install(TARGETS ${_myb_targets} EXPORT mybTargets
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/myb"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}" FILES_MATCHING PATTERN "*.h")
+install(FILES "${PROJECT_SOURCE_DIR}/bindings/cpp/include/myb/myb.hpp"
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/myb")
 install(DIRECTORY "${PROJECT_SOURCE_DIR}/data/"
   DESTINATION "${CMAKE_INSTALL_DATADIR}/myb/data"
   PATTERN "download" EXCLUDE)

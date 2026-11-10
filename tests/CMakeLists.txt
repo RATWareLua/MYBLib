@@ -147,6 +147,9 @@ if(MYB_INSTALL AND MYB_SANITIZE STREQUAL "")
     "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}" "-DCONFIG=$<CONFIG>"
     "-DLIBDIR=${CMAKE_INSTALL_LIBDIR}" "-DINCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}"
     "-DDATADIR=${CMAKE_INSTALL_DATADIR}")
+  if(CMAKE_CXX_COMPILER)
+    list(APPEND _myb_install_args -DREQUIRE_CXX=ON) # the C++ example must build and pass too
+  endif()
   add_test(NAME test_install
     COMMAND "${CMAKE_COMMAND}" ${_myb_install_args}
             "-DWORK_DIR=${PROJECT_BINARY_DIR}/install-test"
@@ -158,6 +161,108 @@ if(MYB_INSTALL AND MYB_SANITIZE STREQUAL "")
               "-DWORK_DIR=${PROJECT_BINARY_DIR}/install-test-shared"
               -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_install.cmake")
     set_tests_properties(test_install_shared PROPERTIES RESOURCE_LOCK myb_install)
+  endif()
+endif()
+
+# The C++ face of the library (bindings/cpp): the classes against the same calls made in C.
+if(CMAKE_CXX_COMPILER)
+  add_executable(test_cpp_binding bindings/test_cpp.cc)
+  set_target_properties(test_cpp_binding PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  target_link_libraries(test_cpp_binding PRIVATE myb_cpp)
+  target_compile_definitions(test_cpp_binding PRIVATE
+    "MYB_TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data\""
+    "MYB_DATA_DIR=\"${PROJECT_SOURCE_DIR}/data\"")
+  myb_apply_flags(test_cpp_binding)
+  # the header handles no exceptions: it compiles with them switched off
+  target_compile_options(test_cpp_binding PRIVATE -fno-exceptions)
+  if(WIN32)
+    # the C++ runtime inside the test: it must not look for DLLs on PATH
+    target_link_options(test_cpp_binding PRIVATE -static)
+    target_link_libraries(test_cpp_binding PRIVATE winpthread) # for the static libstdc++
+  endif()
+  add_test(NAME test_cpp_binding COMMAND test_cpp_binding)
+endif()
+
+# The Python package (bindings/python) over the shared library: needs an interpreter with cffi
+# (MYB_PYTHON names one; otherwise the first of those found that has it). Not with a
+# sanitizer: its runtime would have to be loaded into the interpreter first.
+if(MYB_BUILD_SHARED AND MYB_SANITIZE STREQUAL "")
+  set(MYB_PYTHON "" CACHE FILEPATH "Python interpreter (with cffi) for the test of bindings/python")
+  set(_myb_python_candidates "${MYB_PYTHON}")
+  if(NOT MYB_PYTHON)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    # the interpreters of PATH as well: a toolchain's own Python often has no cffi
+    find_program(MYB_PYTHON_ON_PATH NAMES python3 python NAMES_PER_DIR
+      NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_CMAKE_FIND_ROOT_PATH
+      NO_PACKAGE_ROOT_PATH)
+    mark_as_advanced(MYB_PYTHON_ON_PATH)
+    set(_myb_python_candidates "${Python3_EXECUTABLE}" "${MYB_PYTHON_ON_PATH}")
+  endif()
+  set(_myb_python_ok FALSE)
+  foreach(_myb_python IN LISTS _myb_python_candidates)
+    if(_myb_python AND EXISTS "${_myb_python}" AND NOT _myb_python_ok)
+      execute_process(COMMAND "${_myb_python}" -c "import cffi"
+        RESULT_VARIABLE _myb_cffi_rc OUTPUT_QUIET ERROR_QUIET)
+      if(_myb_cffi_rc EQUAL 0)
+        set(_myb_python_ok TRUE)
+        set(Python3_EXECUTABLE "${_myb_python}")
+      endif()
+    endif()
+  endforeach()
+  if(_myb_python_ok)
+    add_test(NAME test_python_binding
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "PYTHONPATH=${PROJECT_SOURCE_DIR}/bindings/python"
+        "MYB_LIBRARY=$<TARGET_FILE:myb_shared>"
+        "MYB_LIBRARY_PATH=$<TARGET_FILE_DIR:myb_sgp4_shared>"
+        "MYB_DATA_DIR=${PROJECT_SOURCE_DIR}/data"
+        "MYB_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+        "MYB_CLANG=${CMAKE_C_COMPILER}"
+        "${Python3_EXECUTABLE}" -m unittest discover -s
+        "${PROJECT_SOURCE_DIR}/bindings/python/tests")
+  else()
+    message(STATUS "no Python with cffi found (set MYB_PYTHON): test_python_binding is not "
+      "registered")
+  endif()
+endif()
+
+# The Rust crates (bindings/rust) over the static library: needs cargo. On Windows the library
+# is built for the GNU ABI, so the Rust toolchain of that ABI is asked for. Not with a
+# sanitizer: Rust would have to link its runtime.
+if(MYB_SANITIZE STREQUAL "")
+  find_program(MYB_CARGO cargo)
+  mark_as_advanced(MYB_CARGO)
+  set(_myb_cargo_ok FALSE)
+  set(_myb_cargo_toolchain "")
+  if(MYB_CARGO)
+    if(MINGW)
+      set(_myb_cargo_toolchain "+stable-x86_64-pc-windows-gnu")
+    endif()
+    execute_process(COMMAND "${MYB_CARGO}" ${_myb_cargo_toolchain} --version
+      RESULT_VARIABLE _myb_cargo_rc OUTPUT_QUIET ERROR_QUIET)
+    if(_myb_cargo_rc EQUAL 0)
+      set(_myb_cargo_ok TRUE)
+    endif()
+  endif()
+  if(_myb_cargo_ok)
+    # the directories of the libraries, separated as PATH is
+    if(CMAKE_HOST_WIN32)
+      set(_myb_path_separator "\;")
+    else()
+      set(_myb_path_separator ":")
+    endif()
+    add_test(NAME test_rust_binding
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "MYB_LIB_DIR=$<TARGET_FILE_DIR:myb>${_myb_path_separator}$<TARGET_FILE_DIR:myb_sgp4>"
+        "CARGO_TARGET_DIR=${PROJECT_BINARY_DIR}/rust"
+        "MYB_DATA_DIR=${PROJECT_SOURCE_DIR}/data"
+        "MYB_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+        "${MYB_CARGO}" ${_myb_cargo_toolchain} test --offline --locked
+        --manifest-path "${PROJECT_SOURCE_DIR}/bindings/rust/Cargo.toml" --features myb/sgp4)
+    set_tests_properties(test_rust_binding PROPERTIES TIMEOUT 900)
+  else()
+    message(STATUS "cargo not found: test_rust_binding is not registered")
   endif()
 endif()
 

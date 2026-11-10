@@ -601,6 +601,131 @@ myb_status myb_term_drag(void* term, double t, const double x[3], const double v
   return MYB_OK;
 }
 
+/* d wind_i / d r_j in the body-fixed frame by central differences over h. */
+static myb_status wind_gradient(myb_wind_function wind, void* context, myb_time when,
+                                const double fixed[3], double h, double jacobian[9]) {
+  for (int j = 0; j < 3; ++j) {
+    double plus[3] = {fixed[0], fixed[1], fixed[2]};
+    double minus[3] = {fixed[0], fixed[1], fixed[2]};
+    plus[j] += h;
+    minus[j] -= h;
+    double up[3];
+    double down[3];
+    myb_status status = wind(context, when, plus, up);
+    if (status == MYB_OK) {
+      status = wind(context, when, minus, down);
+    }
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (!myb_vec3_finite(up) || !myb_vec3_finite(down)) {
+      return MYB_E_DOMAIN;
+    }
+    for (int i = 0; i < 3; ++i) {
+      jacobian[3 * i + j] = (up[i] - down[i]) / (plus[j] - minus[j]);
+    }
+  }
+  return MYB_OK;
+}
+
+/* out -= M^T J M: a matrix of the body-fixed frame taken into the inertial axes. */
+static void subtract_turned(const double m[9], const double jacobian[9], double out[9]) {
+  double half[9]; /* J M */
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      half[3 * i + j] = jacobian[3 * i] * m[j] + jacobian[3 * i + 1] * m[3 + j] +
+                        jacobian[3 * i + 2] * m[6 + j];
+    }
+  }
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      out[3 * i + j] -= m[i] * half[j] + m[3 + i] * half[3 + j] + m[6 + i] * half[6 + j];
+    }
+  }
+}
+
+myb_status myb_internal_env_flow(myb_env* env, double t, size_t body,
+                                 myb_density_function density, void* density_context,
+                                 myb_wind_function wind, void* wind_context, const double x[3],
+                                 const double v[3], double* rho, double gradient[3],
+                                 double w[3], double dwdx[9]) {
+  const double* s = NULL;
+  myb_status status = myb_internal_env_state(env, t, body, &s);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const myb_orientation* o = NULL;
+  const myb_rotation* inverse = NULL;
+  status = myb_internal_env_orientation(env, t, body, &o, &inverse);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_time when;
+  status = myb_internal_env_orientation_time(env, t, body, &when);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double y[6];
+  sub3(x, s, y);
+  sub3(v, s + 3, y + 3);
+  double fixed[6];
+  myb_rotation_apply_state(&o->rotation, y, fixed);
+  status = density(density_context, when, fixed, rho);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (!(*rho >= 0.0) || !isfinite(*rho)) {
+    return MYB_E_DOMAIN;
+  }
+  const double h = 1e-7 * myb_vec3_norm(fixed);
+  double gradient_fixed[3] = {0.0, 0.0, 0.0};
+  for (int j = 0; j < 3 && h > 0.0; ++j) {
+    double plus[3] = {fixed[0], fixed[1], fixed[2]};
+    double minus[3] = {fixed[0], fixed[1], fixed[2]};
+    plus[j] += h;
+    minus[j] -= h;
+    double rho_plus = 0.0;
+    double rho_minus = 0.0;
+    status = density(density_context, when, plus, &rho_plus);
+    if (status == MYB_OK) {
+      status = density(density_context, when, minus, &rho_minus);
+    }
+    if (status != MYB_OK) {
+      return status;
+    }
+    gradient_fixed[j] = (rho_plus - rho_minus) / (plus[j] - minus[j]);
+  }
+  myb_rotation_apply_position(inverse, gradient_fixed, gradient);
+  const double* m = o->rotation.m;
+  const double* dm = o->rotation.dm;
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      dwdx[3 * i + j] = m[i] * dm[j] + m[3 + i] * dm[3 + j] + m[6 + i] * dm[6 + j];
+    }
+  }
+  if (wind != NULL) {
+    double blowing[3];
+    status = wind(wind_context, when, fixed, blowing);
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (!myb_vec3_finite(blowing)) {
+      return MYB_E_DOMAIN;
+    }
+    sub3(fixed + 3, blowing, fixed + 3);
+    if (h > 0.0) {
+      double jacobian[9];
+      status = wind_gradient(wind, wind_context, when, fixed, h, jacobian);
+      if (status != MYB_OK) {
+        return status;
+      }
+      subtract_turned(m, jacobian, dwdx);
+    }
+  }
+  myb_rotation_apply_position(inverse, fixed + 3, w);
+  return MYB_OK;
+}
+
 myb_status myb_term_drag_jacobian(void* term, double t, const double x[3], const double v[3],
                                   double dadx[9], double dadv[9]) {
   const myb_drag_term* d = term;
@@ -701,6 +826,15 @@ myb_status myb_term_drag_jacobian(void* term, double t, const double x[3], const
   }
   double gradient[3];
   myb_rotation_apply_position(inverse, gradient_fixed, gradient);
+  if (d->wind != NULL && h > 0.0) {
+    /* a wind that changes from place to place: w also holds -M^T wind(M (x - s)) */
+    double jacobian[9];
+    status = wind_gradient(d->wind, d->wind_context, when, fixed, h, jacobian);
+    if (status != MYB_OK) {
+      return status;
+    }
+    subtract_turned(m, jacobian, spin);
+  }
   for (int i = 0; i < 3; ++i) {
     for (int j = 0; j < 3; ++j) {
       dadx[3 * i + j] = daw[3 * i] * spin[j] + daw[3 * i + 1] * spin[3 + j] +
@@ -977,9 +1111,9 @@ myb_status myb_internal_env_light(myb_env* env, double t, size_t source_index,
 /* ---- More Jacobians, more terms ---------------------------------------------------------------- */
 
 /* Central differences of a term in the position and the velocity. */
-static myb_status state_differences(myb_term_function function, void* term, double t,
-                                    const double x[3], const double v[3], double hx, double hv,
-                                    double dadx[9], double dadv[9]) {
+myb_status myb_internal_state_differences(myb_term_function function, void* term, double t,
+                                          const double x[3], const double v[3], double hx,
+                                          double hv, double dadx[9], double dadv[9]) {
   for (int j = 0; j < 6; ++j) {
     double q[6] = {x[0], x[1], x[2], v[0], v[1], v[2]};
     const double h = j < 3 ? hx : hv;
@@ -1146,7 +1280,7 @@ myb_status myb_term_nongrav_jacobian(void* term, double t, const double x[3], co
   if (n->delay != 0.0) {
     const double d[3] = {x[0] - s[0], x[1] - s[1], x[2] - s[2]};
     const double w[3] = {v[0] - s[3], v[1] - s[4], v[2] - s[5]};
-    return state_differences(myb_term_nongrav, term, t, x, v,
+    return myb_internal_state_differences(myb_term_nongrav, term, t, x, v,
                              6.0554544523933395e-6 * myb_vec3_norm(d),
                              6.0554544523933395e-6 * myb_vec3_norm(w), dadx, dadv);
   }
@@ -1254,6 +1388,40 @@ myb_status myb_term_yarkovsky(void* term, double t, const double x[3], const dou
   }
   return myb_force_yarkovsky(&y->body, y->spin, myb_radiation_flux(source->luminosity, dn), y->c,
                              to_sun, a);
+}
+
+myb_status myb_term_yarkovsky_jacobian(void* term, double t, const double x[3],
+                                       const double v[3], double dadx[9], double dadv[9]) {
+  const myb_yarkovsky_term* y = term;
+  MYB_CHECK(y != NULL && y->env != NULL && x != NULL && v != NULL && dadx != NULL &&
+            dadv != NULL);
+  const myb_env_body* source = myb_internal_env_body(y->env, y->source);
+  const double* s = NULL;
+  myb_status status = myb_internal_env_state(y->env, t, y->source, &s);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double d[3];
+  sub3(s, x, d);
+  const double dn = myb_vec3_norm(d);
+  if (!(dn > 0.0) || !isfinite(dn)) {
+    return MYB_E_DOMAIN;
+  }
+  memset(dadv, 0, 9 * sizeof(double));
+  status = myb_force_yarkovsky_gradient(&y->body, y->spin, myb_radiation_flux(source->luminosity, dn),
+                                        y->c, d, dadx);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (y->season != NULL) {
+    const double from_sun[3] = {-d[0], -d[1], -d[2]};
+    double seasonal[9];
+    myb_force_yarkovsky_season_gradient(y->season, from_sun, seasonal);
+    for (int i = 0; i < 9; ++i) {
+      dadx[i] += seasonal[i];
+    }
+  }
+  return MYB_OK;
 }
 
 myb_status myb_term_field_indirect(void* term, double t, const double x[3], const double v[3],

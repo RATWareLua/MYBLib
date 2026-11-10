@@ -1048,6 +1048,32 @@ static void test_yarkovsky_season(void) {
     MT_CHECK(fabs(both[i] - diurnal[i] - seasonal[i]) <= 1e-15 * fabs(both[i]) + 1e-30);
   }
   MT_CHECK(fabs(seasonal[0]) + fabs(seasonal[1]) + fabs(seasonal[2]) > 1e-13);
+  /* the Jacobian of the term: the answer of the body differentiated in closed form
+   * (dR / d theta = -R (1 - R) / theta), the series of the season in the mean anomaly */
+  double with_season[2];
+  double diurnal_alone[2];
+  double plane[2];
+  double cold[2];
+  jacobian_check(myb_term_yarkovsky, myb_term_yarkovsky_jacobian, &term, x, state + 3,
+                 &with_season[0], &with_season[1]);
+  term.season = NULL;
+  jacobian_check(myb_term_yarkovsky, myb_term_yarkovsky_jacobian, &term, x, state + 3,
+                 &diurnal_alone[0], &diurnal_alone[1]);
+  term.body.conductivity = 0.0; /* a body much larger than the thermal wave */
+  jacobian_check(myb_term_yarkovsky, myb_term_yarkovsky_jacobian, &term, x, state + 3, &plane[0],
+                 &plane[1]);
+  term.body.thermal_inertia = 0.0; /* no inertia: no lag, the answer does not depend on the flux */
+  jacobian_check(myb_term_yarkovsky, myb_term_yarkovsky_jacobian, &term, x, state + 3, &cold[0],
+                 &cold[1]);
+  printf("Jacobian of the Yarkovsky term against differences: a conducting body %.1e, with "
+         "the season %.1e, a large body %.1e, without inertia %.1e\n",
+         diurnal_alone[0], with_season[0], plane[0], cold[0]);
+  MT_CHECK(diurnal_alone[0] < 1e-8 && with_season[0] < 1e-8 && plane[0] < 1e-8 && cold[0] < 1e-8);
+  MT_CHECK(diurnal_alone[1] == 0.0 && with_season[1] == 0.0);
+  double gradient[9];
+  const double nowhere[3] = {0.0, 0.0, 0.0};
+  MT_CHECK(myb_force_yarkovsky_gradient(&body, spin, 1361.0, c_light, nowhere, gradient) ==
+           MYB_E_DOMAIN);
   myb_env_destroy(env);
   myb_yarkovsky_season_destroy(season);
 

@@ -10,7 +10,7 @@ general relativity in the post-Newtonian approximation wherever the effect is me
 the results are reproducible to the bit on Windows and Linux. The core knows no particular
 body: the Sun, the planets and spacecraft are given as data.
 
-Status: **version 1.2.0.0, phases 0–17** — numerical foundation, correctly rounded functions,
+Status: **version 1.2.0.0, phases 0–17, bindings for C++, Python and Rust** — numerical foundation, correctly rounded functions,
 data reading, time scales, the body model, the two-body problem, Lambert's problem, integrators
 (DOP853, RKN12(10), IAS15, Gauss–Jackson, symplectic compositions), the N-body problem (direct
 summation, interaction graph, threads, WH/WHFast, SABA, SBAB), SPK ephemerides and reference
@@ -76,7 +76,7 @@ Detailed plan, sources and roadmap:
 | `myb/events.h`, `myb/model.h` (breaks) | ready-made events: apsides and close approaches, distance, plane crossings, altitude, elevation over a station, edges of shadows, the surface of a shape; breaks of the step where the force is not smooth (edges of shadows): no step of the integrator contains one | eclipse contacts against CSPICE `gfoclt` 4·10⁻¹⁰ s; with breaks the final state stops depending on the integrator's precision (6.4 m → 8·10⁻⁷ m); LAGEOS first-guess residual the same to 0.1 mm at ε = 10⁻¹⁰…10⁻¹² |
 | `myb/geometry.h` | a ray and a triaxial ellipsoid, the nearest point and the altitude, normals, angles of illumination; the limb and the terminator; rays (a tree of bounding boxes) and the solid angle of a triangular mesh; a body as seen with the light time and aberration | against CSPICE `surfpt` 5·10⁻¹⁶, `nearpt` 4·10⁻¹⁶; `sincpt`, `subpnt`, `ilumin` through kernels 10⁻⁸ m, 7·10⁻¹⁶ rad; the limb against `edlimb` 2·10⁻⁷ m; a ray with light time against `sincpt` (CN) 7·10⁻⁹ m; a ray on a mesh of 16 thousand faces 1 µs |
 | `myb/force.h` (small forces), `myb/env.h` | light on a moving object (Poynting–Robertson); accelerations of comets and asteroids A1, A2, A3 with g(r) (Marsden, Yarkovsky); the Yarkovsky drift from thermal properties; the recoil of emitted power; the lagging tide (Mignard) and its torque; winds; a mass that changes; delayed outgassing; the Yarkovsky effect of a conducting body of any size, diurnal and — on an eccentric orbit — seasonal; the shadow of several bodies at once and refraction in the atmosphere of the occulting body | Poynting–Robertson decay as the averaged theory to 7 digits; Yarkovsky drift 5·10⁻⁷ from the formula; the Moon recedes 3.79 cm a year, the tide integrated 2·10⁻⁷ from the formula; the response of a conducting sphere against mpmath 5·10⁻¹³, the seasonal drift on orbits up to e = 0.85 4·10⁻¹³; the shadow of two bodies is the union of what they cover (the product of the fractions is off by up to 15 %) |
-| `myb/surface.h` | the surface of the object: attitude laws; free-molecular flow on plates (Sentman: drag and lift); light on a mesh with self-shadowing by ray casting, its torque (YORP, also with conduction); the transitional flow regime by the Knudsen number; terms of a model for plates and meshes | Sentman's plates over a sphere 5·10⁻¹⁵ from the closed form; lit area of a shadowed slab 9.000000000000 m²; the YORP torque changes sign for the mirror image, its axial part does not depend on the thermal parameter |
+| `myb/surface.h` | the surface of the object: attitude laws; free-molecular flow on plates (Sentman: drag and lift); light on a mesh with self-shadowing by ray casting, its torque (YORP, also with conduction); the transitional flow regime by the Knudsen number; terms of a model for plates and meshes | Sentman's plates over a sphere 5·10⁻¹⁵ from the closed form; lit area of a shadowed slab 9.000000000000 m²; the YORP torque changes sign for the mirror image, its axial part does not depend on the thermal parameter; analytic Jacobians of the terms of plates, meshes and recoil together with the attitude 10⁻¹⁰…2·10⁻⁹ from differences |
 | `myb/orbit.h` (impulses) | `myb_orbit_kick`: impulsive manoeuvres, the transition matrix continuing across them | Hohmann transfer: final orbit to 1.5·10⁻⁸ m; Φ across two impulses 2·10⁻⁹ |
 | `ext/nrlmsise00` | NRLMSISE-00 (separate target `myb::nrlmsise00`): thread-safe, reproducible port | 17 reference cases — to the 7 printed digits |
 | `ext/troposphere` | tropospheric delay per IERS 2010 ch. 9 (target `myb::troposphere`): Saastamoinen, Mendes–Pavlis, FCULa, VMF1, GMF, GPT, gradients | test cases of the IERS routines — 10⁻¹⁶…10⁻¹⁵ |
@@ -157,6 +157,47 @@ drift of the node) and the time scales from the data kernels; they build in the 
 (`-DMYB_BUILD_EXAMPLES=ON`) or on their own against an installation
 (`cmake -S examples -B build-examples -DCMAKE_PREFIX_PATH=/opt/myb`). History of changes:
 [`CHANGELOG.md`](CHANGELOG.md).
+
+## Bindings
+
+The library is available from C++, Python and Rust (`bindings/`). Each binding has two layers:
+the whole C interface under the names of the headers, and over it classes for the usual path
+(kernels and time, ephemerides, the environment, the force model, propagation, events, OEM
+messages) with ownership, errors and callables in the manner of the language. The bindings do
+no arithmetic: a result agrees with the C calls to the bit.
+
+| Language | Where | How to use | Errors |
+|---|---|---|---|
+| C++17 | `bindings/cpp/include/myb/myb.hpp` (installed into `include/myb/`) | `target_link_libraries(app PRIVATE myb::cpp)`, `#include "myb/myb.hpp"` | `myb::result<T>`: a status and a value, no exceptions |
+| Python ≥ 3.9 | `bindings/python` (the package `myb`, cffi) | `pip install ./bindings/python`; the shared library is named by `MYB_LIBRARY` | the exception `myb.Error` with the status |
+| Rust ≥ 1.82 | `bindings/rust` (the crates `myb-sys`, `myb`) | a path dependency; the library is found by `MYB_LIB_DIR` or pkg-config | `Result<T, myb::Error>` |
+
+```cpp
+auto model = myb::share(myb::force_model::create());
+(*model)->add_point_mass("planet", 3.986004418e14);
+auto orbit = myb::orbit::create(*model);
+orbit->start(0.0, {7.0e6, 0, 0, 0, 7.5e3, 0}, 6000.0);
+auto node = orbit->next_event([](double, const myb::state& y) { return y[2]; }, 6000.0, 1);
+```
+
+```python
+model = myb.ForceModel()
+model.add_point_mass("planet", 3.986004418e14)
+orbit = myb.Orbit(model)
+orbit.start(0.0, (7.0e6, 0, 0, 0, 7.5e3, 0), 6000.0)
+node = orbit.next_event(lambda t, y: y[2], 6000.0, direction=1)   # (t, state) or None
+```
+
+```rust
+let model = Rc::new(myb::ForceModel::new()?);
+model.add_point_mass("planet", 3.986004418e14)?;
+let mut orbit = myb::Orbit::new(&model, &myb::OrbitOptions::default())?;
+orbit.start(0.0, &[7.0e6, 0.0, 0.0, 0.0, 7.5e3, 0.0], 6000.0)?;
+let node = orbit.next_event(|_, y| y[2], 6000.0, myb::Direction::Rising)?;
+```
+
+What the classes do not have is called through the lower layer: in C++ the C functions on
+`get()`, in Python `myb.lib.myb_…`, in Rust `myb::sys::myb_…`.
 
 ## Numerical contract
 

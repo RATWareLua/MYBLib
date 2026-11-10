@@ -83,6 +83,15 @@ static inline myb_dual myb_dual_sqrt(myb_dual a) {
   return r;
 }
 
+static inline myb_dual myb_dual_exp(myb_dual a) {
+  myb_dual r;
+  r.v = myb_exp(a.v);
+  for (int i = 0; i < MYB_DUAL_VARIABLES; ++i) {
+    r.d[i] = r.v * a.d[i];
+  }
+  return r;
+}
+
 /* a^p for a > 0 and a constant p. */
 static inline myb_dual myb_dual_power(myb_dual a, double p) {
   myb_dual r;

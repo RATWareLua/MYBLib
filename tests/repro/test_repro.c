@@ -45,7 +45,7 @@
 #include "myb/uncert.h"
 #include "myb_sgp4.h"
 
-static const uint64_t golden_hash = UINT64_C(0xa762f98ab1f66694);
+static const uint64_t golden_hash = UINT64_C(0xb76153a8dca45827);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -2833,6 +2833,77 @@ static void workload_debts(hasher* h, mt_rng* rng) {
     hash_double(h, (double)hit);
     hash3(h, point);
     hash_double(h, tau);
+  }
+  /* the Jacobians of the terms that turn with the object, and of the Yarkovsky term */
+  {
+    myb_plate plates[3];
+    memset(plates, 0, sizeof plates);
+    plates[0] = (myb_plate){.area = 2.0, .normal = {1.0, 0.0, 0.0}, .specular = 0.2,
+                            .diffuse = 0.1, .thermal = 1};
+    plates[1] = (myb_plate){.area = 3.0, .normal = {0.0, -1.0, 0.0}, .specular = 0.4};
+    plates[2] = (myb_plate){.area = 8.0, .normal = {0.6, 0.0, 0.8}, .diffuse = 0.3};
+    const myb_object object = {.mass = 400.0, .area = 6.0, .cr = 1.3, .cd = 2.2};
+    myb_orbital_attitude orbital = {.env = env, .body = i_planet};
+    myb_sun_attitude yaw = {.env = env, .body = i_planet, .source = i_sun};
+    myb_surface_radiation_term light = {.env = env, .source = i_sun, .object = &object, .c = c,
+                                        .attitude = myb_attitude_orbital,
+                                        .attitude_context = &orbital, .plates = plates,
+                                        .plate_count = 3};
+    myb_surface_drag_term drag = {.env = env, .body = i_planet, .density = p17_density,
+                                  .wind = p17_wind, .object = &object,
+                                  .gas = {.temperature = 900.0, .molar_mass = 0.016,
+                                          .wall_temperature = 300.0, .accommodation = 0.85},
+                                  .attitude = myb_attitude_sun_nadir, .attitude_context = &yaw,
+                                  .plates = plates, .plate_count = 3, .length = 2.0,
+                                  .molecule = 3.7e-10, .continuum_cd = 1.1,
+                                  .continuum_area = 6.0};
+    myb_recoil_term recoil = {.object = &object, .c = c, .power = 60.0, .efficiency = 0.9,
+                              .direction = {0.6, 0.0, 0.8}, .attitude = myb_attitude_orbital,
+                              .attitude_context = &orbital};
+    const myb_yarkovsky stone = {.radius = 3.0, .density = 2500.0, .absorptivity = 0.9,
+                                .emissivity = 0.9, .thermal_inertia = 300.0,
+                                .rotation_rate = 1.0e-3, .conductivity = 1.5};
+    myb_yarkovsky_term warm = {.env = env, .source = i_sun, .body = stone,
+                               .spin = {0.48, -0.6, 0.64}, .c = c};
+    for (int k = 0; k < 3; ++k) {
+      const double x[3] = {7.0e6 * (0.6 + 0.3 * repro_uniform(rng)),
+                           7.0e6 * (0.5 + 0.3 * repro_uniform(rng)),
+                           7.0e6 * 0.4 * (repro_uniform(rng) - 0.5)};
+      const double v[3] = {-5.0e3 * (0.5 + repro_uniform(rng)), 5.0e3, 2.0e3 * repro_uniform(rng)};
+      double dadx[9];
+      double dadv[9];
+      MT_CHECK(myb_term_surface_radiation_jacobian(&light, 50.0 * k, x, v, dadx, dadv) == MYB_OK);
+      for (int i = 0; i < 9; ++i) {
+        hash_double(h, dadx[i]);
+        hash_double(h, dadv[i]);
+      }
+      MT_CHECK(myb_term_surface_drag_jacobian(&drag, 50.0 * k, x, v, dadx, dadv) == MYB_OK);
+      for (int i = 0; i < 9; ++i) {
+        hash_double(h, dadx[i]);
+        hash_double(h, dadv[i]);
+      }
+      MT_CHECK(myb_term_recoil_jacobian(&recoil, 50.0 * k, x, v, dadx, dadv) == MYB_OK);
+      for (int i = 0; i < 9; ++i) {
+        hash_double(h, dadx[i]);
+        hash_double(h, dadv[i]);
+      }
+      /* the season of the orbit about the Sun that this state is on */
+      double sun_state[6];
+      MT_CHECK(myb_env_state(env, 50.0 * k, i_sun, sun_state) == MYB_OK);
+      const double about_sun[6] = {x[0] - sun_state[0], x[1] - sun_state[1],
+                                   x[2] - sun_state[2], v[0] - sun_state[3],
+                                   v[1] - sun_state[4], v[2] - sun_state[5]};
+      myb_yarkovsky_season* season = NULL;
+      MT_CHECK(myb_yarkovsky_season_create(&stone, warm.spin, gm_sun, about_sun, 1361.0, au, c,
+                                           NULL, &season) == MYB_OK);
+      warm.season = season;
+      MT_CHECK(myb_term_yarkovsky_jacobian(&warm, 50.0 * k, x, v, dadx, dadv) == MYB_OK);
+      for (int i = 0; i < 9; ++i) {
+        hash_double(h, dadx[i]);
+      }
+      warm.season = NULL;
+      myb_yarkovsky_season_destroy(season);
+    }
   }
   myb_env* twin = NULL;
   MT_CHECK(myb_env_clone(env, NULL, &twin) == MYB_OK);

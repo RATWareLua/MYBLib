@@ -1,0 +1,17 @@
+[package]
+name = "myb-sys"
+description = "The C interface of myb (motion of bodies in space) as Rust declarations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+links = "myb"
+build = "build.rs"
+
+[features]
+# the optional libraries of ext/: each adds a module of declarations and links its library
+sgp4 = []
+nrlmsise00 = []
+troposphere = []
+ionosphere = []

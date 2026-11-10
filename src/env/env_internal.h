@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "myb/env.h"
+#include "myb/model.h"
 
 /* The description of a body. */
 const myb_env_body* myb_internal_env_body(const myb_env* env, size_t body);
@@ -38,5 +39,24 @@ int myb_internal_env_origin(const myb_env* env);
 
 /* The mass of the object at t (its function, if it has one); 0 if it is not valid. */
 double myb_internal_object_mass(const myb_object* object, double t);
+
+/* The Jacobian of a term by central differences of the term itself, with the steps hx (m) and
+ * hv (m/s): where a term is not smooth enough for a formula (a penumbra). */
+[[nodiscard]] myb_status myb_internal_state_differences(myb_term_function function, void* term,
+                                                        double t, const double x[3],
+                                                        const double v[3], double hx, double hv,
+                                                        double dadx[9], double dadv[9]);
+
+/* The gas of a body at the object: its density with the gradient in the inertial axes, and
+ * the velocity w of the object relative to the gas in those axes with d w / d x (d w / d v is
+ * the unit matrix): w = (v - s') + M^T dM (x - s) - M^T wind. The gradients of the density
+ * and of the wind are central differences of their functions over 1e-7 of the distance from
+ * the centre of the body. */
+[[nodiscard]] myb_status myb_internal_env_flow(myb_env* env, double t, size_t body,
+                                               myb_density_function density,
+                                               void* density_context, myb_wind_function wind,
+                                               void* wind_context, const double x[3],
+                                               const double v[3], double* rho,
+                                               double gradient[3], double w[3], double dwdx[9]);
 
 #endif /* MYB_SRC_ENV_ENV_INTERNAL_H_ */

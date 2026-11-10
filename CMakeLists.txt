@@ -224,6 +224,9 @@ if(MYB_BUILD_EXT)
   add_subdirectory(ext)
 endif()
 
+# ---- Bindings -------------------------------------------------------------------------
+add_subdirectory(bindings)
+
 # ---- Examples -------------------------------------------------------------------------
 option(MYB_BUILD_EXAMPLES "Build the programs of examples/" OFF)
 if(MYB_BUILD_EXAMPLES)

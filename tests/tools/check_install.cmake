@@ -40,7 +40,7 @@ if(CONFIG)
 endif()
 run("install" "${CMAKE_COMMAND}" --install "${BUILD_DIR}" --prefix "${prefix}" ${config_args})
 
-foreach(_file ${INCLUDEDIR}/myb/myb.h ${INCLUDEDIR}/myb_sgp4.h
+foreach(_file ${INCLUDEDIR}/myb/myb.h ${INCLUDEDIR}/myb/myb.hpp ${INCLUDEDIR}/myb_sgp4.h
         ${LIBDIR}/cmake/myb/mybConfig.cmake ${LIBDIR}/pkgconfig/myb.pc
         ${LIBDIR}/pkgconfig/myb_sgp4.pc ${LIBDIR}/pkgconfig/myb_nrlmsise00.pc
         ${LIBDIR}/pkgconfig/myb_troposphere.pc ${LIBDIR}/pkgconfig/myb_ionosphere.pc
@@ -82,4 +82,14 @@ foreach(_example low_orbit time_scales)
   run("example ${_example}" "${programs}")
   message(STATUS "${_example}:\n${run_output}")
 endforeach()
+# the C++ example, if the examples found a C++ compiler
+file(GLOB_RECURSE programs "${WORK_DIR}/build/myb_example_low_orbit_cpp"
+  "${WORK_DIR}/build/myb_example_low_orbit_cpp.exe")
+list(LENGTH programs count)
+if(count EQUAL 1)
+  run("example low_orbit_cpp" "${programs}")
+  message(STATUS "low_orbit_cpp:\n${run_output}")
+elseif(REQUIRE_CXX)
+  message(FATAL_ERROR "the C++ example was not built: '${programs}'")
+endif()
 message(STATUS "installed library: examples built and passed")

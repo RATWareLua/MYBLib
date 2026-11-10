@@ -1,0 +1,18 @@
+# Regenerates the declarations of the crate myb-sys from the public headers (bindgen).
+# A tool of the repository, not part of the bindings: they do not depend on bindgen.
+#
+#   cargo run --manifest-path bindings/rust/tools/generate/Cargo.toml -- <repository root>
+#   ... -- <repository root> --check      exit with 1 if the files in the crate are stale
+#
+# libclang is needed (LIBCLANG_PATH names its directory if it is not found).
+[package]
+name = "myb-generate"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "BSD-3-Clause"
+
+[dependencies]
+bindgen = "0.72"
+
+[workspace]

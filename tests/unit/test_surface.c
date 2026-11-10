@@ -813,11 +813,330 @@ static void test_bridge_and_yorp(void) {
   myb_polyhedron_destroy(mill);
 }
 
+/* ---- Jacobians ------------------------------------------------------------------------------- */
+
+/* The Jacobian of a term by central differences at two steps, the larger error taken out
+ * (Richardson): the reference the formulas are held against. */
+static void differences(myb_term_function term, void* context, double t, const double x[3],
+                        const double v[3], double hx, double hv, double dadx[9],
+                        double dadv[9]) {
+  for (int j = 0; j < 6; ++j) {
+    double slope[2][3];
+    for (int level = 0; level < 2; ++level) {
+      const double h = (j < 3 ? hx : hv) / (level ? 2.0 : 1.0);
+      double q[6] = {x[0], x[1], x[2], v[0], v[1], v[2]};
+      double plus[3];
+      double minus[3];
+      q[j] += h;
+      MT_CHECK(term(context, t, q, q + 3, plus) == MYB_OK);
+      q[j] -= 2.0 * h;
+      MT_CHECK(term(context, t, q, q + 3, minus) == MYB_OK);
+      for (int i = 0; i < 3; ++i) {
+        slope[level][i] = (plus[i] - minus[i]) / (2.0 * h);
+      }
+    }
+    double* out = j < 3 ? dadx : dadv;
+    for (int i = 0; i < 3; ++i) {
+      out[3 * i + j % 3] = (4.0 * slope[1][i] - slope[0][i]) / 3.0;
+    }
+  }
+}
+
+/* The largest difference of two Jacobians over the largest element of the reference, the
+ * part in the position and the part in the velocity each by its own. */
+static double compare(myb_term_function term, myb_term_jacobian jacobian, void* context,
+                      double t, const double x[3], const double v[3], double hx, double hv,
+                      double* largest_dadv) {
+  double dadx[9];
+  double dadv[9];
+  double ref_x[9];
+  double ref_v[9];
+  MT_CHECK(jacobian(context, t, x, v, dadx, dadv) == MYB_OK);
+  differences(term, context, t, x, v, hx, hv, ref_x, ref_v);
+  double scale_x = 0.0;
+  double scale_v = 0.0;
+  double worst_x = 0.0;
+  double worst_v = 0.0;
+  for (int i = 0; i < 9; ++i) {
+    scale_x = fmax(scale_x, fabs(ref_x[i]));
+    scale_v = fmax(scale_v, fabs(ref_v[i]));
+    worst_x = fmax(worst_x, fabs(dadx[i] - ref_x[i]));
+    worst_v = fmax(worst_v, fabs(dadv[i] - ref_v[i]));
+  }
+  double a[3];
+  MT_CHECK(term(context, t, x, v, a) == MYB_OK);
+  /* a part that is zero is zero in both to the rounding of the differences */
+  const double floor_v = 1e-9 * norm3(a) / norm3(v);
+  if (largest_dadv != NULL) {
+    *largest_dadv = scale_v;
+  }
+  MT_CHECK(scale_x > 0.0);
+  return fmax(worst_x / scale_x, scale_v > floor_v ? worst_v / scale_v : worst_v / floor_v * 1e-9);
+}
+
+/* A law of the caller's own: x along the velocity, z across the orbit. */
+static myb_status along_track(void* context, double t, const double x[3], const double v[3],
+                              double m[9]) {
+  (void)context;
+  (void)t;
+  const double vn = norm3(v);
+  const double h[3] = {x[1] * v[2] - x[2] * v[1], x[2] * v[0] - x[0] * v[2],
+                       x[0] * v[1] - x[1] * v[0]};
+  const double hn = norm3(h);
+  for (int i = 0; i < 3; ++i) {
+    m[i] = v[i] / vn;
+    m[6 + i] = h[i] / hn;
+  }
+  m[3] = m[7] * m[2] - m[8] * m[1];
+  m[4] = m[8] * m[0] - m[6] * m[2];
+  m[5] = m[6] * m[1] - m[7] * m[0];
+  return MYB_OK;
+}
+
+static void test_jacobians(void) {
+  const double mu = 3.986004418e14;
+  mover sun_motion = {.radius = 1.495978707e11, .rate = 1.99e-7, .phase = 0.3};
+  spinner spin = {.rate = 7.292115e-5};
+  myb_env* env = NULL;
+  const myb_env_options options = {0};
+  MT_CHECK(myb_env_create(&options, NULL, &env) == MYB_OK);
+  const myb_env_body earth = {.id = 399, .gm = mu, .radius = 6378136.6,
+                              .orientation = spinner_orientation, .orientation_context = &spin};
+  const myb_env_body sun = {.id = 10, .gm = 1.32712440018e20, .state = mover_state,
+                            .state_context = &sun_motion, .radius = 6.957e8,
+                            .luminosity = 3.828e26};
+  size_t i_earth = 0;
+  size_t i_sun = 0;
+  MT_CHECK(myb_env_add_body(env, &earth, &i_earth) == MYB_OK);
+  MT_CHECK(myb_env_add_body(env, &sun, &i_sun) == MYB_OK);
+  const double t = 1234.5;
+  const double x[3] = {5.1e6, 4.2e6, 1.9e6}; /* 6.87e6 m from the centre, in the light */
+  const double v[3] = {-4.4e3, 4.9e3, 3.7e3};
+
+  /* a box of six plates of different surfaces and a panel */
+  myb_plate plates[7];
+  memset(plates, 0, sizeof plates);
+  for (int k = 0; k < 6; ++k) {
+    plates[k].area = 1.0 + 0.5 * k;
+    plates[k].normal[k / 2] = k % 2 ? 1.0 : -1.0;
+    plates[k].specular = 0.1 * k;
+    plates[k].diffuse = 0.05 * k;
+    plates[k].thermal = k % 2;
+  }
+  plates[6] = (myb_plate){.area = 8.0, .normal = {0.6, 0.0, 0.8}, .specular = 0.2, .diffuse = 0.1};
+  myb_object object = {.mass = 400.0, .area = 6.0, .cr = 1.3, .cd = 2.2};
+
+  /* the attitude laws: the four of the library and one of the caller's */
+  double tilted[9] = {0.36, 0.48, 0.8, -0.8, 0.6, 0.0, -0.48, -0.64, 0.6};
+  myb_spin_attitude turning = {.m0 = {0.36, 0.48, 0.8, -0.8, 0.6, 0.0, -0.48, -0.64, 0.6},
+                               .rate = 0.01, .phase = 0.2};
+  myb_orbital_attitude orbital = {.env = env, .body = i_earth};
+  myb_sun_attitude yaw = {.env = env, .body = i_earth, .source = i_sun};
+  const struct {
+    const char* name;
+    myb_attitude_function law;
+    void* context;
+    int by_velocity;
+    double step; /* of the reference for the light: the attitude changes over the distance
+                    from the planet, the light alone over that from the Sun */
+  } laws[5] = {{"fixed", myb_attitude_fixed, tilted, 0, 1.0e5},
+               {"spin", myb_attitude_spin, &turning, 0, 1.0e5},
+               {"orbital", myb_attitude_orbital, &orbital, 1, 100.0},
+               {"Sun and nadir", myb_attitude_sun_nadir, &yaw, 0, 100.0},
+               {"a law of the caller", along_track, NULL, 1, 100.0}};
+
+  /* light on the plates */
+  myb_surface_radiation_term light = {.env = env, .source = i_sun, .object = &object,
+                                      .c = c_light, .occulters = {i_earth}, .occulter_count = 1,
+                                      .plates = plates, .plate_count = 7};
+  printf("Jacobians of the surface terms against differences of the terms:\n  light on plates:");
+  for (int k = 0; k < 5; ++k) {
+    light.attitude = laws[k].law;
+    light.attitude_context = laws[k].context;
+    double by_velocity = 0.0;
+    const double worst = compare(myb_term_surface_radiation, myb_term_surface_radiation_jacobian,
+                                 &light, t, x, v, laws[k].step, 0.5, &by_velocity);
+    printf(" %s %.1e;", laws[k].name, worst);
+    MT_CHECK(worst < 2e-8);
+    MT_CHECK((by_velocity > 0.0) == (laws[k].by_velocity != 0) || by_velocity < 1e-20);
+  }
+  printf("\n");
+  /* in the full shadow nothing; in the penumbra the differences of the term itself */
+  double sun_state[6];
+  MT_CHECK(myb_env_state(env, t, i_sun, sun_state) == MYB_OK);
+  light.attitude = myb_attitude_orbital;
+  light.attitude_context = &orbital;
+  const double sn = norm3(sun_state);
+  const double dark[3] = {-sun_state[0] / sn * 7.0e6, -sun_state[1] / sn * 7.0e6, 1.0e5};
+  double dadx[9];
+  double dadv[9];
+  MT_CHECK(myb_term_surface_radiation_jacobian(&light, t, dark, v, dadx, dadv) == MYB_OK);
+  double sum = 0.0;
+  for (int i = 0; i < 9; ++i) {
+    sum += fabs(dadx[i]) + fabs(dadv[i]);
+  }
+  MT_CHECK(sum == 0.0);
+  /* across the axis of the shadow: its edge is 6.378e6 m from the axis there, 30 km wide */
+  double across[3] = {-sun_state[1] / sn, sun_state[0] / sn, 0.0};
+  double edge[3];
+  int found = 0;
+  for (int k = 0; k < 400 && !found; ++k) {
+    const double off = 6.34e6 + 200.0 * k;
+    for (int i = 0; i < 3; ++i) {
+      edge[i] = -sun_state[i] / sn * 7.0e6 + off * across[i];
+    }
+    double lit[3];
+    double full[3];
+    myb_surface_radiation_term open = light;
+    open.occulter_count = 0;
+    MT_CHECK(myb_term_surface_radiation(&light, t, edge, v, lit) == MYB_OK);
+    MT_CHECK(myb_term_surface_radiation(&open, t, edge, v, full) == MYB_OK);
+    const double part = norm3(lit) / norm3(full);
+    found = part > 0.2 && part < 0.8;
+  }
+  MT_CHECK(found);
+  if (found) {
+    const double worst = compare(myb_term_surface_radiation, myb_term_surface_radiation_jacobian,
+                                 &light, t, edge, v, 20.0, 0.5, NULL);
+    printf("  in a penumbra (differences of the term): %.1e\n", worst);
+    MT_CHECK(worst < 1e-5);
+  }
+
+  /* light on a mesh: a box of three unequal sides, with and without the ray casting */
+  static double vertices[3 * 8];
+  static size_t faces[3 * 12];
+  size_t vertex_count = 0;
+  size_t face_count = 0;
+  const double lo[3] = {-0.5, -1.0, -1.5};
+  const double hi[3] = {0.5, 1.0, 1.5};
+  add_box(vertices, &vertex_count, faces, &face_count, lo, hi);
+  myb_polyhedron* box = NULL;
+  MT_CHECK(myb_polyhedron_create(vertices, vertex_count, faces, face_count, 1.0, NULL, &box) ==
+           MYB_OK);
+  const myb_plate skin = {.specular = 0.3, .diffuse = 0.2, .thermal = 1};
+  myb_surface_radiation_term mesh = light;
+  mesh.plates = NULL;
+  mesh.plate_count = 0;
+  mesh.shape = box;
+  mesh.surface = &skin;
+  printf("  light on a mesh:");
+  for (int shadows = 0; shadows <= 3; shadows += 3) {
+    mesh.shadows = shadows;
+    for (int k = 2; k < 5; ++k) {
+      mesh.attitude = laws[k].law;
+      mesh.attitude_context = laws[k].context;
+      const double worst = compare(myb_term_surface_radiation,
+                                   myb_term_surface_radiation_jacobian, &mesh, t, x, v, 100.0,
+                                   0.5, NULL);
+      printf(" %s%s %.1e;", laws[k].name, shadows ? " with rays" : "", worst);
+      MT_CHECK(worst < 2e-8);
+    }
+  }
+  printf("\n");
+
+  /* a gas on the plates: an exponential atmosphere that turns with the planet, a wind */
+  myb_exponential_atmosphere air = {.ellipsoid = {.a = 6378136.6, .f = 1.0 / 298.257},
+                                    .count = 1,
+                                    .base = {400000.0},
+                                    .density = {3.0e-12},
+                                    .scale = {58000.0}};
+  double rate = 2.0e-5;
+  myb_surface_drag_term drag = {.env = env, .body = i_earth, .density = myb_density_exponential,
+                                .density_context = &air, .object = &object,
+                                .gas = {.temperature = 900.0, .molar_mass = 0.016,
+                                        .wall_temperature = 300.0, .accommodation = 0.85},
+                                .plates = plates, .plate_count = 7};
+  printf("  a gas on plates:");
+  for (int k = 0; k < 5; ++k) {
+    drag.attitude = laws[k].law;
+    drag.attitude_context = laws[k].context;
+    const double worst = compare(myb_term_surface_drag, myb_term_surface_drag_jacobian, &drag, t,
+                                 x, v, 50.0, 0.5, NULL);
+    printf(" %s %.1e;", laws[k].name, worst);
+    MT_CHECK(worst < 2e-7);
+  }
+  drag.attitude = myb_attitude_orbital;
+  drag.attitude_context = &orbital;
+  drag.wind = east_wind;
+  drag.wind_context = &rate;
+  const double windy = compare(myb_term_surface_drag, myb_term_surface_drag_jacobian, &drag, t, x,
+                               v, 50.0, 0.5, NULL);
+  /* a gas dense enough for the transition to the continuum (Knudsen 0.2) */
+  air.density[0] = 1.0e-7;
+  drag.length = 2.0;
+  drag.molecule = 3.7e-10;
+  drag.continuum_cd = 1.1;
+  drag.continuum_area = 6.0;
+  double a[3];
+  MT_CHECK(myb_term_surface_drag(&drag, t, x, v, a) == MYB_OK);
+  double rho = 0.0;
+  double fixed_position[3] = {x[0], x[1], x[2]};
+  MT_CHECK(myb_density_exponential(&air, myb_time_from_seconds(t), fixed_position, &rho) ==
+           MYB_OK);
+  const double weight = myb_gas_bridge(myb_gas_knudsen(rho, 0.016, 3.7e-10, 2.0));
+  const double bridged = compare(myb_term_surface_drag, myb_term_surface_drag_jacobian, &drag, t,
+                                 x, v, 50.0, 0.5, NULL);
+  printf(" with a wind %.1e; in the transition (weight %.2f) %.1e\n", windy, weight, bridged);
+  MT_CHECK(windy < 2e-7 && bridged < 2e-7 && weight > 0.05 && weight < 0.95);
+  /* the Jacobian of the sphere's drag with the same wind: its gradient is in */
+  air.density[0] = 3.0e-12;
+  myb_drag_term ball = {.env = env, .body = i_earth, .density = myb_density_exponential,
+                        .density_context = &air, .object = &object, .wind = east_wind,
+                        .wind_context = &rate};
+  const double sphere = compare(myb_term_drag, myb_term_drag_jacobian, &ball, t, x, v, 50.0, 0.5,
+                                NULL);
+  printf("  the drag of a sphere in a wind that changes from place to place: %.1e\n", sphere);
+  MT_CHECK(sphere < 2e-7);
+  /* above the gas: nothing */
+  const double high[3] = {4.0e7, 1.0e6, 2.0e6};
+  air.count = 1;
+  air.density[0] = 0.0;
+  MT_CHECK(myb_term_surface_drag_jacobian(&drag, t, high, v, dadx, dadv) == MYB_OK);
+  sum = 0.0;
+  for (int i = 0; i < 9; ++i) {
+    sum += fabs(dadx[i]) + fabs(dadv[i]);
+  }
+  MT_CHECK(sum == 0.0);
+
+  /* the recoil of an antenna fixed in the body */
+  myb_recoil_term recoil = {.object = &object, .c = c_light, .power = 60.0, .efficiency = 0.9,
+                            .direction = {0.6, 0.0, 0.8}, .epoch = 0.0, .decay = 5000.0};
+  printf("  the recoil of an antenna:");
+  for (int k = 0; k < 5; ++k) {
+    recoil.attitude = laws[k].law;
+    recoil.attitude_context = laws[k].context;
+    double by_velocity = 0.0;
+    double ref_x[9];
+    double ref_v[9];
+    MT_CHECK(myb_term_recoil_jacobian(&recoil, t, x, v, dadx, dadv) == MYB_OK);
+    differences(myb_term_recoil, &recoil, t, x, v, 100.0, 0.5, ref_x, ref_v);
+    double scale = 0.0;
+    double worst = 0.0;
+    MT_CHECK(myb_term_recoil(&recoil, t, x, v, a) == MYB_OK);
+    for (int i = 0; i < 9; ++i) {
+      scale = fmax(scale, fmax(fabs(ref_x[i]) * norm3(x), fabs(ref_v[i]) * norm3(v)));
+      by_velocity = fmax(by_velocity, fabs(dadv[i]));
+    }
+    scale = fmax(scale, 1e-6 * norm3(a)); /* a fixed attitude: zero against the rounding */
+    for (int i = 0; i < 9; ++i) {
+      worst = fmax(worst, fabs(dadx[i] - ref_x[i]) * norm3(x) / scale);
+      worst = fmax(worst, fabs(dadv[i] - ref_v[i]) * norm3(v) / scale);
+    }
+    printf(" %s %.1e;", laws[k].name, worst);
+    MT_CHECK(worst < 2e-8);
+    MT_CHECK((by_velocity > 0.0) == (laws[k].by_velocity != 0));
+  }
+  printf("\n");
+  myb_polyhedron_destroy(box);
+  myb_env_destroy(env);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_bridge_and_yorp();
   test_gas();
   test_mesh_light();
   test_terms();
+  test_jacobians();
   return mt_finish("test_surface");
 }

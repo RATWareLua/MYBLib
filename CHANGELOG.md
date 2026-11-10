@@ -58,7 +58,10 @@ version the API only grows. Details, checks and measured accuracies of every pha
   `myb_shadow_fraction_refracted`; `myb_force_planet_radiation_gradient`; `myb_gas_knudsen`,
   `myb_gas_bridge`; `myb_force_yorp`; the Jacobians `myb_term_nongrav_jacobian`,
   `myb_term_tidal_lag_jacobian`, `myb_term_empirical_jacobian`,
-  `myb_term_planet_radiation_jacobian`.
+  `myb_term_planet_radiation_jacobian`, `myb_term_yarkovsky_jacobian` (with
+  `myb_force_yarkovsky_gradient` and `myb_force_yarkovsky_season_gradient`),
+  `myb_term_surface_radiation_jacobian`, `myb_term_surface_drag_jacobian`,
+  `myb_term_recoil_jacobian`.
 - `myb_orbit_options.integrator`: DOP853 in `myb_orbit`; `myb_env_clone`.
 - Geometry: `myb_ellipsoid_limb`, `myb_ellipsoid_terminator`, `myb_view_body`,
   `myb_view_intercept`; rays on a mesh go through a tree of bounding boxes.
@@ -71,6 +74,10 @@ version the API only grows. Details, checks and measured accuracies of every pha
   OMM; the OCM message (`myb_ocm_*`).
 - Packaging: ELF symbol versions (`cmake/myb.map`); pkg-config files of the libraries of
   `ext/`.
+- Bindings (`bindings/`): C++17 — the header `myb/myb.hpp`, target `myb::cpp`; Python — the
+  package `myb` over the shared library (cffi); Rust — the crates `myb-sys` and `myb`. Each
+  has the whole C interface and classes for the usual path; results agree with the C calls
+  to the bit. The example `examples/low_orbit.cpp`.
 
 ### Changed
 - `myb_state_function` is declared in `myb/kin.h` (`myb/observe.h` includes it).
@@ -89,6 +96,8 @@ version the API only grows. Details, checks and measured accuracies of every pha
   the same to the bit.
 - `myb/geometry.h` includes `myb/env.h` and `myb/frames.h`; `myb/estim.h` includes
   `myb/surface.h`.
+- `myb_term_drag_jacobian` takes the gradient of a wind into account (by differences of the
+  wind function); without a wind the result is the same to the bit.
 
 ## 1.1.0.0 — 2026-11-10 (no tag)
 

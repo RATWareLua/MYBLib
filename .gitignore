@@ -15,3 +15,9 @@ CMakeUserPresets.json
 .vscode/
 .idea/
 *.swp
+
+# Bindings: what their own tools build in place
+/bindings/rust/target/
+/bindings/rust/tools/generate/target/
+__pycache__/
+*.egg-info/

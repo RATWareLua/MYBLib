@@ -1,0 +1,18 @@
+[package]
+name = "myb"
+description = "Motion of bodies in space: N-body, orbits, transfers - the Rust face of the C library myb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+myb-sys = { path = "../myb-sys", version = "1.2.0" }
+
+[features]
+# the optional libraries of ext/, as modules of myb::sys
+sgp4 = ["myb-sys/sgp4"]
+nrlmsise00 = ["myb-sys/nrlmsise00"]
+troposphere = ["myb-sys/troposphere"]
+ionosphere = ["myb-sys/ionosphere"]

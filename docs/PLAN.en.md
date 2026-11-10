@@ -220,6 +220,79 @@ events, geometry, small forces, the surface, propagation, estimation, the enviro
 gradient, reproducibility) — no reports. On Windows the same 15 tests under UBSan — no
 reports.
 
+### Bindings: C++, Python, Rust
+
+Made after the debts of phases 12–17 (the directory `bindings/`). One scheme for the three
+languages, two layers:
+
+- **the lower one is the whole C interface**, with no hand work: in C++ the headers
+  themselves (they are C++17 already); in Python the declarations that the preprocessor
+  gives from those headers; in Rust the declarations of bindgen. No function is left out,
+  and a difference from the headers is caught by a test;
+- **the upper one is in the manner of the language**, over the path most programs take:
+  kernels and time scales, SPK ephemerides, a gravity field, the environment, the force
+  model with its ready-made terms, propagation, events, impulses, the transition matrix, OEM
+  messages in both notations. It gives ownership (an object of the library is released by
+  itself; a force model keeps alive the environment, the fields and the structures of its
+  terms), errors in the manner of the language and callables of the language in place of
+  function pointers. The rest (N bodies, estimation, CR3BP, targeting, attitude,
+  observables, the SPK/PCK/SP3 writers, …) is taken through the lower layer: the two mix
+  freely.
+
+The bindings do **no arithmetic**: a number obtained through them has the bits of the same
+calls made in C. That is what is tested: the orbit of the example `examples/low_orbit.c` (a
+field with J2 and drag, a day, 15 ascending nodes, 776 steps), built from the classes of each
+binding, gives the times of the nodes and the final state **bit for bit** with the C calls.
+
+- **C++** (`bindings/cpp/include/myb/myb.hpp`, CMake target `myb::cpp`, C++17, header only).
+  No exceptions: a function that can fail returns `myb::result<T>` — the status, the message
+  of a parser and the value; asking a failed result for its value is a broken contract and
+  stops the program with a message, as `MYB_CHECK` does in the library. Classes
+  `kernel_pool`, `time_system`, `ephemeris`, `gravity_field`, `environment`, `force_model`,
+  `orbit`, `ephemeris_message`; terms of a model and events are lambdas. The header has no
+  exception handling at all — nothing is thrown and nothing is caught, and it compiles with
+  `-fno-exceptions`: a lambda reports a failure by its status, and an exception that leaves
+  it ends the program (it is called from C through a `noexcept` function). The test
+  `test_cpp_binding` holds 123 checks under the warnings of the library itself; the example
+  `examples/low_orbit.cpp` builds against an installation, static and shared
+  (`test_install`).
+- **Python** (`bindings/python`, the package `myb`, cffi in ABI mode: no compiled part, the
+  package loads the shared library). The declarations `_cdef.h` (2171 lines) are written by
+  `tools/make_cdef.py`: the preprocessor of Clang over the headers with empty `stddef.h`
+  and `stdint.h` — only the library's own comes out, the same text on any system; a test
+  regenerates and compares. `myb.lib` and `myb.ffi` are the whole interface; the classes
+  `KernelPool`, `TimeSystem`, `Ephemeris`, `GravityField`, `Environment`, `ForceModel`,
+  `Orbit` and functions. An error is the exception `myb.Error` with the status of the
+  library. An exception raised in a Python function that the C code called (a term, a
+  provider, an event) is kept, the callback reports a failure, and the exception is raised
+  from the call of the library that was going on. The libraries of `ext/` come on request:
+  `myb.extension("sgp4")`. The library is looked for by `MYB_LIBRARY`, in `_lib/` of the
+  package and where the system looks. The test `test_python_binding` holds 14 tests.
+- **Rust** (`bindings/rust`: the crates `myb-sys` and `myb`; neither depends on another
+  crate). `myb-sys` holds the declarations of bindgen 0.72, kept in the crate: building it
+  needs no libclang. They are generated for one fixed target, so that the text does not
+  depend on the machine; what differs between platforms comes through `c_long` and `usize`,
+  which Rust resolves where the crate is built. `build.rs` finds the library by
+  `MYB_LIB_DIR` or through pkg-config; static by default, shared only with the MSVC
+  toolchain (the static library is built for the GNU ABI). `myb` has types with `Drop`,
+  `Result<T, myb::Error>` with the status, `Fn` closures for terms, providers and events; a
+  closure reports a failure through `Err`, and a panic is not caught — in a function called
+  from C it ends the program; shared objects go through `Rc`, the types are not `Send` (an object of the library has working memory for
+  one thread). The modules of `ext/` are behind features of the same names. The test
+  `test_rust_binding`: 6 integration tests, 2 tests of `myb-sys` (with the library of
+  `ext/sgp4`), the example of the documentation; clippy has nothing to say.
+- **The tests of the bindings** are registered with ctest when there is something to run
+  them with: a C++ compiler, a Python with cffi (`MYB_PYTHON` names the interpreter), cargo.
+  Under the sanitizers only the C++ one runs.
+- **Checked** (2026-11-11, together with the Jacobians of the surface terms and of the
+  Yarkovsky term): Windows — Clang 23 with libstdc++ 15, Python 3.13 with cffi 2.0, Rust 1.90
+  (the GNU toolchain), `windows-release` 94 tests of 94, the affected tests at -O0 (with the
+  stack check) and under UBSan; Gentoo — Clang 21, Python 3.14 with cffi 2.1.1 (from
+  Portage), Rust 1.93, `linux-release` 94 of 94, the 11 affected tests (`test_cpp_binding`
+  among them) under `linux-asan`; reproducibility hash `0xb76153a8dca45827` on both. On both systems the orbit built from the classes of each
+  binding agrees with the C calls bit for bit, and `test_install` builds the C++ example
+  against an installation too.
+
 ### Check on Gentoo (debts of phases 12–17)
 
 2026-11-11, Clang 21.1.8, glibc; the working tree, not committed. `linux-release`: **91 tests
@@ -265,13 +338,37 @@ done, how it was checked and what moved on, with the reason.
 
 **Forces (phases 12 and 17)**
 
-- **Analytic Jacobians of the new terms**: comets and asteroids (`myb_term_nongrav_jacobian`,
-  1.4·10⁻¹⁰ and 5·10⁻¹¹ from differences), the lagging tide (`myb_term_tidal_lag_jacobian`,
-  2·10⁻⁹) — by forward differentiation in six variables (`src/num/dual.h`). The terms whose
-  force passes through a function of the user (attitude, density, wind, mass: plates,
-  meshes, recoil) and the Yarkovsky term (the answer of the body to the heating has no closed
-  derivative) are left to the differences of the model **on purpose**: a user's function has
-  no derivative, and the terms are 10⁻⁸…10⁻¹² of the attraction.
+- **Analytic Jacobians of the new terms** — of all of them, by forward differentiation in six
+  variables (`src/num/dual.h`): the formula of a term is written once more on numbers that
+  carry their derivatives.
+  - Comets and asteroids (`myb_term_nongrav_jacobian`, 1.4·10⁻¹⁰ and 5·10⁻¹¹ from
+    differences), the lagging tide (`myb_term_tidal_lag_jacobian`, 2·10⁻⁹).
+  - **Yarkovsky** (`myb_term_yarkovsky_jacobian`, `myb_force_yarkovsky_gradient`,
+    `myb_force_yarkovsky_season_gradient`). The response of the body depends on the flux only
+    through the thermal parameter θ, and 1/R is linear in θ, so dR/dθ = −R(1 − R)/θ — a
+    closed form for a body of any size. The seasonal part is the series differentiated in the
+    mean anomaly. Against differences: 1.3·10⁻¹⁰, with the season 5·10⁻¹⁰. (In the first pass
+    this Jacobian was left to differences on the grounds that no closed derivative exists:
+    that was wrong.)
+  - **The terms that turn with the object** — light on plates and on a mesh, a gas on plates,
+    the recoil of an antenna (`myb_term_surface_radiation_jacobian`,
+    `myb_term_surface_drag_jacobian`, `myb_term_recoil_jacobian`): a = Mᵀ f(M w, …), and
+    everything is differentiated — the force in the body axes (Sentman's formulas with exp
+    and erf, the transitional regime), the direction, the flux, the density and the attitude
+    M itself. The four attitude laws of the library are differentiated as they are written
+    (they are known by the address of the function); a law of the caller's has no derivative
+    to give, and central differences of **the law itself** are taken — 12 calls of it, not 12
+    evaluations of the term. A mesh: the derivative of the force in the direction for the
+    parts that are lit now (which are lit changes in steps). Against differences of the
+    terms with the leading error removed: light on plates 1·10⁻¹⁰…7·10⁻¹⁰ with all five laws,
+    a mesh 1·10⁻¹⁰…5·10⁻¹⁰ (with and without ray casting), the gas 2.4·10⁻⁹ (the limit is the
+    gradient of the density by differences of its function), the recoil 6·10⁻¹²…3·10⁻¹¹. In a
+    penumbra the Jacobian of the light is differences of the term, as for
+    `myb_term_radiation`.
+  - **The gradient of a wind** is now in the Jacobian of the drag (`myb_term_drag_jacobian`
+    used to leave it out): a wind that changes from place to place enters by differences of
+    its function, as the density does; 2.4·10⁻⁹.
+  No ready-made term is left to the differences of the model.
 - **Delayed outgassing** (`myb_force_nongrav_delayed`, `myb_nongrav_term.delay`): g is taken
   at the point of the Keplerian orbit `delay` seconds earlier (Yeomans & Chodas 1989).
   2·10⁶ s after the perihelion the acceleration is that of the perihelion without delay
@@ -412,7 +509,8 @@ done, how it was checked and what moved on, with the reason.
   built would be unverified. macOS likewise.
 
 **Reproducibility**: a workload of the debts (forces, shadows, a mesh, geometry, DOP853,
-files and messages in both notations); golden value `0xa762f98ab1f66694` at -O0 and -O2;
+files and messages in both notations, the Jacobians of the surface terms and of the
+Yarkovsky term); golden value `0xb76153a8dca45827` at -O0 and -O2;
 `MYB_REPRO_PREFIX=17` checks the former `0x99a2ea1ff9d038a9` — no earlier bit changed.
 
 ### Phase 17 decisions

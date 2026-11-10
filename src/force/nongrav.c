@@ -10,6 +10,7 @@
 #include "myb/cmath.h"
 #include "myb/force.h"
 #include "myb/kepler.h"
+#include "num/dual.h"
 #include "num/vec3.h"
 
 static const double au = 1.495978707e11;
@@ -226,6 +227,73 @@ myb_status myb_force_yarkovsky(const myb_yarkovsky* body, const double spin[3], 
  * W. F. Bottke et al., Annu. Rev. Earth Planet. Sci. 34, 157 (2006), eqs. 1-4, for a body much
  * larger than the depth the thermal wave reaches (kappa_1 = kappa_2 = kappa_3 = 1/2), or,
  * with the conductivity given, for any size (myb_yarkovsky_response). */
+myb_status myb_force_yarkovsky_gradient(const myb_yarkovsky* body, const double spin[3],
+                                        double flux, double c, const double d[3],
+                                        double dadr[9]) {
+  MYB_CHECK(body != NULL && spin != NULL && d != NULL && dadr != NULL);
+  const double s2 = myb_vec3_dot(spin, spin);
+  const double distance = myb_vec3_norm(d);
+  if (!valid_body(body) || !(flux > 0.0) || !isfinite(flux) || !(c > 0.0) ||
+      !(fabs(s2 - 1.0) <= 1e-12) || !(distance > 0.0) || !isfinite(distance)) {
+    return MYB_E_DOMAIN;
+  }
+  /* the vector to the Sun as a function of the position of the body: d (d) / d r = -1 */
+  myb_dual to[3];
+  for (int i = 0; i < 3; ++i) {
+    to[i] = myb_dual_constant(d[i]);
+    to[i].d[i] = -1.0;
+  }
+  const myb_dual dn = myb_dual_norm(to);
+  /* the flux as 1 / |d|^2, and with it the thermal parameter as flux^(-3/4) */
+  const myb_dual light = myb_dual_div(myb_dual_constant(flux * distance * distance),
+                                      myb_dual_mul(dn, dn));
+  double theta = 0.0;
+  double ratio = 0.0;
+  thermal_state(body, flux, body->rotation_rate, &theta, &ratio);
+  double re = 1.0;
+  double im = 0.0;
+  myb_yarkovsky_response(ratio, theta, &re, &im);
+  /* 1 / R = 1 + (a number that does not depend on theta) theta: dR / d theta = -R (1 - R) / theta */
+  myb_dual real = myb_dual_constant(re);
+  myb_dual imaginary = myb_dual_constant(im);
+  if (theta > 0.0) {
+    const double slope_re = -(re * (1.0 - re) + im * im) / theta;
+    const double slope_im = -im * (1.0 - 2.0 * re) / theta;
+    for (int i = 0; i < MYB_DUAL_VARIABLES; ++i) {
+      const double dtheta = -0.75 * theta * light.d[i] / light.v;
+      real.d[i] = slope_re * dtheta;
+      imaginary.d[i] = slope_im * dtheta;
+    }
+  }
+  myb_dual unit[3];
+  for (int i = 0; i < 3; ++i) {
+    unit[i] = myb_dual_div(to[i], dn);
+  }
+  const myb_dual along =
+      myb_dual_add(myb_dual_add(myb_dual_scale(unit[0], spin[0]), myb_dual_scale(unit[1], spin[1])),
+                   myb_dual_scale(unit[2], spin[2]));
+  myb_dual across[3];
+  for (int i = 0; i < 3; ++i) {
+    across[i] = myb_dual_sub(unit[i], myb_dual_scale(along, spin[i]));
+  }
+  const myb_dual axis[3] = {myb_dual_constant(spin[0]), myb_dual_constant(spin[1]),
+                            myb_dual_constant(spin[2])};
+  myb_dual turned[3];
+  myb_dual_cross(axis, across, turned);
+  const myb_dual scale = myb_dual_scale(
+      light, (4.0 / 9.0) * body->absorptivity * 3.0 / (4.0 * body->radius * body->density * c));
+  for (int i = 0; i < 3; ++i) {
+    const myb_dual a = myb_dual_scale(
+        myb_dual_mul(scale, myb_dual_sub(myb_dual_mul(real, across[i]),
+                                         myb_dual_mul(imaginary, turned[i]))),
+        -1.0);
+    for (int j = 0; j < 3; ++j) {
+      dadr[3 * i + j] = a.d[j];
+    }
+  }
+  return MYB_OK;
+}
+
 myb_status myb_yarkovsky_drift(const myb_yarkovsky* body, double flux, double mean_motion,
                                double c, double* diurnal, double* seasonal) {
   MYB_CHECK(body != NULL);
@@ -527,6 +595,45 @@ void myb_force_yarkovsky_season(const myb_yarkovsky_season* season, const double
   const double along = s->scale * season_sum(s, ea - s->e * myb_sin(ea));
   for (int i = 0; i < 3; ++i) {
     a[i] += along * s->spin[i];
+  }
+}
+
+void myb_force_yarkovsky_season_gradient(const myb_yarkovsky_season* season, const double r[3],
+                                         double dadr[9]) {
+  MYB_CHECK(season != NULL && r != NULL && dadr != NULL);
+  const myb_yarkovsky_season* s = season;
+  memset(dadr, 0, 9 * sizeof(double));
+  const double x = myb_vec3_dot(r, s->p);
+  const double y = myb_vec3_dot(r, s->q);
+  const double rho = myb_hypot(x, y);
+  if (!(rho > 0.0) || !isfinite(rho)) {
+    return;
+  }
+  const double cf = x / rho;
+  const double sf = y / rho;
+  const double root = sqrt((1.0 - s->e) * (1.0 + s->e));
+  const double ea = myb_atan2(root * sf, s->e + cf);
+  const double mean_anomaly = ea - s->e * myb_sin(ea);
+  /* the series differentiated in the mean anomaly */
+  const double c1 = myb_cos(mean_anomaly);
+  const double s1 = myb_sin(mean_anomaly);
+  double ck = 1.0;
+  double sk = 0.0;
+  double slope = 0.0;
+  for (size_t k = 0; k < s->harmonics; ++k) {
+    const double next = ck * c1 - sk * s1;
+    sk = sk * c1 + ck * s1;
+    ck = next;
+    slope += (double)(k + 1) * (s->series[2 * k + 1] * ck - s->series[2 * k] * sk);
+  }
+  /* dM / df = (r / a)^2 / sqrt(1 - e^2) = (1 - e cos E)^2 / sqrt(1 - e^2); the true anomaly
+   * is the angle of r in the plane: df / dr = (x q - y p) / (x^2 + y^2) */
+  const double shrink = 1.0 - s->e * myb_cos(ea);
+  const double factor = s->scale * slope * shrink * shrink / root / (rho * rho);
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      dadr[3 * i + j] = factor * s->spin[i] * (x * s->q[j] - y * s->p[j]);
+    }
   }
 }
 

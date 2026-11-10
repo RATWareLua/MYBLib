@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myb"
+version = "1.2.0.0"
+description = "Motion of bodies in space: N-body, orbits, transfers - the Python face of the C library myb"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.9"
+dependencies = ["cffi>=1.15"]
+
+[project.urls]
+Homepage = "https://github.com/RATWareLua/MYBLib"
+
+[tool.setuptools]
+packages = ["myb"]
+
+[tool.setuptools.package-data]
+myb = ["_cdef*.h", "_lib/*"]

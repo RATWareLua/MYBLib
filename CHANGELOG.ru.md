@@ -57,7 +57,10 @@
   `myb_shadow_fraction_refracted`; `myb_force_planet_radiation_gradient`; `myb_gas_knudsen`,
   `myb_gas_bridge`; `myb_force_yorp`; якобианы `myb_term_nongrav_jacobian`,
   `myb_term_tidal_lag_jacobian`, `myb_term_empirical_jacobian`,
-  `myb_term_planet_radiation_jacobian`.
+  `myb_term_planet_radiation_jacobian`, `myb_term_yarkovsky_jacobian` (с
+  `myb_force_yarkovsky_gradient` и `myb_force_yarkovsky_season_gradient`),
+  `myb_term_surface_radiation_jacobian`, `myb_term_surface_drag_jacobian`,
+  `myb_term_recoil_jacobian`.
 - `myb_orbit_options.integrator`: DOP853 в `myb_orbit`; `myb_env_clone`.
 - Геометрия: `myb_ellipsoid_limb`, `myb_ellipsoid_terminator`, `myb_view_body`,
   `myb_view_intercept`; лучи по сетке идут через дерево ограничивающих объёмов.
@@ -69,6 +72,10 @@
   `myb_opm_write_as`, `myb_omm_write_as`); ковариации OEM (`myb_oem_covariance`), OPM и OMM;
   сообщение OCM (`myb_ocm_*`).
 - Упаковка: версии символов ELF (`cmake/myb.map`); файлы pkg-config библиотек `ext/`.
+- Привязки (`bindings/`): C++17 — заголовок `myb/myb.hpp`, цель `myb::cpp`; Python — пакет
+  `myb` над разделяемой библиотекой (cffi); Rust — крейты `myb-sys` и `myb`. В каждой весь
+  C-интерфейс и классы для обычного пути; результаты совпадают с вызовами C до бита. Пример
+  `examples/low_orbit.cpp`.
 
 ### Изменено
 - `myb_state_function` объявлен в `myb/kin.h` (`myb/observe.h` его включает).
@@ -85,6 +92,8 @@
 - Тень от двух и более тел на диске источника в членах давления излучения — объединение
   покрытий вместо произведения долей; с одним телом результат прежний до бита.
 - `myb/geometry.h` включает `myb/env.h` и `myb/frames.h`; `myb/estim.h` — `myb/surface.h`.
+- `myb_term_drag_jacobian` учитывает градиент ветра (разностями функции ветра); без ветра
+  результат прежний до бита.
 
 ## 1.1.0.0 — 2026-11-10 (без тега)
 

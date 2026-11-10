@@ -1,0 +1,14 @@
+# The Rust face of myb: myb-sys (the declarations of the C interface and the linking) and myb
+# (ownership, Result, closures). Neither depends on another crate.
+#
+#   MYB_LIB_DIR=<directory of libmyb.a or the shared library> cargo test
+[workspace]
+members = ["myb-sys", "myb"]
+resolver = "2"
+
+[workspace.package]
+version = "1.2.0"
+edition = "2021"
+rust-version = "1.82"
+license = "BSD-3-Clause"
+repository = "https://github.com/RATWareLua/MYBLib"

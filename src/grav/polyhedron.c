@@ -15,6 +15,7 @@
 #include "myb/cmath.h"
 #include "myb/geometry.h"
 #include "myb/grav.h"
+#include "force/surface_internal.h"
 #include "myb/surface.h"
 #include "num/vec3.h"
 
@@ -644,9 +645,49 @@ static void plate_force(const myb_plate* surface, double pressure, double area, 
   }
 }
 
+/* d f / d u of plate_force, added to g (rows): with c = -n.u,
+ *   P A [(1 - rho_s) (c 1 - u n^T) + (N(c) + 2 rho_s c) n n^T],
+ * N the factor of the normal part. */
+static void plate_gradient(const myb_plate* surface, double pressure, double area, double cosine,
+                           const double u[3], const double n[3], double g[9]) {
+  const double absorbed = 1.0 - surface->specular - surface->diffuse;
+  const double along = (1.0 - surface->specular) * pressure * area;
+  const double normal = pressure * area *
+                        (2.0 * (surface->specular * cosine + surface->diffuse / 3.0) +
+                         (surface->thermal ? 2.0 / 3.0 * absorbed : 0.0) +
+                         2.0 * surface->specular * cosine);
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      g[3 * i + j] += along * ((i == j ? cosine : 0.0) - u[i] * n[j]) + normal * n[i] * n[j];
+    }
+  }
+}
+
+static myb_status radiation_mesh(const myb_polyhedron* shape, const myb_plate* surface,
+                                 double pressure, const double u[3], int shadows,
+                                 double force[3], double torque[3], double* gradient);
+
 myb_status myb_force_radiation_mesh(const myb_polyhedron* shape, const myb_plate* surface,
                                     double pressure, const double u[3], int shadows,
                                     double force[3], double torque[3]) {
+  return radiation_mesh(shape, surface, pressure, u, shadows, force, torque, NULL);
+}
+
+myb_status myb_internal_radiation_mesh_gradient(const myb_polyhedron* shape,
+                                                const myb_plate* surface, double pressure,
+                                                const double u[3], int shadows, double force[3],
+                                                double gradient[9]) {
+  MYB_CHECK(gradient != NULL);
+  memset(gradient, 0, 9 * sizeof(double));
+  return radiation_mesh(shape, surface, pressure, u, shadows, force, NULL, gradient);
+}
+
+/* The force and the torque of the light on the mesh; with `gradient`, also d force / d u for
+ * the parts that are lit now (which parts are lit changes in steps: the derivative is that of
+ * the force between two of them). */
+static myb_status radiation_mesh(const myb_polyhedron* shape, const myb_plate* surface,
+                                 double pressure, const double u[3], int shadows,
+                                 double force[3], double torque[3], double* gradient) {
   MYB_CHECK(shape != NULL && surface != NULL && u != NULL && shadows >= 0);
   const myb_polyhedron* p = shape;
   const double u2 = myb_vec3_dot(u, u);
@@ -676,6 +717,9 @@ myb_status myb_force_radiation_mesh(const myb_polyhedron* shape, const myb_plate
       double centre[3];
       double lever[3];
       plate_force(surface, pressure, area, cosine, u, n, part);
+      if (gradient != NULL) {
+        plate_gradient(surface, pressure, area, cosine, u, n, gradient);
+      }
       for (int i = 0; i < 3; ++i) {
         centre[i] = v0[i] + (e1[i] + e2[i]) / 3.0;
         total[i] += part[i];
@@ -711,6 +755,9 @@ myb_status myb_force_radiation_mesh(const myb_polyhedron* shape, const myb_plate
           double part[3];
           double lever[3];
           plate_force(surface, pressure, part_area, cosine, u, n, part);
+          if (gradient != NULL) {
+            plate_gradient(surface, pressure, part_area, cosine, u, n, gradient);
+          }
           myb_vec3_cross(centre, part, lever);
           for (int q = 0; q < 3; ++q) {
             total[q] += part[q];
