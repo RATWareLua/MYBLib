@@ -10,7 +10,7 @@
 #include <float.h>
 
 #if !defined(__clang__)
-#error "myb is built with Clang only (see docs/PLAN.md)"
+#error "myb is built with Clang only (see docs/PLAN.en.md)"
 #endif
 
 #if !defined(__STDC_VERSION__) || __STDC_VERSION__ <= 201710L

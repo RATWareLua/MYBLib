@@ -1,4 +1,4 @@
-# Optional modules of empirical models of particular bodies (docs/PLAN.md §3): separate targets,
+# Optional modules of empirical models of particular bodies (docs/PLAN.en.md §3): separate targets,
 # never part of libmyb.
 
 add_library(myb_nrlmsise00 STATIC nrlmsise00/nrlmsise00.c)

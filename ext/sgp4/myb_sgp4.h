@@ -6,7 +6,7 @@
  * D. A. Vallado, P. Crawford, R. Hujsak, T. S. Kelso, "Revisiting Spacetrack Report #3",
  * AIAA 2006-6753, and its code of 2020. The theory is specific to the Earth (WGS-72 constants,
  * lunar and solar terms with fixed coefficients), hence outside the library proper
- * (docs/PLAN.md §3). Its accuracy is that of the elements, about a kilometre at epoch growing
+ * (docs/PLAN.en.md §3). Its accuracy is that of the elements, about a kilometre at epoch growing
  * by kilometres per day — for precise work fit a numerical orbit to its states.
  *
  * This port follows the Vallado code operation by operation, with correctly rounded elementary

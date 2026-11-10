@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* myb/budget.h — the budget of effects of a scenario: how much each term of a force model moves
  * the object over the interval, so that what is switched off can be shown to be negligible and
- * what is on can be shown to matter (docs/PLAN.md §4: an effect is modelled when its
+ * what is on can be shown to matter (docs/PLAN.en.md §4: an effect is modelled when its
  * contribution exceeds the noise; the budget warns when a disabled effect exceeds the
  * tolerance).
  *

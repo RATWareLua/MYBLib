@@ -2,7 +2,7 @@
  * module of myb (target myb_nrlmsise00; see NOTICE for the status of the material).
  *
  * The model of J. M. Picone, A. E. Hedin, D. P. Drob (J. Geophys. Res. 107, 1468, 2002) is
- * specific to the Earth and not reducible to data, hence outside the library proper (docs/PLAN.md
+ * specific to the Earth and not reducible to data, hence outside the library proper (docs/PLAN.en.md
  * §3). This module evaluates it reproducibly (correctly rounded elementary functions) and
  * thread-safely (no shared state). */
 #ifndef MYB_NRLMSISE00_H_

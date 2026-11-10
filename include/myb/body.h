@@ -7,7 +7,7 @@
  * a result can be computed rather than assumed.
  *
  * Present components: GM and the kind of motion. Shape, gravity field, rotation, tides,
- * atmosphere and radiation are added with their modules (docs/PLAN.md, §3). */
+ * atmosphere and radiation are added with their modules (docs/PLAN.en.md, §3). */
 #ifndef MYB_BODY_H_
 #define MYB_BODY_H_
 
