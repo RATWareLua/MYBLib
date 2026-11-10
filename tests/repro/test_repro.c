@@ -28,6 +28,7 @@
 #include "myb/lambert.h"
 #include "myb/model.h"
 #include "myb/num.h"
+#include "myb/observe.h"
 #include "myb/pool.h"
 #include "myb/regular.h"
 #include "myb/rel.h"
@@ -37,7 +38,7 @@
 #include "myb/uncert.h"
 #include "myb_sgp4.h"
 
-static const uint64_t golden_hash = UINT64_C(0x827497389931b8a9);
+static const uint64_t golden_hash = UINT64_C(0xd1bce261642c87ac);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -1328,6 +1329,105 @@ static void workload_phase9(hasher* h, mt_rng* rng) {
   myb_equinox_destroy(eq);
 }
 
+/* ---- Phase 10 ----------------------------------------------------------------------------- */
+
+typedef struct repro_mover {
+  double x0[3];
+  double v[3];
+} repro_mover;
+
+static myb_status repro_mover_state(void* context, myb_time t, double state[6]) {
+  const repro_mover* m = context;
+  const double s = myb_time_seconds(t);
+  for (int i = 0; i < 3; ++i) {
+    state[i] = m->x0[i] + m->v[i] * s;
+    state[3 + i] = m->v[i];
+  }
+  return MYB_OK;
+}
+
+static void workload_phase10(hasher* h, mt_rng* rng) {
+  /* compact binaries */
+  for (int k = 0; k < 20; ++k) {
+    const double x[3] = {1e3 + 100.0 * repro_uniform(rng), 50.0 * repro_uniform(rng), 3.0};
+    const double v[3] = {0.001 * repro_uniform(rng), 0.03, 0.002 * repro_uniform(rng)};
+    double a[3];
+    MT_CHECK(myb_pn_binary_acceleration(0.6, 0.4, 1.0, MYB_PN_1 | MYB_PN_2 | MYB_PN_25, x, v, a) ==
+             MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, a[i]);
+    }
+  }
+  hash_double(h, myb_peters_period_derivative(1.9e20, 1.85e20, 299792458.0, 27907.0, 0.617));
+
+  /* observables */
+  repro_mover target = {{3e11, -1e11, 5e10}, {2.5e4, 1.8e4, -3e3}};
+  repro_mover sun = {{1e8, -2e8, 3e7}, {12.0, -9.0, 0.5}};
+  repro_mover station = {{1.4e11, 5e10, 2e10}, {-1e4, 2.9e4, 1e3}};
+  const myb_light_body body = {.gm = 1.32712440041e20, .state = repro_mover_state, .context = &sun};
+  const myb_light_model model = {.c = 299792458.0, .gamma = 1.0, .bodies = &body, .count = 1};
+  for (int k = 0; k < 6; ++k) {
+    const myb_time t = myb_time_from_seconds(1e5 * k + 1e3 * repro_uniform(rng));
+    double obs[6];
+    MT_CHECK(repro_mover_state(&station, t, obs) == MYB_OK);
+    myb_light_path path;
+    MT_CHECK(myb_light_time(&model, repro_mover_state, &target, t, obs,
+                            (myb_light_direction)(k % 2), &path) == MYB_OK);
+    hash_double(h, path.light_time);
+    hash_double(h, path.range);
+    hash_double(h, path.delay);
+    hash_double(h, path.range_rate);
+    double total;
+    MT_CHECK(myb_round_trip(&model, repro_mover_state, &station, repro_mover_state, &target, t,
+                            &total, NULL, NULL) == MYB_OK);
+    hash_double(h, total);
+    const double p[3] = {0.6, -0.48, 0.64};
+    double ab[3];
+    myb_aberration(p, obs + 3, 299792458.0, ab);
+    double ld[3];
+    const double e[3] = {0.0, 1.0, 0.0};
+    myb_light_deflection(1.32712440041e20, 299792458.0, 1.0, p, p, e, 1.5e11, 1e-9, ld);
+    double ra;
+    double dec;
+    myb_direction_radec(ab, &ra, &dec);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, ab[i]);
+      hash_double(h, ld[i]);
+    }
+    hash_double(h, ra);
+    hash_double(h, dec);
+  }
+
+  /* magnetic field, Lorentz force, co-rotation, plasma stream */
+  double g[10] = {0.0, -2.9e-5, -1.5e-6, -2.5e-6, 3.0e-6, 1.7e-6, 1.3e-6, -2.3e-6, 1.2e-6, 6e-7};
+  double hh[10] = {0.0, 0.0, 4.6e-6, 0.0, -2.9e-6, -6e-7, 0.0, -1.6e-7, 2.4e-7, -5.4e-7};
+  myb_magnetic_field* field = NULL;
+  MT_CHECK(myb_magnetic_field_create(6371.2e3, 3, g, hh, NULL, &field) == MYB_OK);
+  myb_gravity_work* work = NULL;
+  MT_CHECK(myb_gravity_work_create(3, NULL, &work) == MYB_OK);
+  for (int k = 0; k < 10; ++k) {
+    const double r[3] = {7e6 + 1e6 * repro_uniform(rng), -3e6 * repro_uniform(rng),
+                         2e6 * repro_uniform(rng)};
+    double b[3];
+    MT_CHECK(myb_magnetic_field_eval(field, work, r, b) == MYB_OK);
+    const double omega[3] = {0.0, 0.0, 7.292115e-5};
+    double e[3];
+    myb_corotation_field(omega, r, b, e);
+    const double v[3] = {1e3, 7e3, -2e3};
+    double a[3];
+    myb_lorentz_acceleration(1e-3, e, v, b, a);
+    double w[3];
+    myb_force_plasma_stream(8e-21, 1.496e11, 4e5, 0.02, r, v, w);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, b[i]);
+      hash_double(h, a[i]);
+      hash_double(h, w[i]);
+    }
+  }
+  myb_gravity_work_destroy(work);
+  myb_magnetic_field_destroy(field);
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -1357,6 +1457,9 @@ int main(void) {
   if (upto >= 9) {
     workload_phase9(&h, &rng);
   }
+  if (upto >= 10) {
+    workload_phase10(&h, &rng);
+  }
   uint64_t expected = golden_hash;
   if (upto == 5) {
     expected = UINT64_C(0x38f060f6206c4bf6);
@@ -1366,6 +1469,8 @@ int main(void) {
     expected = UINT64_C(0xbd6bc51c0c5d4fda);
   } else if (upto == 8) {
     expected = UINT64_C(0xb1b77fd24243268f);
+  } else if (upto == 9) {
+    expected = UINT64_C(0x827497389931b8a9);
   }
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, expected);

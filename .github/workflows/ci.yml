@@ -5,12 +5,12 @@
 # by cmake/FetchData.cmake (SHA-256 checked) and cached between runs.
 name: CI
 
-# Until the library is complete (phase 10 of docs/PLAN.md) the workflow runs only on request;
-# then the triggers below are enabled:
-#   push: { branches: [main] }
-#   pull_request:
-#   schedule: [{ cron: "17 3 * * 1" }]  # weekly: also the slow ASan at -O0 and fresh EOP series
 on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # weekly: also the slow ASan at -O0 and fresh EOP series
   workflow_dispatch:
 
 concurrency:

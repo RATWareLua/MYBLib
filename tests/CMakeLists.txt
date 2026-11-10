@@ -68,6 +68,9 @@ myb_add_test(test_ellipsoidal SOURCES unit/test_ellipsoidal.c)
 myb_add_test(test_lageos SOURCES unit/test_lageos.c)
 myb_add_test(test_de440_rel SOURCES unit/test_de440_rel.c)
 myb_add_test(test_moon_libration SOURCES unit/test_moon_libration.c)
+myb_add_test(test_pn_binary SOURCES unit/test_pn_binary.c)
+myb_add_test(test_observe SOURCES unit/test_observe.c LIBRARIES erfa_reference)
+myb_add_test(test_charge SOURCES unit/test_charge.c)
 myb_add_test(test_repro SOURCES repro/test_repro.c LIBRARIES myb_sgp4)
 
 # IAU SOFA reference through ERFA (BSD-3-Clause), compiled for the tests only.

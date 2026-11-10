@@ -2,14 +2,14 @@ cmake_minimum_required(VERSION 3.28)
 
 # The version lives in include/myb/core.h only.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/myb/core.h" _myb_version_lines
-  REGEX "^#define MYB_VERSION_(MAJOR|MINOR|PATCH) [0-9]+$")
+  REGEX "^#define MYB_VERSION_(MAJOR|MINOR|PATCH|TWEAK) [0-9]+$")
 foreach(_line IN LISTS _myb_version_lines)
-  string(REGEX MATCH "MYB_VERSION_(MAJOR|MINOR|PATCH) ([0-9]+)" _ "${_line}")
+  string(REGEX MATCH "MYB_VERSION_(MAJOR|MINOR|PATCH|TWEAK) ([0-9]+)" _ "${_line}")
   set(_myb_version_${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
 endforeach()
 
 project(myb
-  VERSION "${_myb_version_MAJOR}.${_myb_version_MINOR}.${_myb_version_PATCH}"
+  VERSION "${_myb_version_MAJOR}.${_myb_version_MINOR}.${_myb_version_PATCH}.${_myb_version_TWEAK}"
   DESCRIPTION "Motion of bodies in space: N-body, orbits, transfers - rigorous physics in C23"
   LANGUAGES C)
 
@@ -67,6 +67,7 @@ add_library(myb STATIC
   src/frames/rotation.c
   src/frames/tkframe.c
   src/force/force.c
+  src/force/magnetic.c
   src/force/radiation.c
   src/force/thrust.c
   src/frames/wgccre.c
@@ -100,6 +101,7 @@ add_library(myb STATIC
   src/num/poisson.c
   src/num/root.c
   src/num/series.c
+  src/observe/observe.c
   src/num/sum.c
   src/rel/rel.c
   src/cmath/cmath.c

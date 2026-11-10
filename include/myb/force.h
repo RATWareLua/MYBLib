@@ -13,6 +13,7 @@
 #include <stddef.h>
 
 #include "myb/core.h"
+#include "myb/grav.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -111,6 +112,62 @@ MYB_API void myb_force_drag(double density, double cd_area_over_mass, const doub
  * and v parallel or zero. */
 MYB_API MYB_NODISCARD myb_status myb_force_empirical_rtn(const double r[3], const double v[3],
                                                          const double a_rtn[3], double a[3]);
+
+/* ---- Charge and plasma ------------------------------------------------------------------------
+ * Magnetic fields of bodies as Gauss coefficients: the potential of the internal field
+ *   V = a sum_{n>=1} (a/r)^(n+1) sum_m (g_nm cos m lambda + h_nm sin m lambda) P_n^m(sin phi),
+ * P_n^m Schmidt semi-normalised (no Condon-Shortley phase), B = -grad V in the body-fixed frame
+ * (a the reference radius, phi the geocentric latitude). Evaluated by the spherical-harmonic code
+ * of myb/grav.h (P_n^m = Pbar_nm / sqrt(2n + 1)), so a work of myb_gravity_work_create serves
+ * both. Coefficients are indexed n (n + 1) / 2 + m (n = 0 unused), in tesla. */
+
+typedef struct myb_magnetic_field myb_magnetic_field;
+
+/* Errors: MYB_E_DOMAIN (degree < 1, radius <= 0, non-finite coefficients), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_magnetic_field_create(double radius, int degree,
+                                                           const double* g, const double* h,
+                                                           const myb_allocator* allocator,
+                                                           myb_magnetic_field** field);
+
+/* From a coefficient table in the IGRF format (columns g/h n m, then the field at each epoch
+ * of the header line "g/h n m 1900.0 ... 2025.0 2025-30" in nT, the last column the secular
+ * variation in nT/year): linear in time between the epochs, the secular variation after the last
+ * (the IGRF prescription), at the decimal year `year` (>= the first epoch). The reference radius
+ * (6371.2 km for the IGRF) is the caller's. Errors: MYB_E_FORMAT (diag gives the line),
+ * MYB_E_RANGE (year before the table), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_magnetic_field_load_table(const char* text, size_t size,
+                                                               double radius, double year,
+                                                               const myb_allocator* allocator,
+                                                               myb_magnetic_field** field,
+                                                               myb_diag* diag);
+
+MYB_API void myb_magnetic_field_destroy(myb_magnetic_field* field); /* accepts NULL */
+MYB_API int myb_magnetic_field_degree(const myb_magnetic_field* field);
+
+/* B (T) at the body-fixed position r (m); work created for at least the degree. Errors:
+ * MYB_E_DOMAIN (r = 0 or non-finite). */
+MYB_API MYB_NODISCARD myb_status myb_magnetic_field_eval(const myb_magnetic_field* field,
+                                                         myb_gravity_work* work,
+                                                         const double r[3], double b[3]);
+
+/* Lorentz force per unit mass on a charge-to-mass ratio q/m (C/kg) moving with velocity v in
+ * the fields E (V/m) and B (T) of the same inertial frame: a = (q/m) (E + v x B). */
+MYB_API void myb_lorentz_acceleration(double charge_to_mass, const double e[3], const double v[3],
+                                      const double b[3], double a[3]);
+
+/* The electric field of a plasma co-rotating with angular velocity omega (ideal MHD, as in a
+ * planet's inner magnetosphere), in the inertial frame: E = -(omega x r) x B. */
+MYB_API void myb_corotation_field(const double omega[3], const double r[3], const double b[3],
+                                  double e[3]);
+
+/* Momentum transfer by a radial plasma stream (the solar wind): density rho = rho0 (r0 / |r|)^2
+ * (rho0 at the distance r0) flowing at the speed `speed` away from the source; r and v are the
+ * object's position and velocity relative to the source. With the relative velocity
+ * w = speed r/|r| - v: a = (cd / 2) (area / mass) rho |w| w (cd ~ 2 for full momentum
+ * transfer). */
+MYB_API void myb_force_plasma_stream(double rho0, double r0, double speed,
+                                     double cd_area_over_mass, const double r[3],
+                                     const double v[3], double a[3]);
 
 #ifdef __cplusplus
 }

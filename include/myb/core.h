@@ -16,11 +16,14 @@
 #include <stdint.h>
 
 /* ---- Version (single source of truth; CMake reads it from here) ---------------------- */
-#define MYB_VERSION_MAJOR 0
-#define MYB_VERSION_MINOR 1
+#define MYB_VERSION_MAJOR 1
+#define MYB_VERSION_MINOR 0
 #define MYB_VERSION_PATCH 0
-#define MYB_VERSION_NUMBER \
-  ((MYB_VERSION_MAJOR * 10000L) + (MYB_VERSION_MINOR * 100L) + MYB_VERSION_PATCH)
+#define MYB_VERSION_TWEAK 0
+/* major.minor.patch.tweak, each below 100: 1.0.0.0 = 1000000 */
+#define MYB_VERSION_NUMBER                                                              \
+  ((MYB_VERSION_MAJOR * 1000000L) + (MYB_VERSION_MINOR * 10000L) +                      \
+   (MYB_VERSION_PATCH * 100L) + MYB_VERSION_TWEAK)
 
 /* ---- Symbol visibility ------------------------------------------------------------------
  * MYB_STATIC  — the library is linked statically (set by the CMake target).

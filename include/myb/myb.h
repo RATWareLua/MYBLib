@@ -20,6 +20,7 @@
 #include "myb/lambert.h"
 #include "myb/model.h"
 #include "myb/num.h"
+#include "myb/observe.h"
 #include "myb/pool.h"
 #include "myb/regular.h"
 #include "myb/rel.h"
