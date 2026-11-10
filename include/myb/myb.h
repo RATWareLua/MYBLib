@@ -3,6 +3,7 @@
 #ifndef MYB_MYB_H_
 #define MYB_MYB_H_
 
+#include "myb/attitude.h"
 #include "myb/body.h"
 #include "myb/budget.h"
 #include "myb/cmath.h"
@@ -20,7 +21,9 @@
 #include "myb/model.h"
 #include "myb/num.h"
 #include "myb/pool.h"
+#include "myb/regular.h"
 #include "myb/rel.h"
+#include "myb/thrust.h"
 #include "myb/time.h"
 #include "myb/transfer.h"
 #include "myb/uncert.h"

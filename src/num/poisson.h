@@ -9,7 +9,8 @@
  * coefficients read from NAIF text kernels. A group holds several series over the same
  * arguments (X, Y and s + XY/2 share most of theirs). At load time the distinct argument
  * vectors are collected; at each date the phasors exp(i m F_k) of every multiple m that occurs
- * are computed once (correctly rounded sine and cosine), the phasor exp(i ARG) of each distinct
+ * are computed once (correctly rounded sine and cosine) into a packed table of at most 128
+ * entries (2 KB of stack), the phasor exp(i ARG) of each distinct
  * argument is the product of those of its nonzero n_k in a fixed order, and every term using
  * it adds its contribution. The relative error of a term is a few units of roundoff, far below
  * the 0.1 µas cut-off of the series, and the result is reproducible bit for bit. Terms are
@@ -26,9 +27,11 @@
 enum {
   MYB_POISSON_MAX_ARGUMENTS = 16,
   MYB_POISSON_MAX_MULTIPLE = 64, /* |n_k| */
-  MYB_POISSON_MAX_POWER = 8,     /* j and the degree of the polynomial part */
+  MYB_POISSON_MAX_POWER = 5,     /* j and the degree of the polynomial part (IAU 2006: 5) */
   MYB_POISSON_ARGUMENT_DEGREE = 4,
-  MYB_POISSON_MAX_SERIES = 8
+  MYB_POISSON_MAX_SERIES = 5,
+  MYB_POISSON_MAX_PHASORS = 128  /* sum over the arguments of (max |n_k| + 1); IAU 2006/2000A
+                                    needs 117 */
 };
 
 typedef struct myb_internal_poisson_group {
@@ -38,6 +41,7 @@ typedef struct myb_internal_poisson_group {
   double argument_scale[MYB_POISSON_MAX_ARGUMENTS];
   double argument_turn[MYB_POISSON_MAX_ARGUMENTS];
   int max_multiple[MYB_POISSON_MAX_ARGUMENTS];
+  int phasor_offset[MYB_POISSON_MAX_ARGUMENTS]; /* start of exp(i m F_k) in the packed table */
   /* Series. */
   int series;
   double scale[MYB_POISSON_MAX_SERIES];

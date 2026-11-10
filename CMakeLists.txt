@@ -47,6 +47,8 @@ else()
 endif()
 
 add_library(myb STATIC
+  src/attitude/attitude.c
+  src/attitude/free.c
   src/body/body.c
   src/core/alloc.c
   src/core/check.c
@@ -58,6 +60,7 @@ add_library(myb STATIC
   src/dyn/whfast.c
   src/frames/bpck.c
   src/frames/cip.c
+  src/frames/equinox.c
   src/frames/eop.c
   src/frames/geodetic.c
   src/frames/orbital.c
@@ -65,6 +68,7 @@ add_library(myb STATIC
   src/frames/tkframe.c
   src/force/force.c
   src/force/radiation.c
+  src/force/thrust.c
   src/frames/wgccre.c
   src/grav/ellipsoidal.c
   src/grav/figure.c
@@ -87,9 +91,11 @@ add_library(myb STATIC
   src/kin/spk_segment.c
   src/kepler/elements.c
   src/kepler/propagate.c
+  src/kepler/regular.c
   src/kepler/stumpff.c
   src/io/numparse.c
   src/num/dd.c
+  src/num/elliptic.c
   src/num/linalg.c
   src/num/poisson.c
   src/num/root.c
@@ -111,6 +117,19 @@ target_include_directories(myb
   PRIVATE src third_party/core-math)
 target_compile_definitions(myb PUBLIC MYB_STATIC)
 myb_apply_flags(myb)
+
+# Stack frames reported per function (Clang -fstack-usage); tests/tools/check_stack.cmake keeps
+# them within a budget. Off under the sanitizers, whose redzones enlarge every frame.
+if(MYB_SANITIZE STREQUAL "")
+  set(_myb_stack_default ON)
+else()
+  set(_myb_stack_default OFF)
+endif()
+option(MYB_STACK_USAGE "Report stack frames (-fstack-usage) and check their budget" ${_myb_stack_default})
+if(MYB_STACK_USAGE)
+  target_compile_options(myb PRIVATE -fstack-usage)
+  target_compile_options(myb_coremath PRIVATE -fstack-usage)
+endif()
 if(NOT WIN32)
   # src/platform/platform_posix.c: the worker threads of myb_pool.
   set(THREADS_PREFER_PTHREAD_FLAG ON)

@@ -152,6 +152,56 @@ MYB_API MYB_NODISCARD myb_status myb_eop_at(const myb_eop* eop, const myb_timesy
 MYB_API void myb_cip_terrestrial(const myb_cip* cip, myb_time tt, myb_time ut1,
                                  const myb_eop_values* eop, myb_rotation* rotation);
 
+/* ---- Equinox-based systems ---------------------------------------------------------------
+ * The classical (FK5-era) systems of the Earth, from the mean equator and equinox of J2000.0
+ * (the NAIF frame J2000, which agrees with the GCRS to the 23 mas frame bias):
+ *   MOD  = P [J2000],  P = R3(-z_A) R2(theta_A) R3(-zeta_A)     (IAU 1976 precession)
+ *   TOD  = N [MOD],    N = R1(-eps_A - Delta eps) R3(-Delta psi) R1(eps_A)   (IAU 1980 nutation)
+ *   TEME: z = the pole of TOD, x = the mean equinox of date projected on the true equator
+ *         (the frame of the SGP4 theory, as SPICE defines it for SPK type 10; it differs from
+ *         R3(Delta psi cos eps_A) [TOD] by the second-order Delta psi Delta eps sin eps, ~1e-9 rad);
+ *   PEF  = R3(GMST82) [TEME]   (pseudo-Earth-fixed: then polar motion gives the ITRS).
+ * Every coefficient comes from a kernel (data/frames/iau1980.tk, prefix "IAU1980"). Times are
+ * TT (TDB alike) except UT1 for the sidereal time. Derivatives are per second. */
+
+typedef struct myb_equinox myb_equinox;
+
+/* Reads the model <prefix>_* (format in data/frames/iau1980.tk); the pool may be destroyed
+ * afterwards. Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_equinox_create(const myb_kpool* pool, const char* prefix,
+                                                    const myb_allocator* allocator,
+                                                    myb_equinox** equinox, myb_diag* diag);
+MYB_API void myb_equinox_destroy(myb_equinox* equinox); /* accepts NULL */
+
+/* Precession angles zeta_A, z_A, theta_A (rad) and their rates (may be NULL). */
+MYB_API void myb_equinox_precession(const myb_equinox* equinox, myb_time tt, double angles[3],
+                                    double rates[3]);
+
+/* Mean obliquity eps_A (rad) and its rate (may be NULL). */
+MYB_API double myb_equinox_obliquity(const myb_equinox* equinox, myb_time tt, double* rate);
+
+/* Nutation (Delta psi, Delta eps) in rad and their rates (may be NULL). */
+MYB_API void myb_equinox_nutation(const myb_equinox* equinox, myb_time tt, double nutation[2],
+                                  double rates[2]);
+
+typedef enum myb_equinox_frame {
+  MYB_EQUINOX_MOD = 0,
+  MYB_EQUINOX_TOD = 1,
+  MYB_EQUINOX_TEME = 2
+} myb_equinox_frame;
+
+/* The rotation J2000 -> frame at tt, with its derivative. */
+MYB_API void myb_equinox_rotation(const myb_equinox* equinox, myb_equinox_frame frame,
+                                  myb_time tt, myb_rotation* rotation);
+
+/* Greenwich mean sidereal time of 1982 (rad, [0, 2 pi)) and its rate per UT1 second (may be
+ * NULL), at ut1 (an instant on the UT1 scale). */
+MYB_API double myb_equinox_gmst(const myb_equinox* equinox, myb_time ut1, double* rate);
+
+/* The rotation TEME -> PEF = R3(GMST82) at ut1, with its derivative (the Earth's rotation). */
+MYB_API void myb_equinox_teme_pef(const myb_equinox* equinox, myb_time ut1,
+                                  myb_rotation* rotation);
+
 /* ---- Rotation models of the IAU Working Group on Cartographic Coordinates ------------------
  * The orientation of a body as published by the WGCCRE (Archinal et al., Celest. Mech. Dyn.
  * Astron. 130, 22, 2018) in NAIF text PCK form (pck00011.tpc): with T the TDB Julian

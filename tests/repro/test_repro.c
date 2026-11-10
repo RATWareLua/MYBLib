@@ -13,6 +13,7 @@
 
 #include "core/fpguard.h"
 #include "mtest.h"
+#include "myb/attitude.h"
 #include "myb/budget.h"
 #include "myb/cmath.h"
 #include "myb/cr3bp.h"
@@ -28,12 +29,15 @@
 #include "myb/model.h"
 #include "myb/num.h"
 #include "myb/pool.h"
+#include "myb/regular.h"
 #include "myb/rel.h"
+#include "myb/thrust.h"
 #include "myb/time.h"
 #include "myb/transfer.h"
 #include "myb/uncert.h"
+#include "myb_sgp4.h"
 
-static const uint64_t golden_hash = UINT64_C(0xb1b77fd24243268f);
+static const uint64_t golden_hash = UINT64_C(0x827497389931b8a9);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -1051,10 +1055,277 @@ static void workload_phase8(hasher* h, mt_rng* rng) {
   repro_shot shot = {{7e6, 1e6, -2e5}, {-3e6, 9e6, 2e6}};
   double u[3] = {0.0, 7000.0, 1000.0};
   const myb_shoot_options so = {.tolerance = 1e-6};
-  MT_CHECK(myb_shoot(repro_shot_f, &shot, 3, 3, u, &so, NULL, NULL) == MYB_OK);
+  double shoot_work[64];
+  MT_CHECK(myb_shoot(repro_shot_f, &shot, 3, 3, u, &so, shoot_work, NULL, NULL) == MYB_OK);
   for (int i = 0; i < 3; ++i) {
     hash_double(h, u[i]);
   }
+}
+
+/* ---- Phase 9 ------------------------------------------------------------------------------ */
+
+static double repro_uniform(mt_rng* rng) { /* [0, 1) from integer bits */
+  return (double)(mt_next(rng) >> 11) * 0x1p-53;
+}
+
+static myb_status repro_gravity_gradient(void* context, double t, const double q[4],
+                                         double torque[3]) {
+  (void)context;
+  (void)t;
+  static const double moments[3] = {1.0, 1.6, 2.1};
+  static const double r[3] = {2.0, 1.0, -0.5};
+  double rb[3];
+  myb_quat_rotate(q, r, rb);
+  myb_torque_point_mass(0.8, rb, moments, torque);
+  return MYB_OK;
+}
+
+static myb_status repro_j2(void* context, double t, const double x[3], const double v[3],
+                           double a[3]) {
+  (void)context;
+  (void)t;
+  (void)v;
+  const double r2 = x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+  const double r = sqrt(r2);
+  const double z2 = x[2] * x[2] / r2;
+  const double f = -1.5e-3 / (r2 * r2 * r);
+  a[0] = f * x[0] * (1.0 - 5.0 * z2);
+  a[1] = f * x[1] * (1.0 - 5.0 * z2);
+  a[2] = f * x[2] * (3.0 - 5.0 * z2);
+  return MYB_OK;
+}
+
+static void workload_phase9(hasher* h, mt_rng* rng) {
+  /* equinox-based frames */
+  myb_kpool* pool = NULL;
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  const char* kernels[] = {"/frames/iau1980.tk", "/time/time-scales.tk",
+                           "/time/tdb-tt-fb1990.tk", "/time/utc-tai.tk"};
+  for (size_t i = 0; i < sizeof kernels / sizeof kernels[0]; ++i) {
+    char path[512];
+    snprintf(path, sizeof path, "%s%s", MYB_DATA_DIR, kernels[i]);
+    MT_CHECK(myb_kpool_load_file(pool, path, NULL) == MYB_OK);
+  }
+  myb_equinox* eq = NULL;
+  myb_timesys* sys = NULL;
+  MT_CHECK(myb_equinox_create(pool, "IAU1980", NULL, &eq, NULL) == MYB_OK);
+  MT_CHECK(myb_timesys_create(pool, NULL, &sys, NULL) == MYB_OK);
+  myb_kpool_destroy(pool);
+  for (int k = 0; k < 20; ++k) {
+    const myb_time t = {(int64_t)mt_int(rng, -1000000, 1000000) * 3011, repro_uniform(rng)};
+    for (int f = 0; f < 3; ++f) {
+      myb_rotation r;
+      myb_equinox_rotation(eq, (myb_equinox_frame)f, t, &r);
+      for (int i = 0; i < 9; ++i) {
+        hash_double(h, r.m[i]);
+        hash_double(h, r.dm[i]);
+      }
+    }
+    double rate;
+    hash_double(h, myb_equinox_gmst(eq, t, &rate));
+    hash_double(h, rate);
+  }
+
+  /* elliptic integrals and Jacobi functions */
+  for (int k = 0; k < 40; ++k) {
+    const double x = repro_uniform(rng) * 10.0;
+    const double y = repro_uniform(rng) * 10.0 + 0.1;
+    const double z = repro_uniform(rng) * 10.0 + 0.1;
+    const double p = repro_uniform(rng) * 10.0 + 0.1;
+    const double m = repro_uniform(rng);
+    const double n = repro_uniform(rng) * 4.0 - 3.0;
+    const double phi = repro_uniform(rng) * 20.0 - 10.0;
+    hash_double(h, myb_carlson_rf(x, y, z));
+    hash_double(h, myb_carlson_rd(x, y, z));
+    hash_double(h, myb_carlson_rj(x, y, z, p));
+    hash_double(h, myb_carlson_rc(x, y));
+    hash_double(h, myb_elliptic_k(m));
+    hash_double(h, myb_elliptic_e(m));
+    hash_double(h, myb_elliptic_pi(n, m));
+    hash_double(h, myb_elliptic_f_inc(phi, m));
+    hash_double(h, myb_elliptic_e_inc(phi, m));
+    hash_double(h, myb_elliptic_pi_inc(n, phi, m));
+    double am;
+    double sn;
+    double cn;
+    double dn;
+    myb_jacobi(phi * 7.0, m, &am, &sn, &cn, &dn);
+    hash_double(h, am);
+    hash_double(h, sn);
+    hash_double(h, cn);
+    hash_double(h, dn);
+  }
+
+  /* attitude */
+  for (int k = 0; k < 12; ++k) {
+    double q[4];
+    for (int i = 0; i < 4; ++i) {
+      q[i] = repro_uniform(rng) - 0.5;
+    }
+    myb_quat_normalize(q);
+    double m[9];
+    myb_quat_to_matrix(q, m);
+    double back[4];
+    myb_quat_from_matrix(m, back);
+    double phi[3];
+    myb_quat_to_rotation_vector(q, phi);
+    for (int i = 0; i < 4; ++i) {
+      hash_double(h, back[i]);
+    }
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, phi[i]);
+    }
+    const int axes[3] = {1 + k % 3, 1 + (k + 1) % 3, 1 + (k % 2 == 0 ? k % 3 : (k + 2) % 3)};
+    double ang[3];
+    MT_CHECK(myb_euler_from_matrix(axes, m, ang) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, ang[i]);
+    }
+    const double moments[3] = {1.0 + repro_uniform(rng), 2.0 + repro_uniform(rng),
+                               3.0 + repro_uniform(rng)};
+    const double l[3] = {repro_uniform(rng) - 0.5, repro_uniform(rng) - 0.5, 1.0};
+    myb_free_rotation f;
+    if (myb_free_rotation_init(moments, q, l, &f) == MYB_OK) {
+      double qt[4];
+      double lt[3];
+      myb_free_rotation_state(&f, 17.0 * repro_uniform(rng), qt, lt);
+      for (int i = 0; i < 4; ++i) {
+        hash_double(h, qt[i]);
+      }
+      for (int i = 0; i < 3; ++i) {
+        hash_double(h, lt[i]);
+      }
+    }
+    const double in[9] = {moments[0], 0.1, 0.05, 0.1, moments[1], -0.02, 0.05, -0.02, moments[2]};
+    double pm[3];
+    double axes9[9];
+    MT_CHECK(myb_principal_axes(in, pm, axes9) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, pm[i]);
+    }
+  }
+  {
+    const double moments[3] = {1.0, 1.6, 2.1};
+    double q[4] = {0.9, 0.1, -0.3, 0.2};
+    myb_quat_normalize(q);
+    double l[3] = {0.3, 0.5, 1.1};
+    MT_CHECK(myb_rotation_split(moments, repro_gravity_gradient, NULL, 6, 0.0, 0.1, 30, q, l) ==
+             MYB_OK);
+    for (int i = 0; i < 4; ++i) {
+      hash_double(h, q[i]);
+    }
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, l[i]);
+    }
+    const double im[9] = {0.39, 1e-5, 0, 1e-5, 0.3902, 0, 0, 0, 0.3904};
+    const double core[2] = {1.6e-4, 1.6e-4 * 1.0002};
+    const double wm[3] = {1e-7, -2e-8, 2.66e-6};
+    const double wc[3] = {-7e-8, -1e-8, 2.66e-6};
+    const double tq[3] = {1e-17, 2e-17, -3e-18};
+    double dwm[3];
+    double dwc[3];
+    MT_CHECK(myb_core_mantle_rates(im, NULL, core, 4e-14, wm, wc, tq, dwm, dwc) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, dwm[i]);
+      hash_double(h, dwc[i]);
+    }
+  }
+
+  /* regularisation */
+  {
+    const myb_regular_problem p = {.mu = 1.0, .perturbation = repro_j2, .alpha = 1.5};
+    const myb_dop853_options o = {.rtol = 1e-12, .atol = 1e-14};
+    const double x0[3] = {1.8, 0.2, 0.1};
+    const double v0[3] = {-0.05, 0.12, 0.08};
+    for (int kind = 0; kind < 2; ++kind) {
+      double x[3];
+      double v[3];
+      MT_CHECK(myb_regular_propagate((myb_regular_kind)kind, &p, &o, 0.0, x0, v0, 40.0, x, v,
+                                     NULL) == MYB_OK);
+      for (int i = 0; i < 3; ++i) {
+        hash_double(h, x[i]);
+        hash_double(h, v[i]);
+      }
+    }
+  }
+
+  /* thrust */
+  {
+    const myb_thrust_arc arcs[2] = {
+        {.start = 0.0, .stop = 5000.0, .thrust = 0.3, .exhaust = 28000.0,
+         .steering = MYB_STEER_RTN, .direction = {0.1, 1.0, 0.2}},
+        {.start = 6000.0, .stop = 9000.0, .thrust = 0.2, .exhaust = 30000.0,
+         .steering = MYB_STEER_EDELBAUM, .edelbaum_v0 = 7546.0, .edelbaum_beta0 = 1.08,
+         .edelbaum_sense = -1.0}};
+    myb_thrust th;
+    MT_CHECK(myb_thrust_init(&th, 120.0, arcs, 2) == MYB_OK);
+    const double x[3] = {7000e3, 100e3, 50e3};
+    const double v[3] = {-10.0, 6600.0, 3600.0};
+    for (int k = 0; k < 10; ++k) {
+      const double t = 1000.0 * k;
+      double a[3];
+      MT_CHECK(myb_thrust_acceleration(&th, t, x, v, a) == MYB_OK);
+      for (int i = 0; i < 3; ++i) {
+        hash_double(h, a[i]);
+      }
+      hash_double(h, myb_thrust_mass(&th, t));
+    }
+    const myb_equinoctial e = {7e6, 0.01, -0.02, 0.2, 0.1, 1.3};
+    const double artn[3] = {1e-4, 2e-3, -5e-4};
+    double rates[6];
+    myb_equinoctial_rates(3.986004418e14, &e, artn, rates);
+    for (int i = 0; i < 6; ++i) {
+      hash_double(h, rates[i]);
+    }
+    double dv;
+    double beta0;
+    MT_CHECK(myb_edelbaum(7546.0, 7440.0, 0.0174, &dv, &beta0) == MYB_OK);
+    hash_double(h, dv);
+    hash_double(h, beta0);
+  }
+
+  /* SGP4 (ext/sgp4) and SPK type 10 */
+  {
+    const char* lines[2][2] = {
+        {"1 09880U 77021A   06176.56157475  .00000421  00000-0  10000-3 0  9814",
+         "2 09880  64.5968 349.3786 7069051 270.0229  16.3320  2.00813614112380"},
+        {"1 06251U 62025E   06176.82412014  .00008885  00000-0  12808-3 0  3985",
+         "2 06251  58.0579  54.0425 0030035 139.1568 221.1854 15.56387291  6774"}};
+    for (int s = 0; s < 2; ++s) {
+      myb_tle tle;
+      myb_sgp4 sat;
+      MT_CHECK(myb_tle_parse(lines[s][0], lines[s][1], 0, &tle, NULL) == MYB_OK);
+      MT_CHECK(myb_sgp4_init(&tle, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &sat) == MYB_OK);
+      for (int k = 0; k < 6; ++k) {
+        double r[3];
+        double v[3];
+        MT_CHECK(myb_sgp4_propagate(&sat, 977.0 * k - 1000.0, r, v, NULL) == MYB_OK);
+        for (int i = 0; i < 3; ++i) {
+          hash_double(h, r[i]);
+          hash_double(h, v[i]);
+        }
+      }
+    }
+    myb_spk* spk = NULL;
+    MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+    MT_CHECK(myb_spk_load_file(spk, MYB_TEST_DATA_DIR "/spk/t10.bsp", NULL) == MYB_OK);
+    for (size_t seg = 0; seg < myb_spk_segment_count(spk); ++seg) {
+      myb_spk_segment_info info;
+      myb_spk_segment(spk, seg, &info);
+      for (int k = 0; k < 5; ++k) {
+        const double t = info.start + (info.stop - info.start) * repro_uniform(rng);
+        double st[6];
+        MT_CHECK(myb_sgp4_spk10_state(spk, seg, sys, eq, myb_time_from_seconds(t), st) ==
+                 MYB_OK);
+        for (int i = 0; i < 6; ++i) {
+          hash_double(h, st[i]);
+        }
+      }
+    }
+    myb_spk_destroy(spk);
+  }
+  myb_timesys_destroy(sys);
+  myb_equinox_destroy(eq);
 }
 
 int main(void) {
@@ -1083,6 +1354,9 @@ int main(void) {
   if (upto >= 8) {
     workload_phase8(&h, &rng);
   }
+  if (upto >= 9) {
+    workload_phase9(&h, &rng);
+  }
   uint64_t expected = golden_hash;
   if (upto == 5) {
     expected = UINT64_C(0x38f060f6206c4bf6);
@@ -1090,6 +1364,8 @@ int main(void) {
     expected = UINT64_C(0x9cb768b2ccddf18b);
   } else if (upto == 7) {
     expected = UINT64_C(0xbd6bc51c0c5d4fda);
+  } else if (upto == 8) {
+    expected = UINT64_C(0xb1b77fd24243268f);
   }
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, expected);

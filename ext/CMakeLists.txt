@@ -8,3 +8,11 @@ target_include_directories(myb_nrlmsise00
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/nrlmsise00"
   PRIVATE "${PROJECT_SOURCE_DIR}/src")
 myb_apply_flags(myb_nrlmsise00)
+
+add_library(myb_sgp4 STATIC sgp4/sgp4.c)
+add_library(myb::sgp4 ALIAS myb_sgp4)
+target_link_libraries(myb_sgp4 PUBLIC myb)
+target_include_directories(myb_sgp4
+  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/sgp4"
+  PRIVATE "${PROJECT_SOURCE_DIR}/src")
+myb_apply_flags(myb_sgp4)

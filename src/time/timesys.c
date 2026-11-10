@@ -359,7 +359,9 @@ myb_status myb_timesys_create(const myb_kpool* pool, const myb_allocator* alloca
     return status;
   }
   myb_timesys* s = block;
-  *s = (myb_timesys){.allocator = a, .utc_base = -1};
+  memset(s, 0, sizeof *s); /* no compound literal: the structure is 3.5 KB */
+  s->allocator = a;
+  s->utc_base = -1;
   reader r = {.pool = pool, .diag = diag};
   status = build(&r, s);
   if (status != MYB_OK) {

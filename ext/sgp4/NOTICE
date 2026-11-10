@@ -1,0 +1,36 @@
+SGP4/SDP4 in myb (ext/sgp4)
+
+The theory is that of F. R. Hoots and R. L. Roehrich, "Models for Propagation of NORAD Element
+Sets", Spacetrack Report #3 (U.S. Air Force, 1980), in the revision of D. A. Vallado,
+P. Crawford, R. Hujsak and T. S. Kelso, "Revisiting Spacetrack Report #3", AIAA 2006-6753
+(2006), whose reference code (SGP4.cpp, version of 12 March 2020) CelesTrak distributes for
+free use.
+
+sgp4.c is a C translation of that code made from its Python translation in python-sgp4 by
+Brandon Rhodes (https://github.com/brandon-rhodes/python-sgp4, revision
+8e234f81a93b226689a8b67d80a4f1a82be7439b, sgp4/propagation.py and sgp4/io.py), which is under the
+MIT licence:
+
+    The MIT License (MIT)
+    Copyright (c) 2012-2016 Brandon Rhodes
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this
+    software and associated documentation files (the "Software"), to deal in the Software
+    without restriction, including without limitation the rights to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+    to whom the Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all copies or
+    substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+    PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+    FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+
+The changes of myb (listed at the top of sgp4.c) are under the same MIT licence.
+
+The verification data in tests/data/sgp4 (SGP4-VER.TLE, tcppver.out) are those of Vallado et
+al. (2006), as distributed with python-sgp4.

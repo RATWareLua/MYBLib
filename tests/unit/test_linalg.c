@@ -226,7 +226,8 @@ static void test_eigen(void) {
   MT_CHECK(cmp_found(re, im, 6, cos(phi), -sin(phi), 1e-11));
   /* eigenvector of lambda: A v = lambda v */
   double v[6];
-  MT_CHECK(myb_eigenvector_real(6, a0, lam, v) == MYB_OK);
+  double work[36];
+  MT_CHECK(myb_eigenvector_real(6, a0, lam, v, work) == MYB_OK);
   double worst = 0.0;
   for (int i = 0; i < 6; ++i) {
     double s = 0.0;

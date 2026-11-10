@@ -33,6 +33,10 @@ myb_add_test(test_fpenv SOURCES unit/test_fpenv.c unit/fpenv_probe.c)
 myb_add_test(test_fma SOURCES unit/test_fma.c unit/fma_hw.c)
 myb_add_test(test_num SOURCES unit/test_num.c)
 myb_add_test(test_linalg SOURCES unit/test_linalg.c)
+myb_add_test(test_elliptic SOURCES unit/test_elliptic.c)
+myb_add_test(test_attitude SOURCES unit/test_attitude.c)
+myb_add_test(test_regular SOURCES unit/test_regular.c)
+myb_add_test(test_thrust SOURCES unit/test_thrust.c)
 myb_add_test(test_uncert SOURCES unit/test_uncert.c)
 myb_add_test(test_cr3bp SOURCES unit/test_cr3bp.c)
 myb_add_test(test_transfer SOURCES unit/test_transfer.c)
@@ -63,7 +67,8 @@ myb_add_test(test_force SOURCES unit/test_force.c)
 myb_add_test(test_ellipsoidal SOURCES unit/test_ellipsoidal.c)
 myb_add_test(test_lageos SOURCES unit/test_lageos.c)
 myb_add_test(test_de440_rel SOURCES unit/test_de440_rel.c)
-myb_add_test(test_repro SOURCES repro/test_repro.c)
+myb_add_test(test_moon_libration SOURCES unit/test_moon_libration.c)
+myb_add_test(test_repro SOURCES repro/test_repro.c LIBRARIES myb_sgp4)
 
 # IAU SOFA reference through ERFA (BSD-3-Clause), compiled for the tests only.
 file(GLOB _erfa_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/erfa/*.c")
@@ -73,6 +78,7 @@ target_include_directories(erfa_reference SYSTEM PUBLIC
 myb_apply_flags(erfa_reference THIRD_PARTY)
 myb_add_test(test_erfa_time SOURCES erfa/test_erfa_time.c LIBRARIES erfa_reference)
 myb_add_test(test_erfa_frames SOURCES erfa/test_erfa_frames.c LIBRARIES erfa_reference)
+myb_add_test(test_erfa_equinox SOURCES erfa/test_erfa_equinox.c LIBRARIES erfa_reference)
 myb_add_test(test_tides SOURCES unit/test_tides.c LIBRARIES erfa_reference)
 
 # MYB_CHECK must print one line and terminate the process.
@@ -94,6 +100,20 @@ if(MYB_LLVM_NM)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_imports.cmake")
 else()
   message(WARNING "llvm-nm not found: test_no_libm_imports is not registered")
+endif()
+
+# The stack budget of the library: 4 KB per frame when optimised (the deepest chains, e.g. a
+# variational step through a force model, stay within a few tens of KB), 8 KB at -O0.
+if(MYB_STACK_USAGE)
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_myb_stack_budget 8192)
+  else()
+    set(_myb_stack_budget 4096)
+  endif()
+  add_test(NAME test_stack_budget
+    COMMAND "${CMAKE_COMMAND}"
+            "-DDIRS=${PROJECT_BINARY_DIR}/CMakeFiles/myb.dir;${PROJECT_BINARY_DIR}/CMakeFiles/myb_coremath.dir"
+            "-DBUDGET=${_myb_stack_budget}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_stack.cmake")
 endif()
 
 # Correct rounding and error bounds against MPFR (GNU MPFR, arbitrary precision).
@@ -140,4 +160,7 @@ endif()
 # ---- Optional modules (ext/) ----------------------------------------------------------------
 if(TARGET myb_nrlmsise00)
   myb_add_test(test_nrlmsise00 SOURCES ext/test_nrlmsise00.c LIBRARIES myb_nrlmsise00)
+endif()
+if(TARGET myb_sgp4)
+  myb_add_test(test_sgp4 SOURCES ext/test_sgp4.c LIBRARIES myb_sgp4)
 endif()

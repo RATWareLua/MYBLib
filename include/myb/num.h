@@ -42,6 +42,31 @@ MYB_API double myb_two_sum(double a, double b, double* err);
  * formulation err = fma(a, b, -p) whenever both are exact. */
 MYB_API double myb_two_prod(double a, double b, double* err);
 
+/* ---- Elliptic integrals and functions ------------------------------------------------------
+ * Carlson's symmetric integrals (DLMF 19.16): with x, y, z >= 0, at most one of them zero,
+ *   R_F(x, y, z)    = 1/2 int_0^inf dt / sqrt((t + x)(t + y)(t + z)),
+ *   R_J(x, y, z, p) = 3/2 int_0^inf dt / ((t + p) sqrt((t + x)(t + y)(t + z))),  p > 0,
+ *   R_D(x, y, z)    = R_J(x, y, z, z),   R_C(x, y) = R_F(x, y, y)  (y > 0),
+ * computed by Carlson's duplication (Numer. Algorithms 10, 13, 1995) to a few units of
+ * roundoff. Legendre's forms with parameter m = k^2 <= 1 (DLMF 19.2):
+ *   K(m), E(m), Pi(n, m) (n < 1) complete; F(phi, m), E(phi, m), Pi(n; phi, m) for any real phi
+ *   (the parts beyond +-pi/2 by quasi-periodicity, Pi then needing n < 1), with
+ *   Pi(n; phi, m) = int_0^phi dt / ((1 - n sin^2 t) sqrt(1 - m sin^2 t)).
+ * Jacobi's amplitude am(u, m) and sn, cn, dn for 0 <= m <= 1 (DLMF 22.16, 22.20). Arguments
+ * outside these domains give NaN. */
+MYB_API double myb_carlson_rf(double x, double y, double z);
+MYB_API double myb_carlson_rd(double x, double y, double z);
+MYB_API double myb_carlson_rj(double x, double y, double z, double p);
+MYB_API double myb_carlson_rc(double x, double y);
+MYB_API double myb_elliptic_k(double m);
+MYB_API double myb_elliptic_e(double m);
+MYB_API double myb_elliptic_pi(double n, double m);
+MYB_API double myb_elliptic_f_inc(double phi, double m);
+MYB_API double myb_elliptic_e_inc(double phi, double m);
+MYB_API double myb_elliptic_pi_inc(double n, double phi, double m);
+/* Any output may be NULL. */
+MYB_API void myb_jacobi(double u, double m, double* am, double* sn, double* cn, double* dn);
+
 /* ---- Double-word arithmetic ---------------------------------------------------------- */
 
 typedef struct myb_dd {
@@ -120,9 +145,10 @@ MYB_API MYB_NODISCARD myb_status myb_least_squares(size_t m, size_t n, double* a
 MYB_API MYB_NODISCARD myb_status myb_eigenvalues(size_t n, double* a, double* re, double* im);
 
 /* Unit eigenvector of A for the real eigenvalue lambda (inverse iteration), its largest
- * component positive. */
+ * component positive; work: n x n doubles supplied by the caller (the functions of this
+ * section keep their own stack below 1 KB). */
 MYB_API MYB_NODISCARD myb_status myb_eigenvector_real(size_t n, const double* a, double lambda,
-                                                      double* v);
+                                                      double* v, double* work);
 
 #ifdef __cplusplus
 }

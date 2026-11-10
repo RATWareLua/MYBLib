@@ -3,6 +3,7 @@
 
 #include "core/alloc.h"
 #include "core/base.h"
+#include "io/daf.h"
 #include "kin/segset.h"
 #include "kin/spk_segment.h"
 #include "myb/kin.h"
@@ -63,6 +64,26 @@ void myb_spk_segment(const myb_spk* spk, size_t index, myb_spk_segment_info* inf
   info->stop = s->stop;
   info->file = s->file;
   memcpy(info->name, s->name, sizeof info->name);
+}
+
+size_t myb_spk_segment_size(const myb_spk* spk, size_t index) {
+  MYB_CHECK(spk != NULL && index < spk->set.count);
+  const myb_internal_spk_segment* s = &spk->set.segments[index];
+  return (size_t)(s->end - s->begin + 1);
+}
+
+myb_status myb_spk_segment_data(const myb_spk* spk, size_t index, size_t offset, size_t count,
+                                double* values) {
+  MYB_CHECK(spk != NULL && index < spk->set.count && (values != NULL || count == 0));
+  const myb_internal_spk_segment* s = &spk->set.segments[index];
+  const uint64_t size = s->end - s->begin + 1;
+  if (offset > size || count > size - offset) {
+    return MYB_E_RANGE;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    values[i] = myb_internal_daf_double(&s->daf, s->begin + offset + i);
+  }
+  return MYB_OK;
 }
 
 /* Bodies from `body` towards the root at t: chain[0] = body, segment k links chain[k] to

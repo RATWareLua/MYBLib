@@ -429,8 +429,9 @@ myb_status myb_eigenvalues(size_t n, double* a, double* re, double* im) {
   return MYB_OK;
 }
 
-myb_status myb_eigenvector_real(size_t n, const double* a, double lambda, double* v) {
-  MYB_CHECK(a != NULL && v != NULL && n >= 1 && n <= MAX_N);
+myb_status myb_eigenvector_real(size_t n, const double* a, double lambda, double* v,
+                                double* work) {
+  MYB_CHECK(a != NULL && v != NULL && work != NULL && n >= 1 && n <= MAX_N);
   double norm = 0.0;
   for (size_t i = 0; i < n * n; ++i) {
     norm = fmax(norm, fabs(a[i]));
@@ -440,7 +441,7 @@ myb_status myb_eigenvector_real(size_t n, const double* a, double lambda, double
   }
   /* (A - (lambda + delta) I) x = v, delta keeping the system just regular */
   const double delta = 1e-10 * (fabs(lambda) + norm + 1e-300);
-  double m[MAX_N * MAX_N];
+  double* m = work; /* n x n */
   for (size_t i = 0; i < n; ++i) {
     v[i] = 1.0 / sqrt((double)n) * (i % 2 == 0 ? 1.0 : 0.9);
   }

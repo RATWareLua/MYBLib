@@ -367,7 +367,8 @@ myb_status myb_cr3bp_manifold(double mu, const double y0[6], double period, doub
     return MYB_E_DOMAIN;
   }
   double v[6];
-  st = myb_eigenvector_real(6, mono, re[pick], v);
+  double work[36];
+  st = myb_eigenvector_real(6, mono, re[pick], v, work);
   if (st != MYB_OK) {
     return st;
   }

@@ -13,4 +13,5 @@ taiutc.c tttai.c taitt.c tcgtt.c tttcg.c tcbtdb.c tdbtcb.c tttdb.c tdbtt.c`; for
 `xy06.c s06.c era00.c sp00.c pom00.c c2ixys.c c2ixy.c c2tcio.c fal03.c falp03.c faf03.c
 fad03.c faom03.c fame03.c fave03.c fae03.c fama03.c faju03.c fasa03.c faur03.c fane03.c
 fapa03.c gmst06.c ir.c rz.c ry.c rx.c rxr.c cr.c cp.c anp.c gd2gc.c gd2gce.c gc2gd.c gc2gde.c eform.c`;
+for the equinox-based systems `nut80.c nutm80.c numat.c obl80.c prec76.c pmat76.c gmst82.c anpm.c`;
 and the headers `erfa.h erfam.h erfaextra.h erfadatextra.h`.

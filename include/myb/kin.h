@@ -66,6 +66,14 @@ typedef struct myb_spk_segment_info {
 MYB_API size_t myb_spk_segment_count(const myb_spk* spk);
 MYB_API void myb_spk_segment(const myb_spk* spk, size_t index, myb_spk_segment_info* info);
 
+/* Number of double words of a segment, and count of them from 0-based offset (in the native
+ * byte order) — for evaluators of segment types outside the library (SPK type 10, two-line
+ * elements, in ext/sgp4). Errors: MYB_E_RANGE (offset + count beyond the segment). */
+MYB_API size_t myb_spk_segment_size(const myb_spk* spk, size_t index);
+MYB_API MYB_NODISCARD myb_status myb_spk_segment_data(const myb_spk* spk, size_t index,
+                                                      size_t offset, size_t count,
+                                                      double* values);
+
 /* State (position m, velocity m/s) of target relative to center at t. The two bodies are
  * connected through the segments that cover t (each body's highest-priority covering segment
  * gives it relative to its center, up to a common body), and the states along the two branches

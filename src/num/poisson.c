@@ -226,6 +226,17 @@ myb_status myb_internal_poisson_load(const myb_kpool* pool, const char* prefix,
     }
     total += counts[i];
   }
+  /* the phasors exp(i m F_k), m = 0 .. max_multiple[k], packed one argument after the other */
+  int offset = 0;
+  for (int k = 0; k < g->arguments; ++k) {
+    g->phasor_offset[k] = offset;
+    offset += g->max_multiple[k] + 1;
+  }
+  if (offset > MYB_POISSON_MAX_PHASORS) {
+    myb_internal_diag(diag, 0, "%s: more than %d multiples of the arguments in all", prefix,
+                      (int)MYB_POISSON_MAX_PHASORS);
+    return MYB_E_FORMAT;
+  }
   term_ref* terms = NULL;
   term_ref* scratch = NULL;
   void* block = NULL;
@@ -330,8 +341,8 @@ void myb_internal_poisson_eval(const myb_internal_poisson_group* g, double t, do
                                double* rates) {
   MYB_CHECK(g != NULL && values != NULL && rates != NULL);
   /* phasors exp(i m F_k) and the rates dF_k/dt */
-  double re[MYB_POISSON_MAX_ARGUMENTS][MYB_POISSON_MAX_MULTIPLE + 1];
-  double im[MYB_POISSON_MAX_ARGUMENTS][MYB_POISSON_MAX_MULTIPLE + 1];
+  double re[MYB_POISSON_MAX_PHASORS];
+  double im[MYB_POISSON_MAX_PHASORS];
   double argument_rate[MYB_POISSON_MAX_ARGUMENTS];
   for (int k = 0; k < g->arguments; ++k) {
     const double* c = g->argument_polynomial[k];
@@ -339,12 +350,13 @@ void myb_internal_poisson_eval(const myb_internal_poisson_group* g, double t, do
     const double rate = c[1] + t * (2.0 * c[2] + t * (3.0 * c[3] + t * 4.0 * c[4]));
     const double angle = reduce(value, g->argument_turn[k]) * g->argument_scale[k];
     argument_rate[k] = rate * g->argument_scale[k];
-    re[k][0] = 1.0;
-    im[k][0] = 0.0;
+    const int base = g->phasor_offset[k];
+    re[base] = 1.0;
+    im[base] = 0.0;
     for (int m = 1; m <= g->max_multiple[k]; ++m) {
       const double multiple = (double)m * angle;
-      re[k][m] = myb_cos(multiple);
-      im[k][m] = myb_sin(multiple);
+      re[base + m] = myb_cos(multiple);
+      im[base + m] = myb_sin(multiple);
     }
   }
   /* sums per series and power: compensated for the values, plain for the rates */
@@ -359,8 +371,9 @@ void myb_internal_poisson_eval(const myb_internal_poisson_group* g, double t, do
       const int k = g->pair_argument[q];
       const int m = g->pair_multiple[q];
       const int magnitude = m < 0 ? -m : m;
-      const double zr = re[k][magnitude];
-      const double zi = m < 0 ? -im[k][magnitude] : im[k][magnitude];
+      const int at = g->phasor_offset[k] + magnitude;
+      const double zr = re[at];
+      const double zi = m < 0 ? -im[at] : im[at];
       const double r = pr * zr - pi * zi;
       pi = pr * zi + pi * zr;
       pr = r;

@@ -101,7 +101,7 @@ double myb_departure_impulse(double gm, double radius, double v_infinity) {
 
 /* ---- Shooting --------------------------------------------------------------------------------- */
 
-enum { MAX_SHOOT = 32 };
+enum { MAX_SHOOT = 64 };
 
 static double max_abs(const double* f, size_t m) {
   double r = 0.0;
@@ -111,10 +111,21 @@ static double max_abs(const double* f, size_t m) {
   return r;
 }
 
-/* The Newton step du for J du = -f (minimum norm, square or least squares). */
-static myb_status newton_step(size_t n, size_t m, const double* jac, const double* f, double* du) {
+static size_t larger(size_t a, size_t b) {
+  return a > b ? a : b;
+}
+
+size_t myb_shoot_work_size(size_t n, size_t m) {
+  return m * n + 2 * m + 2 * n + larger(larger(n * n, m * m), m * n) + larger(m, n);
+}
+
+/* The Newton step du for J du = -f (minimum norm, square or least squares); scratch of
+ * max(n^2, m^2, m n) + max(m, n) doubles. */
+static myb_status newton_step(size_t n, size_t m, const double* jac, const double* f, double* du,
+                              double* scratch) {
+  double* a = scratch;
+  double* y = scratch + larger(larger(n * n, m * m), m * n);
   if (m == n) {
-    double a[MAX_SHOOT * MAX_SHOOT];
     memcpy(a, jac, n * n * sizeof(double));
     for (size_t i = 0; i < n; ++i) {
       du[i] = -f[i];
@@ -123,21 +134,19 @@ static myb_status newton_step(size_t n, size_t m, const double* jac, const doubl
   }
   if (m < n) {
     /* du = -J^T (J J^T)^-1 f */
-    double jj[MAX_SHOOT * MAX_SHOOT];
     for (size_t i = 0; i < m; ++i) {
       for (size_t j = 0; j < m; ++j) {
         double s = 0.0;
         for (size_t k = 0; k < n; ++k) {
           s += jac[i * n + k] * jac[j * n + k];
         }
-        jj[i * m + j] = s;
+        a[i * m + j] = s;
       }
     }
-    double y[MAX_SHOOT];
     for (size_t i = 0; i < m; ++i) {
       y[i] = -f[i];
     }
-    const myb_status st = myb_lu_solve(m, jj, y, 1);
+    const myb_status st = myb_lu_solve(m, a, y, 1);
     if (st != MYB_OK) {
       return st;
     }
@@ -150,29 +159,32 @@ static myb_status newton_step(size_t n, size_t m, const double* jac, const doubl
     }
     return MYB_OK;
   }
-  double a[MAX_SHOOT * MAX_SHOOT];
-  double b[MAX_SHOOT];
   memcpy(a, jac, m * n * sizeof(double));
   for (size_t i = 0; i < m; ++i) {
-    b[i] = -f[i];
+    y[i] = -f[i];
   }
-  const myb_status st = myb_least_squares(m, n, a, b, NULL);
+  const myb_status st = myb_least_squares(m, n, a, y, NULL);
   if (st == MYB_OK) {
-    memcpy(du, b, n * sizeof(double));
+    memcpy(du, y, n * sizeof(double));
   }
   return st;
 }
 
 myb_status myb_shoot(myb_shoot_function function, void* context, size_t n, size_t m, double* u,
-                     const myb_shoot_options* options, int* iterations, double* residual) {
-  MYB_CHECK(function != NULL && u != NULL && options != NULL);
+                     const myb_shoot_options* options, double* work, int* iterations,
+                     double* residual) {
+  MYB_CHECK(function != NULL && u != NULL && options != NULL && work != NULL);
   if (n < 1 || m < 1 || n > MAX_SHOOT || m > MAX_SHOOT || !(options->tolerance > 0.0) ||
       options->max_iterations < 0) {
     return MYB_E_DOMAIN;
   }
   const int max_it = options->max_iterations > 0 ? options->max_iterations : 20;
-  double f[MAX_SHOOT];
-  double jac[MAX_SHOOT * MAX_SHOOT];
+  double* jac = work;
+  double* f = jac + m * n;
+  double* ft = f + m;
+  double* du = ft + m;
+  double* trial = du + n;
+  double* scratch = trial + n;
   myb_status st = function(context, u, f, jac);
   if (st != MYB_OK) {
     return st;
@@ -180,14 +192,11 @@ myb_status myb_shoot(myb_shoot_function function, void* context, size_t n, size_
   double norm = max_abs(f, m);
   int it = 0;
   for (; it < max_it && !(norm <= options->tolerance); ++it) {
-    double du[MAX_SHOOT];
-    st = newton_step(n, m, jac, f, du);
+    st = newton_step(n, m, jac, f, du, scratch);
     if (st != MYB_OK) {
       return MYB_E_NOCONV;
     }
     /* backtracking: the full step, then halves while |f| does not decrease */
-    double trial[MAX_SHOOT];
-    double ft[MAX_SHOOT];
     double scale = 1.0;
     int accepted = 0;
     for (int half = 0; half <= 10 && !accepted; ++half) {

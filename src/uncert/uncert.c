@@ -187,21 +187,20 @@ myb_status myb_variational_dense(myb_variational* variational, double t, double 
 
 void myb_covariance_transform(size_t n, const double* m, const double* p, double* out) {
   MYB_CHECK(m != NULL && p != NULL && out != NULL && n <= 64);
-  double mp[64 * 64];
+  /* row by row: t = (M P)_i, then out_ij = t . M_j; one row of n doubles of scratch */
+  double t[64];
   for (size_t i = 0; i < n; ++i) {
     for (size_t j = 0; j < n; ++j) {
       double s = 0.0;
       for (size_t k = 0; k < n; ++k) {
         s += m[i * n + k] * p[k * n + j];
       }
-      mp[i * n + j] = s;
+      t[j] = s;
     }
-  }
-  for (size_t i = 0; i < n; ++i) {
     for (size_t j = 0; j < n; ++j) {
       double s = 0.0;
       for (size_t k = 0; k < n; ++k) {
-        s += mp[i * n + k] * m[j * n + k];
+        s += t[k] * m[j * n + k];
       }
       out[i * n + j] = s;
     }

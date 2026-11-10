@@ -64,13 +64,17 @@ typedef struct myb_shoot_options {
   int max_iterations; /* 0 = 20 */
 } myb_shoot_options;
 
-/* u (n values) is updated in place. *iterations and *residual (max |f_i|) may be NULL.
- * Errors: MYB_E_DOMAIN (sizes outside 1 .. 32, invalid options), MYB_E_NOCONV, statuses of
+/* Doubles of work memory myb_shoot needs for n unknowns and m equations. */
+MYB_API size_t myb_shoot_work_size(size_t n, size_t m);
+
+/* u (n values) is updated in place; work: myb_shoot_work_size(n, m) doubles from the caller
+ * (no allocation, little stack). *iterations and *residual (max |f_i|) may be NULL.
+ * Errors: MYB_E_DOMAIN (sizes outside 1 .. 64, invalid options), MYB_E_NOCONV, statuses of
  * the function. */
 MYB_API MYB_NODISCARD myb_status myb_shoot(myb_shoot_function function, void* context, size_t n,
                                            size_t m, double* u,
-                                           const myb_shoot_options* options, int* iterations,
-                                           double* residual);
+                                           const myb_shoot_options* options, double* work,
+                                           int* iterations, double* residual);
 
 #ifdef __cplusplus
 }

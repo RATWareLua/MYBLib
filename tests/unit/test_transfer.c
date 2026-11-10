@@ -271,6 +271,8 @@ static myb_status bplane_residual(void* context, const double* u, double* f, dou
 }
 
 static void test_shooting(void) {
+  double work[64];
+  MT_CHECK(myb_shoot_work_size(3, 3) <= 64 && myb_shoot_work_size(3, 2) <= 64);
   /* Lambert by shooting */
   lambert_shot ls = {{7.0e6, 1.0e6, -2.0e5}, {-3.0e6, 9.0e6, 2.0e6}, 5000.0};
   myb_lambert_solution sol[4];
@@ -289,7 +291,7 @@ static void test_shooting(void) {
   const myb_shoot_options o = {.tolerance = 1e-6};
   int its = 0;
   double res = 0.0;
-  MT_CHECK(myb_shoot(lambert_residual, &ls, 3, 3, u, &o, &its, &res) == MYB_OK);
+  MT_CHECK(myb_shoot(lambert_residual, &ls, 3, 3, u, &o, work, &its, &res) == MYB_OK);
   double dv = 0.0;
   if (count > 0) {
     for (int i = 0; i < 3; ++i) {
@@ -302,7 +304,7 @@ static void test_shooting(void) {
   /* minimum-norm step: u = J^T (J J^T)^-1 target from 0 */
   min_norm_problem mp = {14.0};
   double w[3] = {0.0, 0.0, 0.0};
-  MT_CHECK(myb_shoot(plane_residual, &mp, 3, 1, w, &o, &its, &res) == MYB_OK);
+  MT_CHECK(myb_shoot(plane_residual, &mp, 3, 1, w, &o, work, &its, &res) == MYB_OK);
   MT_CHECK(fabs(w[0] - 1.0) < 1e-14 && fabs(w[1] - 2.0) < 1e-14 && fabs(w[2] + 3.0) < 1e-14);
   /* B-plane targeting of an Earth flyby with the Moon */
   earth_term et = {gm_earth};
@@ -316,16 +318,16 @@ static void test_shooting(void) {
                     .target = {8000e3, -3000e3}};
   double dvel[3] = {0.0, 0.0, 0.0};
   const myb_shoot_options ob = {.tolerance = 1.0};
-  MT_CHECK(myb_shoot(bplane_residual, &bs, 3, 2, dvel, &ob, &its, &res) == MYB_OK);
+  MT_CHECK(myb_shoot(bplane_residual, &bs, 3, 2, dvel, &ob, work, &its, &res) == MYB_OK);
   printf("B-plane targeting (Earth + Moon, variational STM): %d iterations, miss %.2e m, "
          "correction %.4f m/s\n",
          its, res, norm3(dvel));
   MT_CHECK(res <= 1.0 && its <= 8);
   myb_force_model_destroy(m);
   /* errors */
-  MT_CHECK(myb_shoot(plane_residual, &mp, 0, 1, w, &o, &its, &res) == MYB_E_DOMAIN);
+  MT_CHECK(myb_shoot(plane_residual, &mp, 0, 1, w, &o, work, &its, &res) == MYB_E_DOMAIN);
   const myb_shoot_options bad = {.tolerance = 0.0};
-  MT_CHECK(myb_shoot(plane_residual, &mp, 3, 1, w, &bad, &its, &res) == MYB_E_DOMAIN);
+  MT_CHECK(myb_shoot(plane_residual, &mp, 3, 1, w, &bad, work, &its, &res) == MYB_E_DOMAIN);
 }
 
 /* ---- Budget --------------------------------------------------------------------------------- */
