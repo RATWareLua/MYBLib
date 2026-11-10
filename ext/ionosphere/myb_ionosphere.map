@@ -1,0 +1,20 @@
+# Symbol versions of libmyb_ionosphere.so (ELF: Linux, Android, the BSDs; passed to the linker as
+# --version-script). A function carries the version of the release that added it, so that a
+# program built against a newer release than the one installed is refused when it is loaded
+# ("version `MYB_1.2' not found") and not at the first call of the missing function.
+#
+# A new function goes into the node of the release that adds it; a new minor release opens
+# a node that inherits from the last one. Functions are never moved or removed within a major
+# version. Whatever is not listed is not exported: test_exports fails for a function left
+# out, and the linker (lld) for a name that does not exist.
+
+MYB_IONOSPHERE_1.1 {
+  global:
+    myb_ionex_destroy;
+    myb_ionex_load;
+    myb_ionex_shell;
+    myb_ionex_vtec;
+    myb_iono_pierce_point;
+  local:
+    *;
+};

@@ -13,8 +13,13 @@
 #ifndef MYB_SRC_CORE_CHECK_H_
 #define MYB_SRC_CORE_CHECK_H_
 
-[[noreturn]] [[gnu::cold]] void myb_internal_check_failed(const char* file, int line,
-                                                          const char* func, const char* what);
+#include "myb/core.h"
+
+/* Exported from the shared library (MYB_API) for the libraries of ext/, which are built with
+ * the same checks; not part of the public API. */
+[[noreturn]] [[gnu::cold]] MYB_API void myb_internal_check_failed(const char* file, int line,
+                                                                  const char* func,
+                                                                  const char* what);
 
 #define MYB_CHECK(cond)                                               \
   do {                                                                \

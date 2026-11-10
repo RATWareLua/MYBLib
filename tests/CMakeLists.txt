@@ -42,6 +42,9 @@ myb_add_test(test_cr3bp SOURCES unit/test_cr3bp.c)
 myb_add_test(test_transfer SOURCES unit/test_transfer.c)
 myb_add_test(test_spacecraft SOURCES unit/test_spacecraft.c)
 myb_add_test(test_parse SOURCES unit/test_parse.c)
+myb_add_test(test_format SOURCES unit/test_format.c)
+myb_add_test(test_table SOURCES unit/test_table.c)
+myb_add_test(test_ccsds SOURCES unit/test_ccsds.c)
 myb_add_test(test_kpool SOURCES unit/test_kpool.c)
 myb_add_test(test_time SOURCES unit/test_time.c)
 myb_add_test(test_body SOURCES unit/test_body.c)
@@ -56,6 +59,9 @@ myb_add_test(test_pool SOURCES unit/test_pool.c)
 myb_add_test(test_nbody SOURCES unit/test_nbody.c)
 myb_add_test(test_whfast SOURCES unit/test_whfast.c)
 myb_add_test(test_spk SOURCES unit/test_spk.c)
+myb_add_test(test_spk_writer SOURCES unit/test_spk_writer.c)
+myb_add_test(test_pck_writer SOURCES unit/test_pck_writer.c)
+myb_add_test(test_sp3 SOURCES unit/test_sp3.c)
 myb_add_test(test_testpo SOURCES unit/test_testpo.c)
 myb_add_test(test_eop SOURCES unit/test_eop.c)
 myb_add_test(test_wgccre SOURCES unit/test_wgccre.c)
@@ -74,6 +80,15 @@ myb_add_test(test_observe SOURCES unit/test_observe.c LIBRARIES erfa_reference)
 myb_add_test(test_charge SOURCES unit/test_charge.c)
 myb_add_test(test_plasma SOURCES unit/test_plasma.c)
 myb_add_test(test_charging SOURCES unit/test_charging.c)
+myb_add_test(test_gradient SOURCES unit/test_gradient.c)
+myb_add_test(test_env SOURCES unit/test_env.c)
+myb_add_test(test_orbit SOURCES unit/test_orbit.c)
+myb_add_test(test_estim SOURCES unit/test_estim.c)
+myb_add_test(test_events SOURCES unit/test_events.c)
+myb_add_test(test_geometry SOURCES unit/test_geometry.c)
+myb_add_test(test_nongrav SOURCES unit/test_nongrav.c)
+myb_add_test(test_surface SOURCES unit/test_surface.c)
+myb_add_test(test_shadow SOURCES unit/test_shadow.c)
 myb_add_test(test_repro SOURCES repro/test_repro.c LIBRARIES myb_sgp4)
 
 # IAU SOFA reference through ERFA (BSD-3-Clause), compiled for the tests only.
@@ -120,6 +135,52 @@ if(MYB_STACK_USAGE)
     COMMAND "${CMAKE_COMMAND}"
             "-DDIRS=${PROJECT_BINARY_DIR}/CMakeFiles/myb.dir;${PROJECT_BINARY_DIR}/CMakeFiles/myb_coremath.dir"
             "-DBUDGET=${_myb_stack_budget}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_stack.cmake")
+endif()
+
+# The installed library serves an outside project: examples/ configured with
+# find_package(myb) against a scratch prefix, built and run. Not under the sanitizers, whose
+# runtime the outside project would have to link as well.
+if(MYB_INSTALL AND MYB_SANITIZE STREQUAL "")
+  set(_myb_install_args
+    "-DBUILD_DIR=${PROJECT_BINARY_DIR}" "-DEXAMPLES_DIR=${PROJECT_SOURCE_DIR}/examples"
+    "-DGENERATOR=${CMAKE_GENERATOR}" "-DTOOLCHAIN=${CMAKE_TOOLCHAIN_FILE}"
+    "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}" "-DCONFIG=$<CONFIG>"
+    "-DLIBDIR=${CMAKE_INSTALL_LIBDIR}" "-DINCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}"
+    "-DDATADIR=${CMAKE_INSTALL_DATADIR}")
+  add_test(NAME test_install
+    COMMAND "${CMAKE_COMMAND}" ${_myb_install_args}
+            "-DWORK_DIR=${PROJECT_BINARY_DIR}/install-test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_install.cmake")
+  set_tests_properties(test_install PROPERTIES RESOURCE_LOCK myb_install)
+  if(MYB_BUILD_SHARED)
+    add_test(NAME test_install_shared
+      COMMAND "${CMAKE_COMMAND}" ${_myb_install_args} -DSHARED=ON
+              "-DWORK_DIR=${PROJECT_BINARY_DIR}/install-test-shared"
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_install.cmake")
+    set_tests_properties(test_install_shared PROPERTIES RESOURCE_LOCK myb_install)
+  endif()
+endif()
+
+# The shared libraries export the public API and nothing else.
+if(MYB_BUILD_SHARED)
+  find_program(MYB_LLVM_READOBJ NAMES llvm-readobj HINTS "${_myb_compiler_dir}")
+  if(MYB_LLVM_NM AND (MYB_LLVM_READOBJ OR NOT WIN32))
+    add_test(NAME test_exports
+      COMMAND "${CMAKE_COMMAND}" "-DLIB=$<TARGET_FILE:myb_shared>" "-DPREFIX=^myb_"
+              "-DNM=${MYB_LLVM_NM}" "-DREADOBJ=${MYB_LLVM_READOBJ}" -DMINIMUM=400
+              "-DMAP=${PROJECT_SOURCE_DIR}/cmake/myb.map"
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_exports.cmake")
+    get_property(_myb_ext_modules GLOBAL PROPERTY MYB_EXT_MODULES)
+    foreach(_ext IN LISTS _myb_ext_modules)
+      add_test(NAME test_exports_${_ext}
+        COMMAND "${CMAKE_COMMAND}" "-DLIB=$<TARGET_FILE:myb_${_ext}_shared>" "-DPREFIX=^myb_"
+                "-DNM=${MYB_LLVM_NM}" "-DREADOBJ=${MYB_LLVM_READOBJ}" -DMINIMUM=1
+                "-DMAP=${PROJECT_SOURCE_DIR}/ext/${_ext}/myb_${_ext}.map"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_exports.cmake")
+    endforeach()
+  else()
+    message(WARNING "llvm-nm or llvm-readobj not found: test_exports is not registered")
+  endif()
 endif()
 
 # Correct rounding and error bounds against MPFR (GNU MPFR, arbitrary precision).

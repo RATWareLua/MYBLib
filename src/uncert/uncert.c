@@ -3,6 +3,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "integ/ias15_internal.h"
+#include "uncert/variational_internal.h"
 #include "core/alloc.h"
 #include "core/base.h"
 #include "myb/cmath.h"
@@ -129,6 +131,48 @@ myb_status myb_variational_start(myb_variational* variational, double t0, const 
 myb_status myb_variational_step(myb_variational* variational, double t_limit) {
   MYB_CHECK(variational != NULL);
   return myb_ias15_step(variational->ias, t_limit);
+}
+
+myb_status myb_internal_variational_restart(myb_variational* variational, double t,
+                                            const double y[6], const double phi[36],
+                                            const double* sensitivity) {
+  MYB_CHECK(variational != NULL && y != NULL && phi != NULL &&
+            (sensitivity != NULL || variational->np == 0));
+  myb_variational* var = variational;
+  double* full = var->scratch;
+  memset(full, 0, 2 * var->n * sizeof(double));
+  double* x = full;
+  double* v = full + var->n;
+  for (int i = 0; i < 3; ++i) {
+    x[i] = y[i];
+    v[i] = y[3 + i];
+  }
+  for (size_t c = 0; c < var->columns; ++c) {
+    double* dx = x + 3 + 3 * c;
+    double* dv = v + 3 + 3 * c;
+    for (int i = 0; i < 3; ++i) {
+      if (c < 6) {
+        dx[i] = phi[(size_t)i * 6 + c];
+        dv[i] = phi[(size_t)(3 + i) * 6 + c];
+      } else {
+        dx[i] = sensitivity[(size_t)i * var->np + (c - 6)];
+        dv[i] = sensitivity[(size_t)(3 + i) * var->np + (c - 6)];
+      }
+    }
+  }
+  /* the step the integration was making goes on: the automatic first step is made for
+   * Phi = 1, S = 0 */
+  const double planned = myb_internal_ias15_planned_step(var->ias);
+  const myb_status status = myb_ias15_start(var->ias, variational_accel, var, t, full);
+  if (status == MYB_OK && planned > 0.0 && isfinite(planned)) {
+    myb_internal_ias15_plan_step(var->ias, planned);
+  }
+  return status;
+}
+
+myb_status myb_internal_variational_retake(myb_variational* variational, double t_limit) {
+  MYB_CHECK(variational != NULL);
+  return myb_internal_ias15_retake(variational->ias, t_limit);
 }
 
 myb_status myb_variational_integrate(myb_variational* variational, double t_end) {

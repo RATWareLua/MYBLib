@@ -57,6 +57,24 @@ MYB_API MYB_NODISCARD myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm
                                                    const double R[3], const double V[3],
                                                    const double v[3], double a[3]);
 
+/* The derivatives of the three accelerations above with respect to the position and the
+ * velocity of the satellite: dadr[3 i + j] = d a_i / d r_j, dadv likewise (either may be
+ * NULL), for the variational equations. The de Sitter term does not depend on r. Errors as
+ * the accelerations. */
+MYB_API MYB_NODISCARD myb_status myb_rel_schwarzschild_jacobian(const myb_ppn* ppn, double gm,
+                                                                const double r[3],
+                                                                const double v[3],
+                                                                double dadr[9], double dadv[9]);
+MYB_API MYB_NODISCARD myb_status myb_rel_lense_thirring_jacobian(const myb_ppn* ppn, double gm,
+                                                                 const double j[3],
+                                                                 const double r[3],
+                                                                 const double v[3],
+                                                                 double dadr[9], double dadv[9]);
+MYB_API MYB_NODISCARD myb_status myb_rel_de_sitter_jacobian(const myb_ppn* ppn,
+                                                            double gm_external,
+                                                            const double R[3], const double V[3],
+                                                            double dadv[9]);
+
 /* ---- Global (BCRS) and local (GCRS-like) coordinates (IAU 2000 Resolution B1.3) ------------
  * The local, kinematically non-rotating system of a body E whose barycentric position,
  * velocity and acceleration at the coordinate time t (TCB) are xe, ve, ae, and w_ext the

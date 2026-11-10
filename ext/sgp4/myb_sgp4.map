@@ -1,0 +1,35 @@
+# Symbol versions of libmyb_sgp4.so (ELF: Linux, Android, the BSDs; passed to the linker as
+# --version-script). A function carries the version of the release that added it, so that a
+# program built against a newer release than the one installed is refused when it is loaded
+# ("version `MYB_1.2' not found") and not at the first call of the missing function.
+#
+# A new function goes into the node of the release that adds it; a new minor release opens
+# a node that inherits from the last one. Functions are never moved or removed within a major
+# version. Whatever is not listed is not exported: test_exports fails for a function left
+# out, and the linker (lld) for a name that does not exist.
+
+MYB_SGP4_1.0 {
+  global:
+    myb_sgp4_constants_of;
+    myb_sgp4_gmst;
+    myb_sgp4_init;
+    myb_sgp4_init_elements;
+    myb_sgp4_propagate;
+    myb_sgp4_propagate_km;
+    myb_sgp4_spk10_state;
+    myb_tle_epoch;
+    myb_tle_parse;
+  local:
+    *;
+};
+
+MYB_SGP4_1.2 {
+  global:
+    myb_omm_from_tle;
+    myb_sgp4_spk10_constants;
+    myb_sgp4_spk10_packet;
+    myb_sgp4_spk10_size;
+    myb_sgp4_spk10_words;
+    myb_tle_format;
+    myb_tle_from_omm;
+} MYB_SGP4_1.0;

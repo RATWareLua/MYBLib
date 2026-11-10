@@ -10,7 +10,7 @@ general relativity in the post-Newtonian approximation wherever the effect is me
 the results are reproducible to the bit on Windows and Linux. The core knows no particular
 body: the Sun, the planets and spacecraft are given as data.
 
-Status: **version 1.1.0.0, phases 0–11** — numerical foundation, correctly rounded functions,
+Status: **version 1.2.0.0, phases 0–17** — numerical foundation, correctly rounded functions,
 data reading, time scales, the body model, the two-body problem, Lambert's problem, integrators
 (DOP853, RKN12(10), IAS15, Gauss–Jackson, symplectic compositions), the N-body problem (direct
 summation, interaction graph, threads, WH/WHFast, SABA, SBAB), SPK ephemerides and reference
@@ -24,7 +24,13 @@ rigid body, fluid core, lunar librations), Kustaanheimo–Stiefel and Sundman re
 thrust, equinox-based frames and TEME, SGP4 and SPK type 10, compact binaries to 3.5PN with
 spins, observables (light time, Shapiro delay, two-way measurements, aberration, light
 deflection, delay in plasma, troposphere and ionosphere), magnetic fields, the Lorentz force,
-plasma and the charging of bodies. Detailed plan, sources and roadmap:
+plasma and the charging of bodies, the environment of a force model with ready-made terms, the
+propagation of an object, orbit estimation (with biases of the measurements and a smoother),
+output (exact printing of numbers, SPK and binary PCK, CCSDS messages in the KVN and XML
+notations, SP3, TLE), events along an orbit, the geometry of surfaces, and the small forces:
+the Poynting–Robertson drag, comets and the Yarkovsky effect, the lagging tide, thermal
+recoil, plates and meshes with attitude, self-shadowing and free-molecular flow, impulses.
+Detailed plan, sources and roadmap:
 [`docs/PLAN.en.md`](docs/PLAN.en.md); provenance of the data: [`data/README.md`](data/README.md).
 
 ## What is there
@@ -62,6 +68,16 @@ plasma and the charging of bodies. Detailed plan, sources and roadmap:
 | `myb/observe.h` | light time (reception, transmission) with the Shapiro delay (Moyer), range and range rate, two-way measurements, aberration (Lorentz), light deflection (PPN), RA/Dec | against CSPICE on DE440: 4·10⁻¹² s; aberration bit for bit with ERFA; delay against quadrature 9·10⁻¹⁵ |
 | `myb/force.h` (charge, plasma) | magnetic fields from Gauss coefficients (IGRF tables), Lorentz force, co-rotation field, plasma stream | IGRF-14 against ppigrf 1.4·10⁻¹⁵ of \|B\|; helix 5·10⁻¹⁵; canonical momentum in a dipole 3·10⁻¹⁶ |
 | `myb/force.h` (charging), `myb/observe.h` (plasma) | OML currents to a sphere in a drifting plasma, photoemission, floating potential; electron column of power-law profiles (corona, wind) and dispersive delay | currents against integration over the Maxwellian (mpmath) 6·10⁻¹⁶; potential against the solution through Lambert's W 10⁻¹⁵; column against mpmath 6·10⁻¹⁶ |
+| `myb/env.h` | the environment of a force model: bodies with providers of state and orientation (SPK, CIP + EOP, PCK, WGCCRE), their values once per instant, the time scales of the providers from a table of differences; ready-made terms: point mass and third body with analytic Jacobians, the field of a body with tides, radiation pressure with shadows, radiation of a planet, drag, relativity, empirical accelerations; a layered exponential atmosphere; the indirect term of the oblateness of the central body; a copy of an environment for a thread | every term bit for bit against the same functions called by hand; the model of LAGEOS-1 from ready-made terms against its assembly by hand — 3.5·10⁻¹⁶ of the acceleration, the fit the same **2.0 cm**; table of scales against the exact conversion 4·10⁻¹⁶ s |
+| `myb/orbit.h` | propagation of one object under a force model: states at the times asked for (the same bits whatever else is asked), events with a direction filter, the state transition matrix and sensitivities; the integrator by choice, IAS15 or DOP853 | two bodies over 5 revolutions — 4·10⁻⁸ m (DOP853 7·10⁻⁴ m); apsides against Kepler's equation 3.6·10⁻¹¹ s; state transition matrix against the closed form 2.6·10⁻¹⁵ |
+| `myb/grav.h` (gradient), `myb/env.h`, `myb/rel.h` (Jacobians) | the gradient of the acceleration of a field of harmonics (second derivatives, no division by cos φ); analytic Jacobians of the ready-made terms: field, radiation pressure, drag, Schwarzschild, Lense–Thirring, de Sitter | gradient against mpmath 2·10⁻¹⁵, at the poles 6·10⁻¹⁶; state transition matrix in a rotating field symplectic to 6·10⁻¹⁷ |
+| `myb/estim.h` | orbit estimation: least squares over an arc (Gauss–Newton on the variational equations, fixed unknowns, a priori sigmas, covariance), an extended Kalman filter with process noise; measurements with their derivatives: position, range, range rate, RA/Dec, azimuth and elevation from a station; biases of the measurements as unknowns; a smoother; a measured point away from the centre of mass | without noise back to the truth to 2·10⁻⁹ m; with noise a weighted RMS of 1.03 and errors within the covariance; LAGEOS-1 — **2.05 cm**, Roadster 306 m, OSIRIS-REx 12.6 m by the same estimator; range biases recovered within 1.1 σ; the smoother against a fit over the arc 0.000 σ |
+| `myb/io.h` (output), `myb/kin.h` (writers), `myb/ccsds.h` | printing of numbers from integer arithmetic (shortest round-trip form, fixed, scientific); SPK writer (types 9, 13, and 2, 3 fitted to a provider); SPK segments written word for word (any type) and a binary PCK writer; CCSDS OEM, OPM, OMM and OCM read and written in both notations (KVN and XML) with covariances; SP3 writer with clocks and accuracy codes; tables of numbers (CSV); in `ext/sgp4` the TLE writer, OMM ⇄ TLE and SPK segments of type 10 | printing against CPython: 0 differences on 6124 values; the written SPK read by CSPICE N0067 3.9·10⁻¹⁶; the ILRS SP3 excerpt and 31 of 33 TLE sets come back character for character, all 33 bit for bit; OEM numbers exact but for 1.5 % within 1 ulp; copies of segments of 14 types are read by CSPICE as the originals; the words of type 10 are those of `SPKW10`; the written PCK against `pxform` 7·10⁻¹⁶ |
+| `myb/events.h`, `myb/model.h` (breaks) | ready-made events: apsides and close approaches, distance, plane crossings, altitude, elevation over a station, edges of shadows, the surface of a shape; breaks of the step where the force is not smooth (edges of shadows): no step of the integrator contains one | eclipse contacts against CSPICE `gfoclt` 4·10⁻¹⁰ s; with breaks the final state stops depending on the integrator's precision (6.4 m → 8·10⁻⁷ m); LAGEOS first-guess residual the same to 0.1 mm at ε = 10⁻¹⁰…10⁻¹² |
+| `myb/geometry.h` | a ray and a triaxial ellipsoid, the nearest point and the altitude, normals, angles of illumination; the limb and the terminator; rays (a tree of bounding boxes) and the solid angle of a triangular mesh; a body as seen with the light time and aberration | against CSPICE `surfpt` 5·10⁻¹⁶, `nearpt` 4·10⁻¹⁶; `sincpt`, `subpnt`, `ilumin` through kernels 10⁻⁸ m, 7·10⁻¹⁶ rad; the limb against `edlimb` 2·10⁻⁷ m; a ray with light time against `sincpt` (CN) 7·10⁻⁹ m; a ray on a mesh of 16 thousand faces 1 µs |
+| `myb/force.h` (small forces), `myb/env.h` | light on a moving object (Poynting–Robertson); accelerations of comets and asteroids A1, A2, A3 with g(r) (Marsden, Yarkovsky); the Yarkovsky drift from thermal properties; the recoil of emitted power; the lagging tide (Mignard) and its torque; winds; a mass that changes; delayed outgassing; the Yarkovsky effect of a conducting body of any size, diurnal and — on an eccentric orbit — seasonal; the shadow of several bodies at once and refraction in the atmosphere of the occulting body | Poynting–Robertson decay as the averaged theory to 7 digits; Yarkovsky drift 5·10⁻⁷ from the formula; the Moon recedes 3.79 cm a year, the tide integrated 2·10⁻⁷ from the formula; the response of a conducting sphere against mpmath 5·10⁻¹³, the seasonal drift on orbits up to e = 0.85 4·10⁻¹³; the shadow of two bodies is the union of what they cover (the product of the fractions is off by up to 15 %) |
+| `myb/surface.h` | the surface of the object: attitude laws; free-molecular flow on plates (Sentman: drag and lift); light on a mesh with self-shadowing by ray casting, its torque (YORP, also with conduction); the transitional flow regime by the Knudsen number; terms of a model for plates and meshes | Sentman's plates over a sphere 5·10⁻¹⁵ from the closed form; lit area of a shadowed slab 9.000000000000 m²; the YORP torque changes sign for the mirror image, its axial part does not depend on the thermal parameter |
+| `myb/orbit.h` (impulses) | `myb_orbit_kick`: impulsive manoeuvres, the transition matrix continuing across them | Hohmann transfer: final orbit to 1.5·10⁻⁸ m; Φ across two impulses 2·10⁻⁹ |
 | `ext/nrlmsise00` | NRLMSISE-00 (separate target `myb::nrlmsise00`): thread-safe, reproducible port | 17 reference cases — to the 7 printed digits |
 | `ext/troposphere` | tropospheric delay per IERS 2010 ch. 9 (target `myb::troposphere`): Saastamoinen, Mendes–Pavlis, FCULa, VMF1, GMF, GPT, gradients | test cases of the IERS routines — 10⁻¹⁶…10⁻¹⁵ |
 | `ext/ionosphere` | IONEX maps and the single-layer model (target `myb::ionosphere`) | independent implementation of the IONEX interpolation 2·10⁻¹¹; pierce point 9·10⁻¹⁶ |
@@ -114,6 +130,33 @@ Clang 20): `linux-dev`, `linux-release`, `linux-asan`, `linux-asan-debug`, `linu
 `windows-ubsan`. Data are downloaded by `FetchData.cmake` and cached; the live EOP series are
 refreshed on every run. It runs only when a tag is pushed (a release) and on request
 (`workflow_dispatch`), not on every push.
+
+## Installation and use
+
+```
+cmake --build --preset linux-release --parallel
+cmake --install build/linux-release --prefix /opt/myb
+```
+
+This installs the headers, `libmyb.a`, the libraries of `ext/`, the data kernels
+(`share/myb/data`) and a CMake package. The `*-release` presets also build the shared library
+(`MYB_BUILD_SHARED`: `libmyb.so` / `libmyb.dll`), which exports the public API only. An outside
+project — with any C17 or C++17 compiler:
+
+```cmake
+find_package(myb 1.2 REQUIRED)
+target_link_libraries(app PRIVATE myb::myb)        # or myb::myb_shared; myb::sgp4, ...
+target_compile_definitions(app PRIVATE "DATA_DIR=\"${myb_DATA_DIR}\"")
+```
+
+Without CMake: `pkg-config --cflags --libs myb` (the libraries of `ext/`: `myb_sgp4`,
+`myb_nrlmsise00`, `myb_troposphere`, `myb_ionosphere`). On ELF the shared library carries symbol
+versions (`MYB_1.0`, `MYB_1.1`, `MYB_1.2`). Examples are in [`examples/`](examples): a low
+orbit about an oblate planet with an atmosphere (ready-made terms of a force model, events, the
+drift of the node) and the time scales from the data kernels; they build in the tree
+(`-DMYB_BUILD_EXAMPLES=ON`) or on their own against an installation
+(`cmake -S examples -B build-examples -DCMAKE_PREFIX_PATH=/opt/myb`). History of changes:
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## Numerical contract
 

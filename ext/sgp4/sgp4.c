@@ -1472,3 +1472,419 @@ myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index, const myb_time
   }
   return MYB_OK;
 }
+
+/* ---- Writing element sets ---------------------------------------------------------------------- */
+
+/* The catalogue number in 5 characters: digits, or a letter for the tens of thousands above
+ * 99 999 (Alpha-5: A = 10 .. Z = 33 without I and O). */
+static myb_status satnum_of(long number, char out[6]) {
+  static const char letters[] = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  if (number < 0 || number > 339999) {
+    return MYB_E_DOMAIN;
+  }
+  long rest = number % 10000;
+  const long high = number / 10000;
+  out[0] = high < 10 ? (char)('0' + high) : letters[high - 10];
+  for (int i = 4; i >= 1; --i) {
+    out[i] = (char)('0' + rest % 10);
+    rest /= 10;
+  }
+  out[5] = '\0';
+  return MYB_OK;
+}
+
+/* value with `decimals` digits after the point, right-aligned in `width` characters padded
+ * with `pad`; MYB_E_DOMAIN if it does not fit. */
+static myb_status fixed_field(double value, int decimals, size_t width, char pad, char* out) {
+  char text[64];
+  size_t length = 0;
+  if (!isfinite(value) || myb_format_fixed(value, decimals, text, sizeof text, &length) != MYB_OK ||
+      length > width) {
+    return MYB_E_DOMAIN;
+  }
+  memset(out, pad, width - length);
+  memcpy(out + width - length, text, length);
+  return MYB_OK;
+}
+
+/* +-.ddddd x 10^e in 8 characters: sign, five digits, the sign and the digit of e. A zero is
+ * written with the exponent sign the catalogue uses in that field ("00000-0" for the second
+ * derivative of the mean motion, "00000+0" for the drag term). */
+static myb_status exponent_field(double value, char zero_sign, char out[8]) {
+  if (!isfinite(value)) {
+    return MYB_E_DOMAIN;
+  }
+  out[0] = value < 0.0 ? '-' : ' ';
+  if (value == 0.0) {
+    memcpy(out + 1, "00000", 5);
+    out[6] = zero_sign;
+    out[7] = '0';
+    return MYB_OK;
+  }
+  char text[32];
+  size_t length = 0;
+  if (myb_format_scientific(fabs(value), 5, text, sizeof text, &length) != MYB_OK || length < 10) {
+    return MYB_E_DOMAIN;
+  }
+  /* d.dddde+XX = .ddddd x 10^(XX + 1) */
+  int exponent = 0;
+  for (size_t i = 8; i < length; ++i) {
+    exponent = 10 * exponent + (text[i] - '0');
+  }
+  exponent = (text[7] == '-' ? -exponent : exponent) + 1;
+  if (exponent < -9 || exponent > 9) {
+    return MYB_E_DOMAIN;
+  }
+  out[1] = text[0];
+  memcpy(out + 2, text + 2, 4);
+  out[6] = exponent > 0 ? '+' : '-';
+  out[7] = (char)('0' + (exponent < 0 ? -exponent : exponent));
+  return MYB_OK;
+}
+
+static myb_status integer_field(long value, size_t width, char* out) {
+  if (value < 0) {
+    return MYB_E_DOMAIN;
+  }
+  memset(out, ' ', width);
+  size_t at = width;
+  long rest = value;
+  /* bound: the width of the field */
+  do {
+    if (at == 0) {
+      return MYB_E_DOMAIN;
+    }
+    out[--at] = (char)('0' + rest % 10);
+    rest /= 10;
+  } while (rest != 0);
+  return MYB_OK;
+}
+
+static char checksum_of(const char* line) {
+  int sum = 0;
+  for (int i = 0; i < 68; ++i) {
+    if (line[i] >= '0' && line[i] <= '9') {
+      sum += line[i] - '0';
+    } else if (line[i] == '-') {
+      sum += 1;
+    }
+  }
+  return (char)('0' + sum % 10);
+}
+
+myb_status myb_tle_format(const myb_tle* tle, char line1[70], char line2[70]) {
+  MYB_CHECK(tle != NULL && line1 != NULL && line2 != NULL);
+  char satnum[6];
+  if (strlen(tle->satnum) == 5) {
+    memcpy(satnum, tle->satnum, 6);
+  } else if (satnum_of(tle->catalog_number, satnum) != MYB_OK) {
+    return MYB_E_DOMAIN;
+  }
+  const size_t designator = strlen(tle->designator);
+  if (designator > 8 || tle->classification < 32 || tle->classification > 126 ||
+      tle->epoch_year < 1957 || tle->epoch_year > 2056 || !(tle->epoch_day >= 1.0) ||
+      !(tle->epoch_day < 367.0) || !(fabs(tle->ndot) < 1.0) || tle->ephemeris_type < 0 ||
+      tle->ephemeris_type > 9 || !(tle->eccentricity >= 0.0) || !(tle->eccentricity < 1.0)) {
+    return MYB_E_DOMAIN;
+  }
+  memset(line1, ' ', 69);
+  memset(line2, ' ', 69);
+  line1[69] = '\0';
+  line2[69] = '\0';
+  line1[0] = '1';
+  memcpy(line1 + 2, satnum, 5);
+  line1[7] = tle->classification;
+  memcpy(line1 + 9, tle->designator, designator);
+  line1[18] = (char)('0' + (tle->epoch_year % 100) / 10);
+  line1[19] = (char)('0' + tle->epoch_year % 10);
+  char ndot[12];
+  myb_status status = fixed_field(tle->epoch_day, 8, 12, '0', line1 + 20);
+  if (status == MYB_OK) {
+    status = fixed_field(fabs(tle->ndot), 8, 10, ' ', ndot);
+  }
+  if (status == MYB_OK && ndot[0] != '0') {
+    status = MYB_E_DOMAIN; /* rounds to 1 */
+  }
+  if (status == MYB_OK) {
+    /* "0.dddddddd" without its zero, the sign in its place */
+    line1[33] = tle->ndot < 0.0 ? '-' : ' ';
+    memcpy(line1 + 34, ndot + 1, 9);
+    status = exponent_field(tle->nddot, '-', line1 + 44);
+  }
+  if (status == MYB_OK) {
+    status = exponent_field(tle->bstar, '+', line1 + 53);
+  }
+  if (status == MYB_OK) {
+    line1[62] = (char)('0' + tle->ephemeris_type);
+    status = integer_field(tle->element_number, 4, line1 + 64);
+  }
+  line2[0] = '2';
+  memcpy(line2 + 2, satnum, 5);
+  char eccentricity[12];
+  if (status == MYB_OK) {
+    status = fixed_field(tle->inclination, 4, 8, ' ', line2 + 8);
+  }
+  if (status == MYB_OK) {
+    status = fixed_field(tle->node, 4, 8, ' ', line2 + 17);
+  }
+  if (status == MYB_OK) {
+    status = fixed_field(tle->eccentricity, 7, 9, ' ', eccentricity);
+  }
+  if (status == MYB_OK && eccentricity[0] != '0') {
+    status = MYB_E_DOMAIN; /* rounds to 1 */
+  }
+  if (status == MYB_OK) {
+    memcpy(line2 + 26, eccentricity + 2, 7);
+    status = fixed_field(tle->argument_of_perigee, 4, 8, ' ', line2 + 34);
+  }
+  if (status == MYB_OK) {
+    status = fixed_field(tle->mean_anomaly, 4, 8, ' ', line2 + 43);
+  }
+  if (status == MYB_OK) {
+    status = fixed_field(tle->mean_motion, 8, 11, ' ', line2 + 52);
+  }
+  if (status == MYB_OK) {
+    status = integer_field(tle->revolution, 5, line2 + 63);
+  }
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (tle->inclination < 0.0 || tle->node < 0.0 || tle->argument_of_perigee < 0.0 ||
+      tle->mean_anomaly < 0.0 || !(tle->mean_motion > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  line1[68] = checksum_of(line1);
+  line2[68] = checksum_of(line2);
+  return MYB_OK;
+}
+
+static int day_of_year(const myb_calendar* c) {
+  static const int before[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+  const int leap = (c->year % 4 == 0 && c->year % 100 != 0) || c->year % 400 == 0;
+  return before[c->month - 1] + c->day + (leap && c->month > 2 ? 1 : 0);
+}
+
+myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle) {
+  MYB_CHECK(omm != NULL && tle != NULL);
+  if (!omm->has_mean_motion || !omm->has_tle || omm->epoch.month < 1 || omm->epoch.month > 12 ||
+      omm->epoch.year < 1957 || omm->epoch.year > 2056) {
+    return MYB_E_DOMAIN;
+  }
+  myb_tle t;
+  memset(&t, 0, sizeof t);
+  if (satnum_of(omm->norad_cat_id, t.satnum) != MYB_OK) {
+    return MYB_E_DOMAIN;
+  }
+  t.catalog_number = omm->norad_cat_id;
+  t.classification = omm->classification_type != '\0' ? omm->classification_type : 'U';
+  /* the international designator YYYY-NNNP[PP] as YYNNNP[PP] */
+  const char* id = omm->object_id;
+  const size_t n = strlen(id);
+  if (n >= 9 && n <= 11 && id[4] == '-') {
+    int ok = 1;
+    for (size_t i = 0; i < 8 && ok; ++i) {
+      ok = i == 4 || (id[i] >= '0' && id[i] <= '9');
+    }
+    if (ok) {
+      memcpy(t.designator, id + 2, 2);
+      memcpy(t.designator + 2, id + 5, n - 5);
+      t.designator[n - 3] = '\0';
+    }
+  }
+  t.epoch_year = (int)omm->epoch.year;
+  t.epoch_day = (double)day_of_year(&omm->epoch) +
+                ((double)(omm->epoch.hour * 3600 + omm->epoch.minute * 60) + omm->epoch.second) /
+                    86400.0;
+  t.ndot = omm->mean_motion_dot;
+  t.nddot = omm->mean_motion_ddot;
+  t.bstar = omm->bstar;
+  t.ephemeris_type = omm->ephemeris_type;
+  t.element_number = (int)omm->element_set_no;
+  t.inclination = omm->inclination;
+  t.node = omm->ra_of_asc_node;
+  t.eccentricity = omm->eccentricity;
+  t.argument_of_perigee = omm->arg_of_pericenter;
+  t.mean_anomaly = omm->mean_anomaly;
+  t.mean_motion = omm->mean_motion;
+  t.revolution = omm->rev_at_epoch;
+  *tle = t;
+  return MYB_OK;
+}
+
+myb_status myb_omm_from_tle(const myb_tle* tle, myb_omm* omm) {
+  MYB_CHECK(tle != NULL && omm != NULL);
+  memset(omm, 0, sizeof *omm);
+  myb_tle_epoch(tle, &omm->epoch);
+  omm->creation_date = omm->epoch;
+  memcpy(omm->originator, "MYB", 4);
+  memcpy(omm->center_name, "EARTH", 6);
+  memcpy(omm->ref_frame, "TEME", 5);
+  memcpy(omm->time_system, "UTC", 4);
+  memcpy(omm->mean_element_theory, "SGP4", 5);
+  const size_t satnum = strlen(tle->satnum);
+  memcpy(omm->object_name, tle->satnum, satnum + 1);
+  /* YYNNNP[PP] as YYYY-NNNP[PP]; the catalogue number where there is no designator */
+  const size_t n = strlen(tle->designator);
+  int digits = n >= 6;
+  for (size_t i = 0; i < 5 && digits; ++i) {
+    digits = tle->designator[i] >= '0' && tle->designator[i] <= '9';
+  }
+  if (digits) {
+    const int two = 10 * (tle->designator[0] - '0') + (tle->designator[1] - '0');
+    const int year = two >= 57 ? 1900 + two : 2000 + two;
+    omm->object_id[0] = (char)('0' + year / 1000);
+    omm->object_id[1] = (char)('0' + (year / 100) % 10);
+    omm->object_id[2] = tle->designator[0];
+    omm->object_id[3] = tle->designator[1];
+    omm->object_id[4] = '-';
+    memcpy(omm->object_id + 5, tle->designator + 2, n - 2);
+    omm->object_id[n + 3] = '\0';
+  } else {
+    memcpy(omm->object_id, tle->satnum, satnum + 1);
+  }
+  omm->has_mean_motion = 1;
+  omm->mean_motion = tle->mean_motion;
+  omm->eccentricity = tle->eccentricity;
+  omm->inclination = tle->inclination;
+  omm->ra_of_asc_node = tle->node;
+  omm->arg_of_pericenter = tle->argument_of_perigee;
+  omm->mean_anomaly = tle->mean_anomaly;
+  omm->has_tle = 1;
+  omm->ephemeris_type = tle->ephemeris_type;
+  omm->classification_type = tle->classification;
+  omm->norad_cat_id = tle->catalog_number;
+  omm->element_set_no = tle->element_number;
+  omm->rev_at_epoch = tle->revolution;
+  omm->bstar = tle->bstar;
+  omm->mean_motion_dot = tle->ndot;
+  omm->mean_motion_ddot = tle->nddot;
+  return MYB_OK;
+}
+
+/* ---- Writing SPK type 10 ------------------------------------------------------------------------
+ * The generic segment that SPKW10 builds (NAIF SGPARAM): the constants; the packets, each
+ * after one word that holds its epoch; the epochs once more as the reference values; every
+ * hundredth of them as their directory; and the seventeen words of meta data that say where
+ * all that is. */
+
+enum { PACKET_WORDS = 14, DIRECTORY_STEP = 100, EXPLICIT_CLOSEST = 4 };
+
+void myb_sgp4_spk10_constants(const myb_sgp4_constants* model, double constants[8]) {
+  MYB_CHECK(model != NULL && constants != NULL);
+  constants[0] = model->j2;
+  constants[1] = model->j3;
+  constants[2] = model->j4;
+  constants[3] = model->xke;
+  constants[4] = 120.0;
+  constants[5] = 78.0;
+  constants[6] = model->radius;
+  constants[7] = 1.0;
+}
+
+myb_status myb_sgp4_spk10_packet(const myb_tle* tle, const myb_timesys* system,
+                                 const myb_equinox* equinox, double packet[14]) {
+  MYB_CHECK(tle != NULL && system != NULL && packet != NULL);
+  myb_scale tdb;
+  myb_status st = myb_timesys_scale(system, "TDB", &tdb);
+  if (st != MYB_OK) {
+    return st;
+  }
+  myb_calendar utc;
+  myb_tle_epoch(tle, &utc);
+  myb_time epoch;
+  st = myb_timesys_from_utc(system, &utc, tdb, &epoch);
+  if (st != MYB_OK) {
+    return st;
+  }
+  const double minutes_per_day = 1440.0;
+  const double rad = PI / 180.0;
+  packet[0] = tle->ndot * (2.0 * PI) / (minutes_per_day * minutes_per_day);
+  packet[1] = tle->nddot * (2.0 * PI) / (minutes_per_day * minutes_per_day * minutes_per_day);
+  packet[2] = tle->bstar;
+  packet[3] = tle->inclination * rad;
+  packet[4] = tle->node * rad;
+  packet[5] = tle->eccentricity;
+  packet[6] = tle->argument_of_perigee * rad;
+  packet[7] = tle->mean_anomaly * rad;
+  packet[8] = tle->mean_motion * (2.0 * PI) / minutes_per_day;
+  packet[9] = myb_time_seconds(epoch);
+  packet[10] = packet[11] = packet[12] = packet[13] = 0.0;
+  if (equinox != NULL) {
+    double nutation[2];
+    double rates[2];
+    myb_equinox_nutation(equinox, epoch, nutation, rates);
+    packet[10] = nutation[1]; /* in obliquity */
+    packet[11] = nutation[0]; /* in longitude */
+    packet[12] = rates[1];
+    packet[13] = rates[0];
+  }
+  return MYB_OK;
+}
+
+size_t myb_sgp4_spk10_size(size_t count) {
+  if (count == 0 || count > SIZE_MAX / 256) {
+    return 0;
+  }
+  return GEOPHS + count * (PACKET_WORDS + 1) + count + (count - 1) / DIRECTORY_STEP + META_ITEMS;
+}
+
+myb_status myb_sgp4_spk10_words(const double constants[8], const double* packets, size_t count,
+                                double* words, size_t size) {
+  MYB_CHECK(constants != NULL && packets != NULL && words != NULL);
+  const size_t total = myb_sgp4_spk10_size(count);
+  if (total == 0) {
+    return MYB_E_DOMAIN;
+  }
+  if (size < total) {
+    return MYB_E_OVERFLOW;
+  }
+  for (size_t k = 0; k < GEOPHS; ++k) {
+    if (!isfinite(constants[k])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  for (size_t k = 0; k < count; ++k) {
+    for (size_t i = 0; i < PACKET_WORDS; ++i) {
+      if (!isfinite(packets[PACKET_WORDS * k + i])) {
+        return MYB_E_DOMAIN;
+      }
+    }
+    if (k > 0 && !(packets[PACKET_WORDS * k + 9] > packets[PACKET_WORDS * (k - 1) + 9])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  double* w = words;
+  memcpy(w, constants, GEOPHS * sizeof(double));
+  w += GEOPHS;
+  for (size_t k = 0; k < count; ++k) {
+    *w++ = packets[PACKET_WORDS * k + 9];
+    memcpy(w, packets + PACKET_WORDS * k, PACKET_WORDS * sizeof(double));
+    w += PACKET_WORDS;
+  }
+  const size_t references = (size_t)(w - words);
+  for (size_t k = 0; k < count; ++k) {
+    *w++ = packets[PACKET_WORDS * k + 9];
+  }
+  const size_t directory = (size_t)(w - words);
+  const size_t entries = (count - 1) / DIRECTORY_STEP;
+  for (size_t k = 1; k <= entries; ++k) {
+    *w++ = packets[PACKET_WORDS * (k * DIRECTORY_STEP - 1) + 9];
+  }
+  const double meta[META_ITEMS] = {
+      [META_CONBAS] = 0.0,
+      [META_NCON] = (double)GEOPHS,
+      [2] = (double)directory, /* the directory of the reference values */
+      [3] = (double)entries,
+      [4] = (double)EXPLICIT_CLOSEST,
+      [META_REFBAS] = (double)references,
+      [META_NREF] = (double)count,
+      [META_PKTBAS] = (double)GEOPHS,
+      [META_NPKT] = (double)count,
+      [META_PKTSZ] = (double)PACKET_WORDS,
+      [META_PKTOFF] = 1.0,
+      [16] = (double)META_ITEMS};
+  memcpy(w, meta, sizeof meta);
+  w += META_ITEMS;
+  MYB_CHECK((size_t)(w - words) == total);
+  return MYB_OK;
+}

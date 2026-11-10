@@ -67,6 +67,10 @@ double myb_thrust_mass(const myb_thrust* thrust, double t) {
   return m;
 }
 
+double myb_thrust_mass_at(void* thrust, double t) {
+  return myb_thrust_mass(thrust, t);
+}
+
 /* The unit thrust direction in the frame of x for arc a at t (mass m). */
 static myb_status direction(const myb_thrust_arc* a, double t, double m, double mass_start,
                             const double x[3], const double v[3], double d[3]) {

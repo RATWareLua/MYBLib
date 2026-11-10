@@ -167,3 +167,18 @@ myb_status myb_spk_state(const myb_spk* spk, int32_t target, int32_t center, myb
   }
   return MYB_OK;
 }
+
+myb_status myb_spk_body_state(void* body, myb_time t, double state[6]) {
+  const myb_spk_body* b = body;
+  MYB_CHECK(b != NULL && b->spk != NULL && state != NULL);
+  int32_t frame = 0;
+  const myb_status status = myb_spk_state(b->spk, b->target, b->center, t, state, &frame);
+  if (status != MYB_OK) {
+    return status;
+  }
+  /* target == center has no segment and reports frame 0 */
+  if (b->frame != 0 && b->target != b->center && frame != b->frame) {
+    return MYB_E_FORMAT;
+  }
+  return MYB_OK;
+}

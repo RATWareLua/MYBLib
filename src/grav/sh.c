@@ -14,7 +14,7 @@
 #include "num/vec3.h"
 #include "platform/platform.h"
 
-enum { MAX_DEGREE = 2700 };
+enum { MAX_DEGREE = 2700, GRADIENT_SHIFT = 2 };
 
 static const double scale_up = 0x1p930;    /* seeds of the recursion */
 static const double scale_down = 0x1p-930; /* exact inverse */
@@ -94,16 +94,21 @@ static myb_status allocate(double gm, double radius, int degree, const myb_alloc
   f->degree = degree;
   f->dirty_degree = -1;
   f->count = index_of(degree + 1, 0);
-  double** arrays[8] = {&f->c_static, &f->s_static, &f->c, &f->s, &f->a, &f->b, &f->e, &f->t0};
+  /* the recursion of the Legendre functions reaches two degrees above the field: the second
+   * derivatives of a harmonic of degree n are harmonics of degree n + 2 */
+  const size_t table = index_of(degree + GRADIENT_SHIFT + 1, 0);
+  double** arrays[8] = {&f->c_static, &f->s_static, &f->c, &f->s, &f->e, &f->t0, &f->a, &f->b};
   for (int k = 0; k < 8 && status == MYB_OK; ++k) {
-    status = myb_internal_alloc_array(&a, f->count, sizeof(double), &block);
+    const size_t n = k < 6 ? f->count : table;
+    status = myb_internal_alloc_array(&a, n, sizeof(double), &block);
     if (status == MYB_OK) {
       *arrays[k] = block;
-      memset(block, 0, f->count * sizeof(double));
+      memset(block, 0, n * sizeof(double));
     }
   }
   if (status == MYB_OK) {
-    status = myb_internal_alloc_array(&a, (size_t)degree + 2, sizeof(double), &block);
+    status = myb_internal_alloc_array(&a, (size_t)degree + GRADIENT_SHIFT + 2, sizeof(double),
+                                      &block);
     if (status == MYB_OK) {
       f->sect = block;
     }
@@ -115,7 +120,7 @@ static myb_status allocate(double gm, double radius, int degree, const myb_alloc
   for (size_t k = 0; k < f->count; ++k) {
     f->t0[k] = (double)NAN;
   }
-  for (int n = 0; n <= degree; ++n) {
+  for (int n = 0; n <= degree + GRADIENT_SHIFT; ++n) {
     for (int m = 0; m <= n; ++m) {
       const double dn = n;
       const double dm = m;
@@ -125,11 +130,13 @@ static myb_status allocate(double gm, double radius, int degree, const myb_alloc
         f->b[k] = sqrt((2.0 * dn + 1.0) * (dn + dm - 1.0) * (dn - dm - 1.0) /
                        ((dn - dm) * (dn + dm) * (2.0 * dn - 3.0)));
       }
-      f->e[k] = sqrt((dn - dm) * (dn + dm + 1.0) * (m == 0 ? 0.5 : 1.0));
+      if (n <= degree) {
+        f->e[k] = sqrt((dn - dm) * (dn + dm + 1.0) * (m == 0 ? 0.5 : 1.0));
+      }
     }
   }
   f->sect[0] = 1.0;
-  for (int m = 1; m <= degree + 1; ++m) {
+  for (int m = 1; m <= degree + GRADIENT_SHIFT + 1; ++m) {
     f->sect[m] = sqrt((2.0 * m + 1.0) / (2.0 * m));
   }
   *out = f;
@@ -288,7 +295,7 @@ myb_status myb_gravity_work_create(int degree, const myb_allocator* allocator,
   memset(w, 0, sizeof *w);
   w->allocator = a;
   w->degree = degree;
-  const size_t n = (size_t)degree + 2;
+  const size_t n = (size_t)degree + GRADIENT_SHIFT + 2;
   status = myb_internal_alloc_array(&a, 8 * n, sizeof(double), &block);
   if (status != MYB_OK) {
     myb_internal_release(&a, w);
@@ -431,6 +438,185 @@ myb_status myb_gravity_field_eval(const myb_gravity_field* field, myb_gravity_wo
     a[1] = gr * u * sl - gphi * t * sl + glambda * cl;
     a[2] = gr * t + gphi * u;
   }
+  return MYB_OK;
+}
+
+/* ---- Gradient -------------------------------------------------------------------------------- */
+
+/* The second derivatives of a solid harmonic of degree n are solid harmonics of degree n + 2:
+ * with Z_nm = (R / r)^(n+1) P_nm(sin phi) e^(i m lambda) (P_nm unnormalised) and the operators
+ * D+ = d/dx + i d/dy, D- = d/dx - i d/dy, Dz = d/dz (L. E. Cunningham, Celest. Mech. 2, 207,
+ * 1970; O. Montenbruck, E. Gill, Satellite Orbits, 2000, eq. 3.33),
+ *   R D+ Z_nm = -Z_n+1,m+1,   R D- Z_nm = (n-m+2)(n-m+1) Z_n+1,m-1,   R Dz Z_nm = -(n-m+1) Z_n+1,m
+ * (D- Z_n0 = conj(D+ Z_n0)). Applied twice to V = (GM / R) Re sum K_nm Z_nm, K = C - i S, each
+ * of the five independent components
+ *   V_zz,  V_xz = Re (D+ + D-) Dz V / 2,  V_yz = Re (D+ - D-) Dz V / (2 i),
+ *   V_xx - V_yy = Re (D+ D+ + D- D-) V / 2,  V_xy = Re (D+ D+ - D- D-) V / (4 i)
+ * (V_xx + V_yy = -V_zz) is a series of the same form with the coefficients of degree n + 2 and
+ * orders m, m +- 1, m +- 2 below, where the factors of the fully normalised functions are
+ *   sqrt((2n+1)/(2n+5)) sqrt(product of four of the numbers n -+ m + 1 .. n -+ m + 4)
+ * and sqrt(2) appears where an order 0 meets an order above it. Nothing is divided by
+ * cos(phi): the series are evaluated by the column recursion of the potential, so the poles
+ * are regular points and the accuracy is that of the potential. */
+
+/* sqrt((2n + 1) / (2n + 5) a b c d) for the small integers a .. d (their product is exact). */
+static double shift_factor(int n, int a, int b, int c, int d) {
+  const double product = (double)a * (double)b * (double)c * (double)d;
+  return sqrt(product * (2.0 * n + 1.0) / (2.0 * n + 5.0));
+}
+
+/* The five derived coefficients (C', S') of degree n + 2 and order m (K' = C' - i S'), in the
+ * order zz, xz, yz, xx - yy, xy. */
+static void shifted_coefficients(const myb_gravity_field* f, int n, int m, double cs[5][2]) {
+  static const double root_half = 0.70710678118654752;
+  static const double root_two = 1.4142135623730951;
+  for (int k = 0; k < 5; ++k) {
+    cs[k][0] = 0.0;
+    cs[k][1] = 0.0;
+  }
+  if (m <= n) { /* the same order: Dz Dz */
+    const size_t i = index_of(n, m);
+    const double w = shift_factor(n, n - m + 1, n - m + 2, n + m + 1, n + m + 2);
+    cs[0][0] += w * f->c[i];
+    cs[0][1] += w * f->s[i];
+  }
+  if (m >= 1 && m - 1 <= n) { /* from the order below: D+ Dz */
+    const int j = m - 1;
+    const size_t i = index_of(n, j);
+    const double w = shift_factor(n, n - j + 1, n + j + 1, n + j + 2, n + j + 3);
+    if (j == 0) {
+      cs[1][0] += root_half * w * f->c[i];
+      cs[2][1] += root_half * w * f->c[i];
+    } else {
+      cs[1][0] += 0.5 * w * f->c[i];
+      cs[1][1] += 0.5 * w * f->s[i];
+      cs[2][0] -= 0.5 * w * f->s[i];
+      cs[2][1] += 0.5 * w * f->c[i];
+    }
+  }
+  if (m + 1 <= n) { /* from the order above: D- Dz */
+    const int j = m + 1;
+    const size_t i = index_of(n, j);
+    const double w = (m == 0 ? root_two : 1.0) *
+                     shift_factor(n, n + j + 1, n - j + 1, n - j + 2, n - j + 3);
+    cs[1][0] -= 0.5 * w * f->c[i];
+    cs[1][1] -= 0.5 * w * f->s[i];
+    cs[2][0] -= 0.5 * w * f->s[i];
+    cs[2][1] += 0.5 * w * f->c[i];
+  }
+  if (m >= 2 && m - 2 <= n) { /* from two orders below: D+ D+ */
+    const int j = m - 2;
+    const size_t i = index_of(n, j);
+    const double w = shift_factor(n, n + j + 1, n + j + 2, n + j + 3, n + j + 4);
+    if (j == 0) {
+      cs[3][0] += root_half * w * f->c[i];
+      cs[4][1] += 0.5 * root_half * w * f->c[i];
+    } else {
+      cs[3][0] += 0.5 * w * f->c[i];
+      cs[3][1] += 0.5 * w * f->s[i];
+      cs[4][0] -= 0.25 * w * f->s[i];
+      cs[4][1] += 0.25 * w * f->c[i];
+    }
+  }
+  if (m + 2 <= n) { /* from two orders above: D- D- */
+    const int j = m + 2;
+    const size_t i = index_of(n, j);
+    const double w = (m == 0 ? root_two : 1.0) *
+                     shift_factor(n, n - j + 1, n - j + 2, n - j + 3, n - j + 4);
+    cs[3][0] += 0.5 * w * f->c[i];
+    cs[3][1] += 0.5 * w * f->s[i];
+    cs[4][0] += 0.25 * w * f->s[i];
+    cs[4][1] -= 0.25 * w * f->c[i];
+  }
+  if (m == 1 && n >= 1) { /* D- D- of the order 1 passes through 0 to the conjugate of order 1 */
+    const size_t i = index_of(n, 1);
+    const double w = shift_factor(n, n, n + 1, n + 2, n + 3);
+    cs[3][0] -= 0.5 * w * f->c[i];
+    cs[3][1] += 0.5 * w * f->s[i];
+    cs[4][0] -= 0.25 * w * f->s[i];
+    cs[4][1] -= 0.25 * w * f->c[i];
+  }
+}
+
+myb_status myb_gravity_field_gradient(const myb_gravity_field* field, myb_gravity_work* work,
+                                      const double r[3], int n_min, int n_max,
+                                      double gradient[9]) {
+  MYB_CHECK(field != NULL && work != NULL && r != NULL && gradient != NULL);
+  const myb_gravity_field* f = field;
+  const int source_top = n_max < 0 ? f->degree : n_max;
+  const double rr = myb_vec3_norm(r);
+  if (!myb_vec3_finite(r) || !(rr > 0.0) || n_min < 0 || source_top > f->degree ||
+      source_top > work->degree || n_min > source_top + 1 ||
+      source_top + GRADIENT_SHIFT > MAX_DEGREE) {
+    return MYB_E_DOMAIN;
+  }
+  const int top = source_top + GRADIENT_SHIFT;
+  const double rho = myb_hypot(r[0], r[1]);
+  const double t = r[2] / rr;
+  const double u = rho / rr;
+  const double cl = rho > 0.0 ? r[0] / rho : 1.0;
+  const double sl = rho > 0.0 ? r[1] / rho : 0.0;
+  const double ratio = f->radius / rr;
+  double* pw = work->pw;
+  double* cm = work->cm;
+  double* sm = work->sm;
+  double* seed = work->seed;
+  pw[0] = 1.0;
+  cm[0] = 1.0;
+  sm[0] = 0.0;
+  for (int n = 1; n <= top; ++n) {
+    pw[n] = pw[n - 1] * ratio;
+    cm[n] = cm[n - 1] * cl - sm[n - 1] * sl;
+    sm[n] = sm[n - 1] * cl + cm[n - 1] * sl;
+  }
+  seed[0] = scale_up;
+  seed[1] = 1.7320508075688772 * u * scale_up;
+  for (int m = 2; m <= top; ++m) {
+    seed[m] = f->sect[m] * u * seed[m - 1];
+  }
+  double* p = work->p;
+  double sum[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
+  for (int m = top; m >= 0; --m) {
+    p[m] = seed[m];
+    if (m + 1 <= top) {
+      p[m + 1] = sqrt(2.0 * m + 3.0) * t * seed[m];
+    }
+    for (int n = m + 2; n <= top; ++n) {
+      const size_t i = index_of(n, m);
+      p[n] = f->a[i] * t * p[n - 1] - f->b[i] * p[n - 2];
+    }
+    double part[5][2] = {{0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}};
+    const int lowest = n_min + GRADIENT_SHIFT;
+    const int first = m > lowest ? m : lowest;
+    for (int n = first; n <= top; ++n) {
+      double cs[5][2];
+      shifted_coefficients(f, n - GRADIENT_SHIFT, m, cs);
+      const double w = pw[n] * p[n];
+      for (int k = 0; k < 5; ++k) {
+        part[k][0] += w * cs[k][0];
+        part[k][1] += w * cs[k][1];
+      }
+    }
+    for (int k = 0; k < 5; ++k) {
+      sum[k] += (part[k][0] * cm[m] + part[k][1] * sm[m]) * scale_down;
+    }
+  }
+  /* the series are potentials of GM / R^2: (GM / R^2) / r times the sums */
+  const double scale = f->gm / (f->radius * f->radius * rr);
+  const double zz = scale * sum[0];
+  const double xz = scale * sum[1];
+  const double yz = scale * sum[2];
+  const double q = scale * sum[3];
+  const double xy = scale * sum[4];
+  gradient[0] = 0.5 * (q - zz);
+  gradient[1] = xy;
+  gradient[2] = xz;
+  gradient[3] = xy;
+  gradient[4] = -0.5 * (q + zz);
+  gradient[5] = yz;
+  gradient[6] = xz;
+  gradient[7] = yz;
+  gradient[8] = zz;
   return MYB_OK;
 }
 

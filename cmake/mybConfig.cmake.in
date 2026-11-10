@@ -1,0 +1,18 @@
+# mybConfig.cmake — find_package(myb [version]) of an installed myb.
+#
+#   myb::myb           the static library (always)
+#   myb::myb_shared    the shared library (if it was built: MYB_BUILD_SHARED)
+#   myb::<ext>         optional models: nrlmsise00, sgp4, troposphere, ionosphere
+#   myb::<ext>_shared  the same on top of myb::myb_shared
+#   myb_DATA_DIR       the data kernels (time scales, IAU/IERS series, constants)
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+if(NOT WIN32)
+  set(THREADS_PREFER_PTHREAD_FLAG ON)
+  find_dependency(Threads)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/mybTargets.cmake")
+set_and_check(myb_DATA_DIR "@PACKAGE_MYB_INSTALL_DATADIR@")
+check_required_components(myb)

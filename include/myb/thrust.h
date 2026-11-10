@@ -60,6 +60,10 @@ MYB_API MYB_NODISCARD myb_status myb_thrust_init(myb_thrust* thrust, double mass
 /* Mass at t (kg). */
 MYB_API double myb_thrust_mass(const myb_thrust* thrust, double t);
 
+/* The same as a mass function of the object (myb_object.mass_function, myb/env.h; context:
+ * const myb_thrust*): the surface forces then act on the mass that is left. */
+MYB_API double myb_thrust_mass_at(void* thrust, double t);
+
 /* The acceleration of the thrust at t (zero between arcs), x and v relative to the central body:
  * a term of a force model (myb_term_function, context: const myb_thrust*). */
 MYB_API MYB_NODISCARD myb_status myb_thrust_acceleration(void* thrust, double t, const double x[3],

@@ -1,0 +1,23 @@
+# Symbol versions of libmyb_troposphere.so (ELF: Linux, Android, the BSDs; passed to the linker as
+# --version-script). A function carries the version of the release that added it, so that a
+# program built against a newer release than the one installed is refused when it is loaded
+# ("version `MYB_1.2' not found") and not at the first call of the missing function.
+#
+# A new function goes into the node of the release that adds it; a new minor release opens
+# a node that inherits from the last one. Functions are never moved or removed within a major
+# version. Whatever is not listed is not exported: test_exports fails for a function left
+# out, and the linker (lld) for a name that does not exist.
+
+MYB_TROPOSPHERE_1.1 {
+  global:
+    myb_tropo_fcula;
+    myb_tropo_gmf;
+    myb_tropo_gpt;
+    myb_tropo_gradient_delay;
+    myb_tropo_vmf1;
+    myb_tropo_zenith_optical;
+    myb_tropo_zhd_saastamoinen;
+    myb_tropo_zwd_saastamoinen;
+  local:
+    *;
+};

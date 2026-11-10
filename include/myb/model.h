@@ -59,6 +59,29 @@ MYB_API size_t myb_force_model_parameter_count(const myb_force_model* model);
 MYB_API const char* myb_force_model_parameter_name(const myb_force_model* model, size_t index);
 MYB_API double* myb_force_model_parameter(const myb_force_model* model, size_t index);
 
+/* Binds a parameter to the one term it enters: its partial derivative is then the difference
+ * of that term alone instead of the whole model (the same value, a fraction of the cost), and
+ * zero while the term is switched off. Errors: MYB_E_DOMAIN (indices). */
+MYB_API MYB_NODISCARD myb_status myb_force_model_bind_parameter(myb_force_model* model,
+                                                                size_t parameter, size_t term);
+
+/* Where the force is continuous but not smooth — the edge of a shadow, a thrust that switches
+ * — a step of an integrator that straddles the instant loses its order: the error no longer
+ * falls with the precision asked for. A break is a function g(t, y), y = (x, v), that changes
+ * sign there (the form of an event function of myb/integ.h). myb_orbit (myb/orbit.h), and with
+ * it the estimators, ends a step at every sign change of a break of the model, so that no
+ * step contains one. The context must outlive the model.
+ * Errors: MYB_E_OVERFLOW (more than MYB_MODEL_MAX_BREAKS). */
+typedef double (*myb_break_function)(void* context, double t, const double* y);
+
+enum { MYB_MODEL_MAX_BREAKS = 32 };
+
+MYB_API MYB_NODISCARD myb_status myb_force_model_add_break(myb_force_model* model,
+                                                           myb_break_function g, void* context);
+MYB_API size_t myb_force_model_break_count(const myb_force_model* model);
+MYB_API void myb_force_model_break(const myb_force_model* model, size_t index,
+                                   myb_break_function* g, void** context);
+
 /* Scales of the central differences: steps cbrt(eps) * scale per component (defaults: the norm
  * of x, resp. v, at the point, at least length_scale, resp. velocity_scale; both 1 by default).
  * Errors: MYB_E_DOMAIN for non-positive scales. */
@@ -86,6 +109,13 @@ MYB_API MYB_NODISCARD myb_status myb_force_model_jacobian(myb_force_model* model
 /* Adapter to the integrators (myb_accel_function of myb/integ.h, n = 3): context = model. */
 MYB_API MYB_NODISCARD myb_status myb_force_model_accel(void* model, double t, const double* x,
                                                        const double* v, double* a);
+
+/* A Jacobian of zeros (myb_term_jacobian): for a term whose derivatives are left out of the
+ * variational equations on purpose — a force so far below the others that its gradient does
+ * not show in the partials, and whose differences would cost more than they bring. */
+MYB_API MYB_NODISCARD myb_status myb_term_no_jacobian(void* context, double t, const double x[3],
+                                                      const double v[3], double dadx[9],
+                                                      double dadv[9]);
 
 /* Analytic Jacobian of a point mass: a = -gm r / |r|^3, d a / d r = gm (3 r r^T / |r|^5 -
  * 1 / |r|^3); r is the position relative to the mass. */

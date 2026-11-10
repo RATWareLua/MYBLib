@@ -36,6 +36,64 @@ extern "C" {
 MYB_API MYB_NODISCARD myb_status myb_parse_double(const char* text, size_t length, double* value,
                                                   size_t* consumed);
 
+/* ---- Printing numbers ----------------------------------------------------------------------
+ * The inverse of myb_parse_double, as exact: every digit follows from integer arithmetic on
+ * the value, the same on every platform and independent of the C runtime and the locale.
+ * Non-finite values print as "nan", "inf", "-inf". */
+
+enum { MYB_DOUBLE_CHARS = 32 };
+
+/* The shortest decimal that myb_parse_double reads back to the same value, the closest to it
+ * among those of that length, in the form of Python's repr: positional for 1e-4 <= |x| < 1e16
+ * ("0.001", "1234.5", "10.0"), otherwise with an exponent ("1.5e-07", "1e+300"); "0.0" and
+ * "-0.0". Returns the number of characters written, without the terminating NUL (at most 24). */
+MYB_API size_t myb_format_double(double value, char out[MYB_DOUBLE_CHARS]);
+
+/* `decimals` (0 .. 60) digits after the point, as "%.Nf": the exact value rounded to nearest,
+ * ties to even. *length (may be NULL) receives the number of characters of the full text
+ * without the NUL; MYB_E_OVERFLOW if size cannot hold it (the text is then cut, still
+ * terminated). Errors: MYB_E_DOMAIN (decimals outside the range). */
+MYB_API MYB_NODISCARD myb_status myb_format_fixed(double value, int decimals, char* out,
+                                                  size_t size, size_t* length);
+
+/* `digits` (1 .. 60) significant digits with an exponent, as "%.(digits-1)e": "1.234e+05".
+ * Otherwise as myb_format_fixed. */
+MYB_API MYB_NODISCARD myb_status myb_format_scientific(double value, int digits, char* out,
+                                                       size_t size, size_t* length);
+
+/* ---- Tables of numbers ---------------------------------------------------------------------
+ * Text of rows of numbers separated by commas, semicolons, tabs or blanks (CSV and the like):
+ * every row the same number of fields; '#' starts a comment; a first row that is not numbers
+ * names the columns; an empty field between separators is a NaN. */
+
+typedef struct myb_table myb_table;
+
+/* Errors: MYB_E_FORMAT (diag gives the line: a field that is not a number, a row of another
+ * length, no values), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
+MYB_API MYB_NODISCARD myb_status myb_table_load(const char* text, size_t size,
+                                                const myb_allocator* allocator,
+                                                myb_table** table, myb_diag* diag);
+MYB_API MYB_NODISCARD myb_status myb_table_load_file(const char* path,
+                                                     const myb_allocator* allocator,
+                                                     myb_table** table, myb_diag* diag);
+MYB_API void myb_table_destroy(myb_table* table); /* accepts NULL */
+
+MYB_API size_t myb_table_rows(const myb_table* table);
+MYB_API size_t myb_table_columns(const myb_table* table);
+/* The name of a column (at most 31 characters are kept); "" without a row of names. */
+MYB_API const char* myb_table_name(const myb_table* table, size_t column);
+/* The values of a row: myb_table_columns numbers. */
+MYB_API const double* myb_table_row(const myb_table* table, size_t row);
+
+/* rows x columns values (row by row) as comma-separated text, each the shortest decimal that
+ * reads back to the same number, a NaN as an empty field; names (may be NULL): a first row of
+ * column names. *length (may be NULL): the characters of the whole text. Errors:
+ * MYB_E_OVERFLOW (the buffer; call again with length + 1 bytes), MYB_E_DOMAIN (no columns,
+ * more than 1024, a missing name). */
+MYB_API MYB_NODISCARD myb_status myb_table_write(const char* const* names, size_t columns,
+                                                 const double* values, size_t rows,
+                                                 char* buffer, size_t size, size_t* length);
+
 /* ---- Kernel pool -------------------------------------------------------------------------- */
 
 typedef struct myb_kpool myb_kpool;

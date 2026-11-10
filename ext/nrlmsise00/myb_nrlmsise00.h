@@ -42,7 +42,7 @@ typedef struct myb_nrlmsise00_output {
  * includes anomalous oxygen, as appropriate for drag above 500 km. Errors: MYB_E_DOMAIN
  * (non-finite input, altitude < 0 or > 20000 km, day outside 1 .. 366, latitude outside
  * [-90, 90], negative indices, switch 9 = -1 without ap_history). */
-MYB_API MYB_NODISCARD myb_status myb_nrlmsise00(const myb_nrlmsise00_input* input,
+MYB_EXT_API MYB_NODISCARD myb_status myb_nrlmsise00(const myb_nrlmsise00_input* input,
                                                 const int* switches, int anomalous_oxygen,
                                                 myb_nrlmsise00_output* output);
 

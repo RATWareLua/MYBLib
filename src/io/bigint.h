@@ -97,6 +97,26 @@ static inline void myb_bigint_shift_left(myb_bigint* b, int64_t bits) {
   b->used = used;
 }
 
+/* a = a - b for a >= b. */
+static inline void myb_bigint_sub(myb_bigint* a, const myb_bigint* b) {
+  MYB_CHECK(a->used >= b->used);
+  uint64_t borrow = 0;
+  for (int i = 0; i < a->used; ++i) {
+    const uint64_t subtrahend = i < b->used ? b->limb[i] : 0;
+    const uint64_t first = a->limb[i] - subtrahend;
+    const uint64_t borrow_first = a->limb[i] < subtrahend;
+    const uint64_t second = first - borrow;
+    const uint64_t borrow_second = first < borrow;
+    a->limb[i] = second;
+    borrow = borrow_first | borrow_second;
+  }
+  MYB_CHECK(borrow == 0);
+  /* bound: the limbs */
+  while (a->used > 0 && a->limb[a->used - 1] == 0) {
+    a->used--;
+  }
+}
+
 /* -1, 0, 1 as a < b, a == b, a > b. */
 static inline int myb_bigint_compare(const myb_bigint* a, const myb_bigint* b) {
   if (a->used != b->used) {

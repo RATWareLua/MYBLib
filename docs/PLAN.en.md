@@ -102,7 +102,7 @@ L1  num, cmath (own functions), io (DAF/SPK/PCK, .gfc, IERS series, CCSDS, CSV)
 L2  time (general), body (body model, parameters ± σ)
 L3  frames, kin (kinematics providers), kepler, integ
 L4  grav (fields), rel (1PN, local reference systems, proper time), force (non-gravitational)
-L5  dyn (bodies, test particles, rotation, interaction graph), uncert, budget
+L5  dyn (bodies, test particles, rotation, interaction graph), env (environment and ready-made terms of a force model), uncert, budget
 L6  orbit, transfer, cr3bp
 ext/   empirical models of specific bodies
 data/  conventions and catalogs — data only
@@ -118,6 +118,7 @@ Key methods by module (sources — §8):
 - **integ:** IAS15 [Rein & Spiegel 2015], RKN12(10) [Dormand, El-Mikkawy, Prince 1987], DOP853 [Hairer et al.], Gauss–Jackson [Berry & Healy 2004], WH/WHFast [Wisdom & Holman 1991; Rein & Tamayo 2015], Yoshida, SABA/SBAB; dense output, events, compensated update, Brouwer's law.
 - **transfer:** Lambert [Izzo 2015; Gooding 1990], patched conics, B-plane [Sergeyevsky et al. 1983], STM-based correction.
 - **cr3bp:** Lagrange points, Jacobi, halo [Richardson 1980; Howell 1984], manifolds [Koon, Lo, Marsden, Ross 2011].
+- **env, orbit:** the bodies of a scenario with providers of state and orientation, their values computed once per instant; the scales of the providers from a table of differences; ready-made terms of a force model; propagation by IAS15 with its own steps and dense output — the state at an instant does not depend on what else is asked.
 
 ## 7. Floating point and reproducibility
 
@@ -185,6 +186,644 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 | 9 | attitude, regularization, SGP4, low thrust | own references | Windows: done (SGP4 — `tcppver.out` to printed precision, SPK type 10 vs CSPICE 2.7·10⁻¹² km; equinox-based frames vs ERFA 7·10⁻¹⁷ rad; elliptic functions vs mpmath ≤ 7.4 ulp; torque-free top 2·10⁻¹⁴ rad; lunar librations vs DE440 — 0.04″ over a year; KS at e = 0.999 — 1.2·10⁻¹² over 4 thousand evaluations; low thrust vs closed-form solutions 3·10⁻¹³; stack — frames ≤ 4 KB); Gentoo: `linux-release` and `linux-asan`, same hash |
 | 10 | higher PN, observables, charge and plasma | own references | Windows: done (2PN — circular-orbit invariant (27/2 − 7ν); PSR B1913+16 — Ṗ vs Peters–Mathews 3·10⁻⁵; light time vs CSPICE 4·10⁻¹² s; aberration bit for bit with ERFA; IGRF-14 vs ppigrf 1.4·10⁻¹⁵); Gentoo: all 7 presets, same hash |
 | 11 | 3PN and 3.5PN, spins, plasma and troposphere, ionosphere, charging | own references | Windows: done (coefficients vs machine parsing of Blanchet 4·10⁻¹⁶; K at 3PN 0.06%; J0737−3039B 5.0735°/yr; IERS ch. 9 10⁻¹⁵; OML vs mpmath 6·10⁻¹⁶); Linux — CI |
+| 12 | environment of a force model, ready-made terms, propagation (`env`, `orbit`) | LAGEOS from the ready-made terms with the same result | Windows: done (ready-made terms against the assembly by hand — 3.5·10⁻¹⁶ of the acceleration; LAGEOS — the same 2.0 cm; table of scales against the exact conversion 4·10⁻¹⁶ s; a state does not depend on the sampling — bit for bit); Gentoo: done (`linux-release` 78/78, the new tests under `linux-asan`, same hash) |
+| 13 | packaging: installation, CMake package, pkg-config, shared library, `examples/`, CHANGELOG | an outside project builds through `find_package(myb)`; the library exports only `myb_*` | Windows: done (`examples/` against the installation — static and shared; `libmyb.dll` and `libmyb.so` — 442 symbols each, all of the API); Gentoo: done |
+| 14 | analytic Jacobians (gradient of the harmonic field, radiation, drag, relativity); orbit estimation: least squares over an arc, a filter, partials of the observables | LAGEOS and the spacecraft of phase 8 through the library's estimator; state transition matrix with a field ≤ 10⁻¹² | Windows and Gentoo: done (gradient of the field against mpmath 2·10⁻¹⁵, at the poles 6·10⁻¹⁶; state transition matrix in a field of degree 8 symplectic to 6·10⁻¹⁷; LAGEOS by the library's estimator — 2.05 cm, the spacecraft of phase 8 — the same 306 m, 12.6 m, 260 m) |
+| 15 | output: printing of numbers, writers of SPK (types 9, 13, 2, 3), CCSDS OEM/OPM/OMM (reading and writing), SP3, TLE, CSV | the files are read by CSPICE; writing and reading — bit for bit | Windows and Gentoo: done (printing against CPython — 0 differences on 6124 values; an SPK of 34 segments is read by CSPICE N0067, positions 3.9·10⁻¹⁶; the ILRS SP3 excerpt comes back character for character; 33 TLE sets — bit for bit; OEM: numbers exact, 1.5 % within the 1 ulp of the km ↔ m conversion) |
+| 16 | events and geometry: eclipses, apsides, nodes, visibility, close approaches; breaking the integrator's step at the edges of a shadow; ray–shape intersection, sub-point, illumination angles; collision with a shape | CSPICE references (`gfoclt`, `sincpt`); LAGEOS independent of the integrator's precision | Windows and Gentoo: done (eclipse contacts against `gfoclt` 4·10⁻¹⁰ s; ray and ellipsoid against `surfpt` 5·10⁻¹⁶, nearest point against `nearpt` 4·10⁻¹⁶; `sincpt`, `subpnt`, `ilumin` — 10⁻⁸ m and 7·10⁻¹⁶ rad; LAGEOS: residual of the first guess 25.9587 m at ε = 10⁻¹⁰, 10⁻¹¹, 10⁻¹², fit 2.05 cm) |
+| 17 | forces of §4: Poynting–Robertson, Yarkovsky and YORP, thermal recoil and antenna, comets and outgassing, lift and gas–surface interaction, winds, plates with attitude and self-shadowing, refraction in the shadow, tidal dissipation, variable mass, impulsive manoeuvres | own references from the papers | Windows and Gentoo: done (Poynting–Robertson: the fall of a and e over 20 revolutions as in the averaged theory, 7 digits; Yarkovsky A2 — 5·10⁻⁷ from the formula; a comet — 5·10⁻⁶ from Gauss's equation averaged; the lagging tide — 2·10⁻⁷, 3.79 cm a year for the Moon; Sentman's plates over a sphere — 5·10⁻¹⁵ from the closed form; self-shadowing: lit area 9.000000000000 m²; YORP changes sign for the mirror body; impulses: Φ across them 2·10⁻⁹). Refraction in the shadow, the Yarkovsky effect of a conducting body and YORP with conduction were not done in the phase itself: they were closed in "Debts of phases 12–17" |
+| 18 | N bodies and the body model: levels of the graph (harmonics, figure–figure, tides), coupled translation and rotation, close encounters, collisions and mergers, PN binaries among N bodies | re-integration of DE440 by the library's own means (the Moon with its librations) | — |
+| 19 | applications: initial orbit determination, relative motion, probability of collision, mean elements and TLE fitting, multiple shooting and continuation of families, optimal low thrust | Vallado, the JPL catalogue | — |
+| 20 | files and frames: CK and SCLK (read and written), a graph of frames (SPK across frames), SPK type 15, nutation grid, TDB−TT from the ephemeris, space weather; station displacements (IERS ch. 7) and light time in the measurements; `ext/`: NRLMSISE-00 adapter, JB2008, NRLMSIS 2.1, HWM14 (after the licence checks) | CSPICE; references of the models | — |
+| 21 | engineering: fuzzing of the parsers, benchmarks, coverage, model passports `docs/models/`, ARM64 and macOS in CI; vcpkg and Conan packages (they need a tagged release) | CI green on every target | — |
+
+### Completion after 1.1 (phases 12–21)
+
+The review of 2026-11-10 found the physics of the core covered and the layer above it missing.
+Phases 12–21 go from what the rest cannot be built without (ready-made terms and propagation,
+packaging) to estimation, output, events, the missing forces of §4, the full N-body problem,
+applications, files and engineering. The C++, Python and Rust bindings follow phase 13 (they
+need the installation and the shared library) and rest on phase 12: a force model is assembled
+from data, not from callbacks.
+
+What phases 12–17 left under "Not done" was closed in a separate pass before phase 18 (the
+section "Debts of phases 12–17" below); what moved to later phases is named there with its
+reason.
+
+### Check on Gentoo (phases 14–17)
+
+2026-11-10, Clang 21.1.8, glibc; the working tree, not committed. `linux-release`: **89 tests
+of 89**, LAGEOS (71 s) and the spacecraft of phase 8 among them; the reproducibility hash
+`0x99a2ea1ff9d038a9` — the same as on Windows at -O0, -O2 and under UBSan. `linux-asan`: the
+15 new and affected tests (printing of numbers, tables, CCSDS, SP3, the SPK writer, SGP4,
+events, geometry, small forces, the surface, propagation, estimation, the environment, the
+gradient, reproducibility) — no reports. On Windows the same 15 tests under UBSan — no
+reports.
+
+### Check on Gentoo (debts of phases 12–17)
+
+2026-11-11, Clang 21.1.8, glibc; the working tree, not committed. `linux-release`: **91 tests
+of 91**, LAGEOS and the spacecraft of phase 8 among them; reproducibility hash
+`0xa762f98ab1f66694` — the same as on Windows at -O0, -O2 and under UBSan. The shared
+libraries are linked with their version maps: `libmyb.so` has 607 symbols with the versions
+`MYB_1.0`, `MYB_1.1`, `MYB_1.2`, `MYB_PRIVATE`; the libraries of `ext/` refer to them
+(`myb_spk_segment_data@MYB_1.0`, `myb_internal_check_failed@MYB_PRIVATE`); `test_exports`
+compares the version of every symbol with the map. `linux-asan`: the 16 new and affected
+tests (events, geometry, SP3, the SPK and PCK writers, CCSDS, small forces, shadows, surface,
+propagation, environment, estimation, SGP4, tables, the field, reproducibility) — nothing
+reported. On Windows: `windows-release` 91 of 91, the same 16 at -O0 (with the stack check)
+and under UBSan.
+
+### Debts of phases 12–17
+
+Each of phases 12–17 left a "Not done" list. It was closed before phase 18; below is what was
+done, how it was checked and what moved on, with the reason.
+
+**Estimation (phase 14)**
+
+- **Biases of the measurements as unknowns** (`myb_fit_options.bias_count`,
+  `myb_observation.bias`; up to 32): bias number k − 1 + i is added to the i-th computed
+  value of an observation; the unknowns are ordered state, parameters of the model, biases.
+  Three range delays of 35, −12 and 4.7 m and a range-rate offset of 2.1 mm/s are recovered
+  with σ = 0.19 m, the largest error 1.1 σ, weighted RMS 0.963. The same in the filter
+  (`myb_filter_set_bias`, `myb_filter_bias`).
+- **A smoother** (Rauch–Tung–Striebel; `myb_filter_options.history`, `myb_filter_smooth`,
+  `myb_filter_step`): the filter records its instants and a backward pass gives the estimate
+  of each from the whole arc. The first of 140 instants against a least-squares fit over the
+  same arc: estimates **0.000 σ**, sigmas 7·10⁻⁶; position σ 520 m before the pass, 0.94 m
+  after.
+- **A measured point away from the centre of mass** (`myb_measure_offset`): an antenna or a
+  reflector at an offset in the body axes, with an attitude law; the position of the point
+  is exact, its velocity within 3·10⁻¹⁰ m/s.
+- **Jacobians of the radiation of a planet and of the empirical accelerations** are analytic
+  (`myb_term_planet_radiation_jacobian`: a quadrature of the derivative of the integrand,
+  `myb_force_planet_radiation_gradient`; `myb_term_empirical_jacobian`): 6·10⁻¹⁰ and
+  4.5·10⁻⁴ from differences (the second number is the accuracy of the differences
+  themselves over the grid of rings).
+- Moved to phase 20: station displacements (IERS ch. 7) and light time in the measurements —
+  they need the loading models and the graph of frames of that phase.
+
+**Forces (phases 12 and 17)**
+
+- **Analytic Jacobians of the new terms**: comets and asteroids (`myb_term_nongrav_jacobian`,
+  1.4·10⁻¹⁰ and 5·10⁻¹¹ from differences), the lagging tide (`myb_term_tidal_lag_jacobian`,
+  2·10⁻⁹) — by forward differentiation in six variables (`src/num/dual.h`). The terms whose
+  force passes through a function of the user (attitude, density, wind, mass: plates,
+  meshes, recoil) and the Yarkovsky term (the answer of the body to the heating has no closed
+  derivative) are left to the differences of the model **on purpose**: a user's function has
+  no derivative, and the terms are 10⁻⁸…10⁻¹² of the attraction.
+- **Delayed outgassing** (`myb_force_nongrav_delayed`, `myb_nongrav_term.delay`): g is taken
+  at the point of the Keplerian orbit `delay` seconds earlier (Yeomans & Chodas 1989).
+  2·10⁶ s after the perihelion the acceleration is that of the perihelion without delay
+  (2.579·10⁻⁸ m/s²).
+- **The Yarkovsky effect of a conducting body** (`myb_yarkovsky.conductivity`,
+  `myb_yarkovsky_response`): the answer of a sphere to a periodic heating, 1/(1 + λζ(z)),
+  ζ = z j₁′(z)/j₁(z) — the solution of linear heat conduction; for a radius below 0.3 of the
+  depth of the thermal wave a series to z¹² (the closed form loses eight digits there).
+  Against mpmath 5·10⁻¹³ over the whole range of sizes. A grain of 2 mm: the diurnal drift
+  vanishes, as it must. The diurnal force anywhere on any orbit is `myb_force_yarkovsky`,
+  the term `myb_term_yarkovsky`.
+- **The seasonal effect on an eccentric orbit** (`myb_yarkovsky_season`,
+  `myb_force_yarkovsky_season`, the member `season` of the term): the heating along the spin
+  axis is a Fourier series in the mean anomaly, and each harmonic k is answered with the
+  response of the body at the frequency kn (the linear theory of Vokrouhlický and Farinella
+  1999). As many harmonics as bring the terms down to 10⁻¹⁴ of the first: 2 on a circle,
+  38 at e = 0.3, 111 at 0.6, 551 at 0.85; the limit is e ≤ 0.95. Against mpmath (25 digits,
+  another number of quadrature nodes, the response from the Bessel function): accelerations
+  **8·10⁻¹⁴**, mean drift **4·10⁻¹³** on orbits up to e = 0.85; on a circle the drift agrees
+  with the closed form to 5·10⁻¹⁵.
+- **YORP with conduction** (`myb_force_yorp`): the torque averaged over a rotation, the
+  temperature of the faces lagging by the thermal parameter Θ. Its axial part **does not
+  depend on Θ** (−2.1924·10⁻³ pR³ at Θ = 0, 1 and 30) — the result of Čapek and Vokrouhlický
+  2004; the transverse parts change severalfold.
+- **The torque of the tide** (`myb_torque_tidal_lag`): the torque on the body from the same
+  lagging tide, in the units of `myb/attitude.h` — for the change of its rotation.
+- **The indirect term of the oblateness** (`myb_term_field_indirect`): the acceleration of
+  the origin (the central body) from the attraction of the perturbing bodies by its figure.
+  The Earth and the Moon: −1.4834·10⁻¹¹ m/s², as J2 in closed form.
+- **The shadow of several bodies at once** (`myb_shadow_fraction_many`, up to 8): every circle
+  of the disk of the source loses the **union** of the arcs the bodies cover, cut at their
+  limbs and at the intersections of their circles. Against a count of points of the disk
+  1.7·10⁻⁶; the product of the fractions, which was taken before, is off by 7·10⁻² (and
+  gives 0.15 instead of zero when two bodies cover the disk between them). In the terms of a
+  model one body on the disk is the product as before (the same bits), two or more the
+  union.
+- **Refraction in the atmosphere of the occulting body** (`myb_refraction`,
+  `myb_refraction_bending`, `myb_shadow_fraction_refracted`; the member `atmospheres` of the
+  radiation terms): every element of the disk is seen at an angle moved by the bending of
+  the ray, α(h) = (n − 1)√(2π(R + h)/H), with the weight of the compression of the image and
+  the extinction along the path. A ray that grazes the Earth is bent by 65.7′ (two
+  horizontal refractions of 34.5′); with next to no air the fraction is the airless one to
+  3·10⁻¹⁰; without extinction the light only moves: the flux missing behind the Earth, in
+  units of its cross-section, is 1.000559 against 1.000554 for the rays that meet the
+  ground. 6000 km from the axis, inside the airless umbra, clear air leaves 2.2 % of the
+  light.
+- **The transitional flow regime** (`myb_gas_knudsen`, `myb_gas_bridge`; the members
+  `length`, `molecule`, `continuum_cd` of the surface drag term): the free-molecular share
+  sin²(π(3 + lg Kn)/8) between Kn = 10⁻³ and 10. Air at 100 km: free path 0.14 m, a body of
+  2 m has Kn = 0.069, share 0.44.
+- **Other integrators in `myb_orbit`** (`myb_orbit_options.integrator`): DOP853, with the same
+  states at the times asked for, events and breaks of the step (two bodies over
+  5 revolutions 7·10⁻⁴ m, 289 steps). RKN12(10) is left out on purpose: it has no dense
+  output of its own order and needs forces that do not depend on the velocity. The
+  variational equations go with IAS15 only (`MYB_E_DOMAIN` otherwise).
+- **A copy of an environment for a thread** (`myb_env_clone`): the same bodies and providers,
+  its own tables and cache of an instant.
+
+**Events and geometry (phase 16)**
+
+- **Predicting the edge of a shadow before the step: tried and rejected.** The polynomial of
+  an IAS15 step, carried beyond its end, predicts the edge; the step was ended short of it.
+  Measured over 13 revolutions with 54 edges: the error of the final state is 7·10⁻⁴ m at
+  ε = 10⁻⁹ and 5·10⁻⁶ m at 10⁻¹² — against 8·10⁻⁷ m for withdrawing the step, with the same
+  number of steps. The predicted root differs from the true one and the kink stays inside
+  the next step; to remove it the step has to be withdrawn anyway. Withdrawing the step
+  stays.
+- **A tree of bounding boxes for rays on a mesh**: the faces are halved along the long side
+  of their box down to four in a leaf; it is built with the polyhedron and walked without
+  recursion. A mesh of 16 128 faces, 3000 rays: **1.0 µs a ray** against 640 µs over every
+  face, no difference in the distance or in the face. Self-shadowing and YORP go through it.
+- **The limb and the terminator of an ellipsoid** (`myb_ellipsoid_limb`,
+  `myb_ellipsoid_terminator`): the limb is an ellipse (centre and semi-axes), against CSPICE
+  `edlimb` 2·10⁻⁷ m; points of the terminator of an extended source (the edge of the full
+  shadow and of the full light): the horizon condition holds to 5·10⁻⁵ m, for the points of
+  `edterm` to 1.4·10⁻⁴ m.
+- **Geometry corrected for light time** (`myb_view_body`, `myb_view_intercept`): the body is
+  taken where it was, and turned as it was, when the light left it. A ray against `sincpt`
+  with `CN`: 7·10⁻⁹ m and 5·10⁻¹² s; the Sun from the object against `spkpos` with `CN`:
+  9·10⁻⁵ m. With aberration the difference from `CN+S` is 13 m at 1 au: CSPICE takes the
+  classical formula, the library the exact Lorentz transformation (they differ by (v/c)²,
+  25 m). Without the correction a point on the Earth is 8 m off.
+- Moved to phase 19: the approach of two propagated objects — with the probability of
+  collision, which needs it.
+
+**Files (phase 15)**
+
+- **The XML notation of the CCSDS messages** (505.0-B): the readers tell it by the first
+  character and parse it **with the same line parser** — the XML scanner hands over
+  keywords, sections and lines of data as the lines of KVN, copying nothing and allocating
+  nothing; written by `myb_oem_write_as`, `myb_opm_write_as`, `myb_omm_write_as`. Unit
+  attributes, comments, the five standard entities; CDATA sections and a DTD with an
+  internal subset are not read.
+- **Covariances** of OEM (`myb_oem_covariance`, several matrices a segment, both ways of
+  writing the lower triangle), OPM and OMM (`has_covariance`, `cov_ref_frame`, `covariance`):
+  written and read in both notations the numbers come back to 1 ulp of the conversion
+  km² ↔ m².
+- **OCM** (`myb_ocm`, version 3 of the standard): a header, metadata and blocks of seven
+  kinds — trajectories, physical properties, covariances, manoeuvres, perturbations, orbit
+  determination, user-defined. The standard defines some two hundred keywords and dozens of
+  kinds of trajectories, so the message is given as it is: keywords by name, lines as text
+  and as numbers in the units of the message; Cartesian trajectories also in SI
+  (`myb_ocm_state`). Written by `myb_ocm_write` in both notations. `test_ccsds` holds 536
+  checks in all.
+- **SPK segments written word for word** (`myb_spk_writer_add_raw`): copies, parts and merges
+  of files of any type. 44 segments of 14 types (1, 2, 3, 5, 8, 9, 12, 13, 14, 17–21) were
+  copied: the library reads the copies bit for bit as the originals, **and so does CSPICE**
+  (308 states). Types 1 and 21 — the difference arrays of JPL's integrator — cannot be
+  written otherwise: only it produces them.
+- **SPK type 10 from TLE** (`myb_sgp4_spk10_packet`, `myb_sgp4_spk10_words` in `ext/sgp4`):
+  the words of the generic segment are those of `SPKW10` for 235 element sets (with the
+  directory of epochs at 230 sets); the packet of a two-line set holds the numbers of
+  `getelm`, the epoch within 19 µs (SPICE's TDB − TT has one term).
+- **A binary PCK writer** (`myb_pck_writer`): Chebyshev polynomials for the Euler angles of
+  an orientation provider, the angles followed from node to node. A uniform rotation comes
+  back to 7·10⁻¹⁵; a librating frame at degrees 5, 9 and 13 to 8·10⁻⁷, 3·10⁻¹¹ and
+  1.5·10⁻¹⁵ rad; **CSPICE reads the file** (`pxform` through a frame of class 2) to
+  7·10⁻¹⁶.
+- **Clocks and accuracy codes of SP3** (`myb_sp3_clock`, `myb_sp3_sigma`, `myb_sp3_accuracy`,
+  `myb_sp3_flags`; the members `clocks`, `clock_rates`, `accuracy`, `sigmas`, `flags` of the
+  writer): a file in the layout of the format description, written from what was read, is
+  the same in all its 37 lines.
+- Moved to phase 20: a CK writer — with the CK and SCLK reader, without which nothing in the
+  library can check it.
+
+**Packaging (phase 13)**
+
+- **ELF symbol versions** (`cmake/myb.map`, `ext/<name>/myb_<name>.map`): a function carries
+  the version of the release that added it — `MYB_1.0` (394), `MYB_1.1` (5), `MYB_1.2` (202);
+  the six support functions for `ext/` are `MYB_PRIVATE`. A program built against a newer
+  release is refused when it is loaded, not at the first call. `test_exports` compares the
+  version of every symbol with the map; a name the library does not have is refused by the
+  linker.
+- **pkg-config files for the libraries of `ext/`**: `myb_sgp4.pc`, `myb_nrlmsise00.pc`,
+  `myb_troposphere.pc`, `myb_ionosphere.pc` (`Requires: myb`).
+- Moved to phase 21: vcpkg and Conan packages — a port of a registry refers to the archive
+  of a release by its hash, and 1.2 has no tag yet; a recipe that its own manager has not
+  built would be unverified. macOS likewise.
+
+**Reproducibility**: a workload of the debts (forces, shadows, a mesh, geometry, DOP853,
+files and messages in both notations); golden value `0xa762f98ab1f66694` at -O0 and -O2;
+`MYB_REPRO_PREFIX=17` checks the former `0x99a2ea1ff9d038a9` — no earlier bit changed.
+
+### Phase 17 decisions
+
+- **Light on a moving object** (`myb_force_radiation_moving`; `myb_radiation_term.moving`):
+  the terms of the first order in v/c — aberration and the Doppler shift (Burns, Lamy, Soter
+  1979, eq. 2); the part along −v is the Poynting–Robertson drag. A grain with β = 0.2 on an
+  orbit of e = 0.3 over 20 revolutions: a falls by 7.272665·10⁻³ au, e by 2.190050·10⁻³; the
+  averaged equations of Wyatt and Whipple integrated over the same time give **the same seven
+  digits**. The Jacobian of the moving term is analytic (2·10⁻¹⁰ and 10⁻⁹ from differences).
+- **Comets and asteroids** (`myb_nongrav`, `myb_term_nongrav`): a = g(r)(A1 r̂ + A2 t̂ + A3 n̂)
+  with g(r) = α (r/r0)⁻ᵐ (1 + (r/r0)ⁿ)⁻ᵏ. Ready-made: the sublimation of water ice of Marsden,
+  Sekanina and Yeomans (g(1 au) = 1 + 2·10⁻⁹ with the ten-digit α of the JPL catalogue) and a
+  power law — the Yarkovsky effect as it is fitted to asteroids (A2, exponent 2). The drift
+  with A2 = 10⁻¹⁰ m/s²: 9.681642·10⁻⁴ m/s against 2A2(1−e²)(r0/p)²/n = 9.681647·10⁻⁴
+  (5·10⁻⁷); a comet with A1 and A2 — 5·10⁻⁶ from Gauss's equation averaged over the orbit by a
+  quadrature.
+- **The Yarkovsky drift from thermal properties** (`myb_yarkovsky_drift`): Vokrouhlický's
+  linear theory for a body much larger than the depth of the thermal wave (κ₁ = κ₂ = κ₃ = ½):
+  the diurnal and the seasonal terms. A kilometre of rock at 2.5 au — 2.2·10⁻⁴ au/Myr,
+  outwards for a prograde rotation; the signs, the limits, the scaling with the radius and the
+  maximum at a thermal parameter of √2 are checked.
+- **The recoil of radiation** (`myb_force_emission`, `myb_term_recoil`): the heat of an RTG
+  and of the electronics, the beam of an antenna — a power in a direction fixed in the body of
+  the object, with an exponential decay (a radioactive source, outgassing that dies away).
+  63 W on 241 kg — 8.72·10⁻¹⁰ m/s² (the Pioneer anomaly: 8.74·10⁻¹⁰).
+- **The lagging tide** (`myb_force_tidal_lag`, `myb_term_tidal_lag`): Mignard's model with a
+  constant delay — the acceleration of a satellite relative to the body from the tide it
+  raises itself; the rotation of the body comes from its orientation.
+  da/dt = 6 k₂ Δt (m/M)(R/a)⁵ n a (Ω − n): for the Moon (k₂ = 0.3, 600 s) **3.79 cm a year**;
+  ten revolutions integrated — 28.348358 m against 28.348364 m of the formula; with a
+  retrograde spin the orbit shrinks; a synchronous orbit — nothing.
+- **The surface of the object** (`myb/surface.h`):
+  - an **attitude law** — a function giving the matrix "inertial axes → body of the object"
+    from the time and the state; ready-made: constant, orbital (radius, transverse, normal),
+    the yaw steering of a navigation satellite (z to the body, y across the Sun), a uniform
+    rotation;
+  - **free-molecular flow** (`myb_force_gas_plates`): Sentman's formulas as Doornbos writes
+    them — drag and lift of every plate, those turned away from the flow included, with the
+    accommodation of energy and the wall temperature. Plates laid over a sphere by a
+    quadrature give **the closed form of the sphere to 5·10⁻¹⁵** and no lift (to 2·10⁻¹⁵) at
+    speed ratios from 0.3 to 31 — the two formulas check each other (their agreement to 10⁻³⁰
+    was verified in mpmath before coding); C_D of a sphere at 7.6 km/s in atomic oxygen at
+    900 K — 2.41;
+  - **light on a mesh with self-shadowing** (`myb_force_radiation_mesh`): every face is a
+    plate; with `shadows = k` a face is divided into k² equal triangles, and a part is lit
+    only if the ray from its centre to the source does not meet the mesh
+    (`myb_polyhedron_ray`, phase 16). A cube before a slab of 3×3 m: the lit area is
+    **9.000000000000 m²** — exactly the silhouette; a cube as a mesh and as six plates —
+    10⁻¹⁶; a faceted sphere with Lambertian re-emission — 0.995 of (1 + 4/9)πR²p with 1280
+    facets;
+  - **YORP**: the same function with a purely thermal surface is Rubincam's
+    zero-conductivity model, and it returns the torque too. The torque along the axis averaged
+    over a rotation: 6·10⁻¹⁷ for a symmetric body, −6.2190·10⁻³ p R³ for a body with "vanes",
+    **+6.2190·10⁻³** for its mirror image — the sign changes, the size agrees to 10⁻¹²;
+  - terms of a model: light on plates or on a mesh with the attitude and the shadows of the
+    bodies (`myb_term_surface_radiation`: a black plate facing the Sun = the sphere with
+    c_r = 1 to 4·10⁻¹⁶), the gas on plates with a wind (`myb_term_surface_drag`).
+- **Winds** (`myb_wind_function`, the field `wind` of the drag term): the velocity of the gas
+  relative to the rotating body; a wind "to the east in proportion to the distance from the
+  axis" equals a faster rotation of the atmosphere to 10⁻¹⁴.
+- **A mass that changes** (`myb_object.mass_function`): the terms of the surface take the mass
+  at the instant t; `myb_thrust_mass_at` ties it to the thrust arcs — the light pushes harder
+  what is left after the burn (the ratio of the accelerations = the ratio of the masses to
+  10⁻¹⁴).
+- **Impulsive manoeuvres** (`myb_orbit_kick`): the velocity jumps at the time reached and the
+  integrator starts again. The variational equations are linear in Φ and S, so they continue
+  from the same values (`myb_internal_variational_restart`), with nothing to compose. A
+  Hohmann transfer by two impulses: the final orbit 1.5·10⁻⁸ m from the computed one,
+  e = 6·10⁻¹⁶; Φ across both impulses against differences of the whole manoeuvre — 2·10⁻⁹ of
+  the largest element.
+  - Found: the automatic first step of IAS15 is made for a fresh problem, where the
+    components that are zero are exactly zero. Continuing with a given Φ, a block whose
+    velocity merely passes through zero (10⁻¹⁹ instead of 0) gives a "timescale" of 10⁻¹¹ s
+    and `MYB_E_STEP_MIN`. On such a restart the step is now inherited from the integration
+    that was interrupted (one that is too long is rejected as usual).
+- **Reproducibility**: the workload of phase 17 (every new function and term, an orbit with
+  two impulses and Φ); golden value `0x99a2ea1ff9d038a9`; `MYB_REPRO_PREFIX=16` checks
+  `0x66d97d643b636e28`. No earlier bit changed (with a constant mass and no wind included).
+- **Not done**: the refraction of light in the atmosphere of the occulting body (Vokrouhlický
+  et al. 1993); the Yarkovsky theory for a finite depth of the thermal wave and on eccentric
+  orbits; YORP with conduction; outgassing of a comet delayed with respect to the perihelion;
+  the transitional flow regime; analytic Jacobians of the new terms (they come from
+  differences of the model); the change of the rotation of the body under the torque of the
+  tide; an offset of the centre of mass; mergers and collisions of bodies — in phase 18. Closed later: see "Debts of phases 12–17".
+  Mergers and collisions stay with phase 18.
+
+### Phase 16 decisions
+
+- **Breaks of the step** (`myb_force_model_add_break`, `myb/model.h`). At the edge of a shadow
+  the force is continuous but not smooth, and a step of IAS15 that straddles the edge loses
+  its order: the error stops falling with ε. A break is a function g(t, y) of the same form as
+  an event; it is declared to the **force model**, not to the propagator, so `myb_orbit`, the
+  estimator and the filter all see it. After a step the break functions are examined on its
+  dense output (as events are: four parts of the step, the root on the step's polynomial); a
+  step that contains a sign change is **withdrawn and taken again from its beginning exactly
+  up to the root** (`myb_internal_ias15_retake`): the prediction is the polynomial of the
+  withdrawn step on the part kept, so the second attempt converges in a sweep or two, and the
+  step after the edge starts from the same polynomial continued past it. The integrator is not
+  restarted: the state, Φ and S simply continue. The sign of every function is remembered, so
+  an edge is not found twice.
+  - The first version — a cold restart of the integrator at every edge, with Φ and S composed
+    across — gave the same accuracy but cost +70 % of the time of the LAGEOS fit (352 restarts
+    per propagation, each with rejected first steps); withdrawing the step costs +26 %.
+  - Check: an orbit of 12 000 km with 0.2 m²/kg, two days, 54 edges of the shadow. The spread
+    of the final position over ε = 10⁻⁹…10⁻¹²: **6.4 m without breaks, 8·10⁻⁷ m with them**.
+    Φ across eight edges against differences of whole propagations — 7·10⁻⁸ with a largest
+    element of 25; ∂x/∂c_r — 2·10⁻⁷ m of 49 m.
+- **LAGEOS does not depend on the integrator's precision**: the edges of the shadows of the
+  Earth and the Moon are declared to the model (`myb_term_radiation_breaks`), 176 edges in the
+  week, 2290 steps instead of 2177. The residual of the first guess — **25.9587 m at
+  ε = 10⁻¹⁰, 10⁻¹¹ and 10⁻¹²** (without breaks 25.9520 m at 10⁻¹⁰ and 25.9582 m at 10⁻¹²);
+  after the fit 2.05 cm at any ε. The finding of phase 14 is closed.
+- **Ready-made events** (`myb/events.h`) — functions for `myb_orbit_event` with a context
+  structure: the rate of the distance to a body (apsides, close approaches), a distance, a
+  plane (nodes), the altitude over the ellipsoid of a body, the elevation over a station, the
+  edge of a shadow (`myb_event_eclipse` on `myb_shadow_margin`: the disks touching from outside
+  and from inside — the very instants where the force of light stops being smooth), the
+  surface of a polyhedron. Bodies come from the environment by index, `MYB_EVENT_ORIGIN` is
+  the origin itself. A function cannot return a status: when a provider fails it gives NaN,
+  which is no sign change.
+  - Against closed forms on an ellipse of e = 0.3: apsides 2·10⁻¹¹ s, nodes and a sphere
+    10⁻¹² s; the altitude at the event — 10⁻⁹ m from the threshold, the elevation — 2·10⁻¹⁴ rad
+    (against `myb_measure_azel`); the impact on an octahedron — 2·10⁻⁹ m from its face.
+  - **Eclipses against CSPICE N0067**: the SPK is written by the test itself
+    (`myb_spk_writer`, phase 15), `gfoclt_c` finds the windows of the occultation of the Sun by
+    the Earth from the object (convergence 10⁻⁹ s): 28 contacts of the penumbra and the umbra
+    in a day — **within 4.4·10⁻¹⁰ s**.
+- **The geometry of a surface** (`myb/geometry.h`), in the body-fixed frame:
+  - a ray and a triaxial ellipsoid (`myb_ray_ellipsoid`): in coordinates divided by the
+    semi-axes, through the point of the line nearest the centre — a discriminant without the
+    subtraction of close numbers; from inside, the point where the ray leaves. Against
+    `surfpt_c` on five shapes, 300 rays: **5·10⁻¹⁶ of the distance**;
+  - the nearest point and the altitude (`myb_ellipsoid_nearest`): the largest root of
+    Eberly's equation by Newton's method from a lower bound — the function is convex and
+    falling, the iteration is monotone and never passes the root; inside the evolute, in a
+    plane of symmetry, there are two nearest points (or a circle) — the one on the positive
+    side of the shortest axis is given. Against `nearpt_c`, 300 points, interior ones
+    included: **4·10⁻¹⁶ of the size, the altitude 3·10⁻¹⁶**;
+  - the normal, the angles of illumination (phase, incidence, emission);
+  - a polyhedron: a ray (Möller–Trumbore over every face, faces widened by 10⁻¹² so that a ray
+    through a shared edge finds no gap) and the solid angle (4π inside, 0 outside). Against an
+    independent solution (planes of the faces and areas) on a convex and a dented icosahedron:
+    8000 rays, not one disagreement, distances 2·10⁻¹⁵.
+  - Through kernels against `sincpt_c`, `subpnt_c` (both kinds) and `ilumin_c` at 20 epochs:
+    points 10⁻⁸ m (the limit of the SPK interpolation), altitude 3·10⁻⁹ m, angles
+    **7·10⁻¹⁶ rad**.
+- **Reproducibility**: the workload of phase 16 (geometry, an orbit through a shadow with
+  breaks and partials, every ready-made event); golden value `0x66d97d643b636e28`;
+  `MYB_REPRO_PREFIX=15` checks `0x9128edc3c0c93fb3`. Adding the withdrawal of a step to IAS15
+  changed no earlier bit.
+- **Not done**: predicting an edge before the step (each edge now costs one withdrawn step);
+  an accelerating structure for rays on a mesh (every face is examined); limb and terminator
+  points; geometry corrected for light time; the approach of two propagated objects — in
+  phase 19. Closed later: see "Debts of phases 12–17". Predicting the edge was tried and rejected; the approach
+  of two objects stays with phase 19.
+
+### Phase 15 decisions
+
+- **Printing of numbers** (`myb_format_double`, `myb_format_fixed`, `myb_format_scientific`;
+  `myb/io.h`) — the inverse of `myb_parse_double` and as exact: every digit comes from integer
+  arithmetic on the exact value of the number (big integers, digit generation after Steele and
+  White), without `printf`, the C runtime or the locale. Three forms: the shortest decimal
+  that `myb_parse_double` reads back to the same number (as `repr` in Python); a given number
+  of decimals (up to 60); a given number of significant digits with an exponent (up to 60) —
+  the exact value rounded to nearest, ties to even. Against CPython on 6124 values — **not one
+  difference in any form**; 200 000 random numbers read back to the same bits.
+- **Writing SPK** (`myb_spk_writer`, `myb/kin.h`): segments of types 9 and 13 from states at
+  epochs (Lagrange and Hermite), of types 2 and 3 — Chebyshev polynomials through the states
+  of a provider at the Chebyshev nodes of equal parts of the interval, with a report of the
+  largest deviation between the nodes (to choose the degree and the number of parts). The DAF
+  file: file record, a chain of summary and name records (25 segments each), data;
+  little-endian; into a buffer or a file (`myb_platform_write_file` — the only new call of the
+  OS). A file of 34 segments is read by **CSPICE N0067: positions 3.9·10⁻¹⁶, velocities
+  1.1·10⁻¹³** from the library's own reader; the states of types 9 and 13 come back at their
+  epochs within 1.8 ulp of the length of the vector; type 2 of degree 12 over 1000 s —
+  6·10⁻⁸ m from the orbit.
+- **CCSDS messages** (`myb/ccsds.h`; CCSDS 502.0-B-2/B-3, the keyword = value notation): OEM —
+  reading (header, segments with metadata, states and accelerations, both forms of the epoch;
+  covariance sections are passed over; mandatory keywords are checked; an error names the
+  line) and writing; OPM and OMM — parsing into a structure and writing. In the file km, km/s,
+  degrees, km³/s², in the API — SI; the mean elements of an OMM are kept in the units of the
+  catalogue, as written: they mean something only with their theory. **A number is written as
+  the shortest decimal in the file's unit that the reader turns back into the same SI value**:
+  of the quotient and its two neighbours the shortest is taken among those that the
+  multiplication returns to the original number. So a message read and written keeps its
+  numbers as they were ("7000" stays "7000", not "7000.000000000001"), and one written and
+  read gives the states back exactly — except those that no number of kilometres times 1000
+  reaches: 183 of 12 000 random ones (1.5 %), which differ by 1 ulp. Seconds of epochs get as
+  many decimals as they need, three at least; epochs come back bit for bit.
+- **SP3** (`myb_sp3_write`, `myb/kin.h`): SP3-c and SP3-d from a description (satellites,
+  epochs, positions, velocities, gaps); the GPS week, the seconds of the week and the MJD of
+  the header — from the first epoch. The ILRS excerpt of LAGEOS-1 read and written: **258 720
+  characters of epoch, position and velocity lines — character for character**, as are the
+  lines of the header (lists of satellites, accuracies, types); the reader gives the same bits
+  from the written file.
+- **TLE** (`myb_tle_format`, `myb_tle_from_omm`, `myb_omm_from_tle`; `ext/sgp4`): the two
+  lines with their checksums, Alpha-5 above 99 999; a value that does not fit its field —
+  `MYB_E_DOMAIN`. All 33 sets of Vallado's verification file come back to the same values bit
+  for bit, 31 character for character (in two the file itself departs from the catalogue's
+  notation: no ephemeris type; a zero B* written as `00000-0`). OMM ⇄ TLE: the numbers of the
+  catalogue pass unconverted, the epoch — calendar date ⇄ day of the year.
+- **Tables of numbers** (`myb_table_*`, `myb/io.h`): reading of CSV and its relatives (comma,
+  semicolon, tab, blanks; a row of names; `#` comments; an empty field is a NaN) and writing
+  with the shortest decimals: 3500 random numbers of every magnitude — bit for bit.
+- **The writers do not allocate**: the text goes into the caller's buffer, the full length is
+  always reported (`MYB_E_OVERFLOW` — call again with a buffer of that size); the internal
+  writer is `src/io/text.[ch]`. Only the SPK writer and the readers take memory.
+- **Reproducibility**: the workload of phase 15 hashes the bytes themselves — texts of
+  numbers, the image of an SPK, messages, SP3, TLE lines, a table — and the numbers read back;
+  golden value `0x9128edc3c0c93fb3`; `MYB_REPRO_PREFIX=14` checks `0xb110642ae757e6e0`.
+- **Not done**: the XML notation of the CCSDS messages; covariances of OEM and OPM; OCM;
+  writing SPK of other types (1, 21, 10), CK and PCK; clocks and accuracy codes in SP3. Closed later: see "Debts of phases 12–17".
+  The CK writer moved to phase 20.
+
+### Phase 14 decisions
+
+- **Gradient of a field of spherical harmonics** (`myb_gravity_field_gradient`, `myb/grav.h`):
+  the second derivatives of the potential in the body-fixed frame. The second derivatives of
+  a solid harmonic of degree n are solid harmonics of degree n + 2 (Cunningham 1970;
+  Montenbruck & Gill, eq. 3.33): the operators D± = ∂x ± i∂y and Dz take (n, m) to
+  (n + 1, m ± 1) and (n + 1, m). The five independent components (V_zz, V_xz, V_yz,
+  V_xx − V_yy, V_xy; V_xx + V_yy = −V_zz) are series of the same form as the potential with
+  coefficients of degree n + 2 and orders m, m ± 1, m ± 2; the factors of the fully normalised
+  functions are √((2n+1)/(2n+5)) times the root of a product of four numbers n ∓ m + k. The
+  series are summed by the same column recursion of Holmes and Featherstone as the potential:
+  **no division by cos φ, the pole is an ordinary point**, and the accuracy is that of the
+  potential (the recursion tables of a field reach two degrees further; the degree limit of
+  the gradient is 2698). Against differentiation of the series in mpmath (60 digits; a field
+  of degree 8, 32 cases at all latitudes and at the poles themselves, several ranges of
+  degrees): **2.1·10⁻¹⁵ of the largest component, 6·10⁻¹⁶ at the poles**; against central
+  differences of the acceleration in a field of degree 60 — 2·10⁻¹⁰.
+- **Analytic Jacobians of the terms** (`myb/env.h`, `myb/rel.h`): the field (the gradient
+  turned into the inertial axes; the term brings the coefficients to the instant itself),
+  radiation pressure (exact in the light and in the umbra, differences of the term itself in a
+  penumbra), drag (exact in the velocity and the rotation of the atmosphere, the gradient of
+  the density by differences of the density function), Schwarzschild, Lense–Thirring, de
+  Sitter (`myb_rel_*_jacobian`). Against central differences: field 1·10⁻¹⁰, light 6·10⁻¹¹,
+  drag 4·10⁻⁸ and 2·10⁻¹¹ (position and velocity), relativistic terms up to 7·10⁻¹¹ (the limit
+  of the differences themselves). `myb_term_no_jacobian` is a Jacobian of zeros for terms
+  whose gradient is left out on purpose; `myb_force_model_bind_parameter` binds a parameter to
+  one term: its partial is the difference of that term, not of the whole model (10⁻¹³ instead
+  of the 10⁻⁵ of a difference of the sum with the field, at a fraction of the cost).
+- **State transition matrix with a field**: in a rotating field of degree 8 over two
+  revolutions the matrix from the analytic gradient is **symplectic to 6·10⁻¹⁷** (10⁻¹² with
+  the Jacobian by differences) and agrees with differences of whole propagations to 5·10⁻¹⁰.
+- **Estimation** (`myb/estim.h`). The unknowns are the state at the epoch and the parameters
+  of the force model. A measurement is a function of the state of the object at the time of
+  the observation with its derivatives; ready-made: the position and the state of the object
+  itself, range, range rate, right ascension and declination, azimuth and elevation from a
+  station on a body of the environment (`myb_station`: geodetic coordinates on an ellipsoid,
+  the axes east–north–up). Derivatives of the measurements against differences — up to
+  3·10⁻¹⁰.
+  - **Least squares over an arc** (`myb_fit_orbit`): Gauss–Newton on the variational
+    equations, normal equations of the free unknowns scaled by their diagonal and factorised
+    by Cholesky; fixed unknowns, a priori sigmas, covariance, residuals; an arc forward or
+    backward from the epoch. Without noise a displaced first guess (hundreds of metres, c_d
+    off by 0.5) returns to the truth to **2·10⁻⁹ m and 6·10⁻¹¹ in c_d**; with noise (σ: 1 m,
+    1 mm/s, 2 µrad) the weighted RMS is 1.035 and the largest error 1.7 σ of its own
+    covariance.
+  - **Filter** (`myb_filter`): the extended Kalman filter on the same unknowns, the
+    covariance carried by Φ and S, process noise as a white acceleration (q·Δt³/3 — checked:
+    2.166 m² against 2.16), the update in Joseph's form. The same noisy observations one by
+    one from a covariance of a kilometre: 0.68 m from the truth at the end with σ 0.43 m, the
+    largest error 1.9 σ.
+- **LAGEOS by the library's estimator**: the test's own Gauss–Newton with partials by
+  differences and twelve parallel propagations is removed; `myb_fit_orbit` on the variational
+  equations (analytic Jacobians of the field with tides, the bodies, relativity and light;
+  the gradients of the Earth's radiation and of the empirical terms, 10⁻⁹ of the field's, left
+  out) gives **2.05 cm** in two corrections, 21 s instead of the former ~35 s of fitting (the
+  whole test 33 s against 44 s). **The spacecraft of phase 8** (`test_spacecraft`) through the
+  same estimator — the same numbers: Roadster 306 m, OSIRIS-REx 12.6 m, JWST 260.0 m.
+- **Found: the integrator steps over the penumbra.** Before the fit the residual of LAGEOS is
+  25.952 m (variational integration, ε = 10⁻¹⁰), 25.954 m (plain), 25.959 / 25.958 / 25.959 m
+  for ε = 10⁻¹¹…10⁻¹³; with the shadows switched off the result does not depend on ε
+  (25.417 m in both cases). The entry into the penumbra lasts seconds, a step minutes: the
+  step criterion built on a, a′, a″ does not see the kink, and a few millimetres along the
+  track accumulate in a week. The cure — breaking the step at the edges of a shadow — was
+  made in phase 16 (see above): with it the residual is 25.9587 m at any ε.
+- **Reproducibility**: workload of phase 14 (gradient, Jacobians of relativity and of a model,
+  a fit and the filter on noisy observations); golden value `0xb110642ae757e6e0`;
+  `MYB_REPRO_PREFIX=13` checks `0x6e21db689ceda9e6` — no earlier bit changed.
+- **Not done**: station displacements (solid Earth tides, ocean loading, pole tide — IERS
+  ch. 7) and the light time in the measurements — moved to phase 20; biases of the
+  measurements as unknowns; a smoother; analytic Jacobians of the radiation of a planet and of
+  the empirical terms. Closed later: see "Debts of phases 12–17".
+
+### Phase 13 decisions
+
+- **Installation** (`cmake --install <build> --prefix <where>`; `cmake/MybInstall.cmake`,
+  option `MYB_INSTALL`): the headers `include/myb/` and `include/myb_<ext>.h`, `libmyb.a` and
+  the libraries of `ext/`, the data kernels `share/myb/data/` (without `download`), licences
+  and notices. CMake package: `find_package(myb 1.2)` gives the targets `myb::myb`,
+  `myb::myb_shared`, `myb::sgp4`, `myb::nrlmsise00`, `myb::troposphere`, `myb::ionosphere`
+  (and their `_shared`) and the variable `myb_DATA_DIR`; compatible within a major version.
+  `myb.pc`: the prefix is computed from the place of the file itself (`${pcfiledir}`), so an
+  installation can be moved; a static installation has `-DMYB_STATIC` in `Cflags` (on Windows
+  the declarations would otherwise be `dllimport`).
+- **Shared library** (`MYB_BUILD_SHARED`, on in the `*-release` presets): the same sources are
+  compiled a second time with hidden visibility, and only what is marked `MYB_API` leaves the
+  binary. The static library stays the main one: the tests reach into internal functions. The
+  libraries of `ext/` are separate shared libraries on top of `libmyb` (`MYB_EXT_API`,
+  `MYB_EXT_BUILDING`); the six support functions they are built on (allocator, diagnostics,
+  `MYB_CHECK`) are exported for them and are not part of the API. The CORE-MATH objects have
+  hidden visibility and serve both libraries.
+- **Examples** (`examples/`, public headers only, C17): `low_orbit` — a low orbit about an
+  oblate planet with an atmosphere from the ready-made terms: 15 ascending nodes in a day, node
+  drift −5.013°/day against −5.002 of the first order in J₂, the period shorter by 0.239 s
+  against 0.243 of the first order in the drag; `time_scales` — one instant on TAI, TT, TDB,
+  GPS from the kernels of `myb_DATA_DIR`. Built in the tree (`MYB_BUILD_EXAMPLES`) or as a
+  separate project against an installation — with any C17 compiler (only the library itself
+  needs Clang).
+- **Checks**: `test_install` and `test_install_shared` install the build into a scratch
+  prefix, configure `examples/` through `find_package(myb)`, build and run them (each example
+  returns 0 when its own check holds); `test_exports` and `test_exports_<ext>` read the export
+  table (`llvm-readobj --coff-exports` for a DLL, `llvm-nm -D` for ELF): `libmyb.dll` — 442
+  symbols, all `myb_`, of the internal ones only the six allowed; the libraries of `ext/` —
+  1 to 9. Under the sanitizers the installation check is not registered (an outside project
+  would have to link their runtime).
+- **CHANGELOG** (`CHANGELOG.md`, `CHANGELOG.ru.md`): versions 1.0.0.0, 1.1.0.0 and the
+  current one.
+- **Gentoo** (2026-11-10, Clang 21): `linux-release` with the static and the shared libraries
+  — 78/78 (5 tests skipped: the data sets were not downloaded); `libmyb.so.1.2.0.0` — the same
+  442 symbols, the libraries of `ext/` — 1, 9, 8, 5; the examples against the installation
+  print the same digits as on Windows. Found: the library directory there is `lib64` — the
+  installation check gets the install directories from the build instead of assuming `lib`.
+- **Not done**: vcpkg and Conan packages; ELF symbol versions; pkg-config files for the
+  libraries of `ext/`; macOS (phase 21). Closed later: see "Debts of phases 12–17". The vcpkg and Conan packages
+  moved to phase 21.
+
+### Phase 12 decisions
+
+- **Why.** A force model (`myb/model.h`) summed terms written by the user: `test_lageos` and
+  `test_spacecraft` carried 700 lines of glue each (orientation, third bodies, radiation). From
+  a binding that would be a call into the interpreter for every evaluation of the
+  acceleration. A model is now assembled from structures of numbers and pointers to providers.
+- **Providers** — the common form in which ephemerides and rotation enter the models:
+  `myb_state_function` (moved from `observe.h` to `myb/kin.h`; `myb_spk_body` — a body of an
+  SPK set) and `myb_orientation_function` (`myb/frames.h`: the rotation inertial axes →
+  body-fixed frame and, for a body whose rotation is observed, its rotation time UT1 and the
+  coordinates of its pole, which the tides need; ready-made: CIP + EOP, binary PCK, WGCCRE, a
+  constant rotation).
+- **Environment** (`myb/env.h`, `myb_env`): the bodies of a scenario, each with a GM, a state
+  provider, an orientation provider, a radius, a luminosity, limb darkening, a spin; all
+  optional (the body model of §3 as far as the forces need it). The body without a state
+  provider is the origin (the central body: third-body terms get their indirect part); when
+  every body has one, the origin is inertial (a barycentre) and there are no indirect terms.
+  The values at an instant t are computed once and kept until t changes: an integrator
+  evaluates every substep several times, and six terms need the Sun.
+- **Time scales.** The model time is seconds from an epoch on a named scale; each provider
+  gets the same instant on its own scale (TDB for the JPL ephemerides, TT for the rotation of
+  the Earth). The difference of two scales is read from a table with a step of the model time
+  (one hour by default) at the nodes epoch + k·step, Lagrange interpolation on four nodes
+  written about the node before t (a large constant part of the difference does not cancel
+  against itself). The value is a pure function of t: the same bits whatever was asked
+  before. Against the exact conversion over ±40 days: **TDB−TT 3.5·10⁻¹⁶ s, TCB−TT (20 s with
+  a rate) 3.1·10⁻¹⁵ s**; the series of 787 sines is evaluated once an hour instead of at every
+  evaluation (the "accelerated TDB−TT series" of the phase 7 list).
+- **Ready-made terms** — a context structure and a function of the form `myb_term_function`:
+  point mass and third body (with analytic Jacobians), the field of a body in its frame with
+  its time dependence and tides (for a body away from the origin, minus the same field at the
+  origin), radiation pressure of a source with the shadows of bodies, radiation of a planet,
+  drag in an atmosphere rotating with the body, Schwarzschild, Lense–Thirring and de Sitter,
+  empirical RTN (constant and once per revolution). The object is a `myb_object` (mass, area,
+  cr, cd): the parameters to estimate are its fields and those of the terms' structures. An
+  atmosphere enters as a density function `myb_density_function`; the core has the layered
+  exponential one (`myb_exponential_atmosphere`), the numbers of the layers being data.
+- **Propagation** (`myb/orbit.h`, `myb_orbit`): IAS15 from t0 towards t_end with its own
+  steps, every state from the dense output of the step that contains its time. The steps do
+  not depend on the times asked for (only the last is cut, at t_end), so **the state at a time
+  t is the same bits whether 500 other states and events were asked on the way or none**.
+  Events are roots of g(t, y): the sign is examined at the ends of the quarters of a step, a
+  root is located on the dense output and moved to the first representable time where g has
+  changed sign, so that the next search from the root does not find it again; a direction
+  filter. On request the state transition matrix and the sensitivities (the variational
+  equations of `myb/uncert.h`).
+- **Checks.**
+  - `test_env` (2774 checks, no downloaded data): every term against the same functions of
+    `grav`/`force`/`rel` called by hand with the providers' values — **bit for bit** (a term
+    is no more than that composition); Jacobian of the third body against differences
+    2·10⁻¹¹; the field of a body away from the origin, degree 0, against Battin's form
+    5.5·10⁻¹⁶; drag against −½ρ c_d A/m |w| w, w = v − ω × r — 1.4·10⁻¹⁶; fraction of the disk
+    in the shadow: 1 / 0 / 0.517 / 1 (day, umbra, penumbra, past it); a provider is called
+    once per instant; errors.
+  - `test_orbit`: two bodies, 5 revolutions with e = 0.3 — 4·10⁻⁸ m from the closed form;
+    apsides of 4 revolutions against Kepler's equation — 3.6·10⁻¹¹ s, forward and backward,
+    with the filter; state transition matrix against the closed form — 2.6·10⁻¹⁵; decay of a
+    circular orbit in an atmosphere over 10 revolutions −25.408 m against −25.403 m of the
+    first order.
+  - **LAGEOS** (`test_lageos` moved to the ready-made terms and `myb_orbit`; the former
+    assembly by hand is kept as the reference): acceleration of the model of ready-made terms
+    against the one by hand — **3.5·10⁻¹⁶** at 42 states along the orbit; before the fit the
+    same 25.954 m and 2228 steps, after it **the same 2.01 cm** (R 2.5 mm, T 1.83 cm,
+    N 8.0 mm); the test takes 44 s against 42 s.
+- **Reproducibility**: workload of phase 12 (table of scales, a model of every term with its
+  Jacobian and a parameter, states, an event, the state transition matrix backward in time);
+  golden value `0x6e21db689ceda9e6`; `MYB_REPRO_PREFIX=11` checks `0xc9b659a710498026` — no bit
+  of phases 0–11 changed. Version 1.2.0.0 (no tag).
+- **Verification**: Windows (Clang 23) — `windows-release`, `windows-dev` (the new and the
+  affected tests, the same hash at -O0 and -O2), `windows-ubsan` (`test_env`, `test_orbit`,
+  `test_repro`); Gentoo (Clang 21) — `linux-release` 78/78, `test_env`, `test_orbit`,
+  `test_repro`, `test_sgp4` under `linux-asan` (ASan + UBSan + LeakSanitizer) — clean, same
+  hash. `test_lageos` was not run on Linux (it needs the downloaded data) — left to CI.
+- **API changes**: `myb_state_function` is declared in `myb/kin.h` (`observe.h` includes it —
+  user sources do not change); `myb/force.h` includes `myb/frames.h`.
+- **Not done**: plates with the attitude of the spacecraft and analytic Jacobians of the
+  field, radiation, drag and relativity (phases 17 and 14); the indirect term of the
+  oblateness of the central body; a copy of an environment for threads (now: one environment
+  per thread); other integrators in `myb_orbit`; the exact shadow when two bodies cover the
+  disk at once (now: the product of the fractions); an adapter of NRLMSISE-00 to
+  `myb_density_function` (phase 20). Closed later: see "Debts of phases 12–17".
 
 ### Phase 11 decisions (after 1.0.0.0)
 

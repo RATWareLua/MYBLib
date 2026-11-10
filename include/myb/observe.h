@@ -21,14 +21,15 @@
 #include <stddef.h>
 
 #include "myb/core.h"
+#include "myb/kin.h"
 #include "myb/time.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* State (position m, velocity m/s) of a point at time t in the common frame. */
-typedef myb_status (*myb_state_function)(void* context, myb_time t, double state[6]);
+/* The participants are providers (myb_state_function of myb/kin.h): the state of a point at
+ * time t in the common frame. */
 
 /* A body delaying (and deflecting) light. */
 typedef struct myb_light_body {

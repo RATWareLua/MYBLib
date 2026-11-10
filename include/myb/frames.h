@@ -321,6 +321,115 @@ MYB_API MYB_NODISCARD myb_status myb_pck_euler(const myb_pck* pck, int32_t id, m
 MYB_API MYB_NODISCARD myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
                                                   myb_rotation* rotation, int32_t* base);
 
+/* ---- Orientation providers, part 1: see below ------------------------------------------------ */
+typedef struct myb_orientation myb_orientation;
+typedef myb_status (*myb_orientation_function)(void* context, myb_time t,
+                                               myb_orientation* orientation);
+
+/* ---- Writing binary PCK files -----------------------------------------------------------------
+ * As the SPK writer of myb/kin.h: segments are collected in memory and laid out as one
+ * little-endian file, which SPICE and myb_pck_load_file read. */
+
+typedef struct myb_pck_writer myb_pck_writer;
+
+/* internal_name: the label of the file, at most 60 printable ASCII characters (NULL: "myb").
+ * Errors: MYB_E_DOMAIN, MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_pck_writer_create(const char* internal_name,
+                                                       const myb_allocator* allocator,
+                                                       myb_pck_writer** writer);
+MYB_API void myb_pck_writer_destroy(myb_pck_writer* writer); /* accepts NULL */
+
+/* A segment (type 2) of Chebyshev polynomials of the given degree (1 .. 27) on `intervals`
+ * equal parts of [start, stop] (seconds past J2000, TDB) for the Euler angles of the frame of
+ * class `frame` (e.g. 3000 for ITRF93, 31008 for the lunar principal axes) relative to the
+ * inertial frame `base` (NAIF code: 1 = J2000, 17 = ECLIPJ2000): the polynomials through the
+ * angles of the provider's rotation at the degree + 1 Chebyshev nodes of each part; its ut,
+ * xp, yp are not used. The angles (myb_rotation_euler313) are followed from node to node:
+ * the frame must turn by less than half a revolution between two nodes, and its pole must
+ * stay away from the z axis of the base frame, where the angles are not defined (for the
+ * Earth the ecliptic frame 17 is the usual base). name: 1 .. 40 printable ASCII characters.
+ * *max_error (may be NULL; asking costs degree + 2 more calls a part): the largest angle
+ * (rad) between the rotation of the provider and that of the polynomials half-way between
+ * the nodes. Errors: MYB_E_DOMAIN (the arguments, a rotation that is not finite, the pole on
+ * the z axis), MYB_E_NOMEM, MYB_E_OVERFLOW, the statuses of the provider. */
+MYB_API MYB_NODISCARD myb_status myb_pck_writer_add_chebyshev(
+    myb_pck_writer* writer, int32_t frame, int32_t base, const char* name,
+    myb_orientation_function orientation, void* context, double start, double stop,
+    size_t intervals, int degree, double* max_error);
+
+/* As myb_spk_writer_add_raw: a segment of any type from its words. */
+MYB_API MYB_NODISCARD myb_status myb_pck_writer_add_raw(myb_pck_writer* writer, int32_t frame,
+                                                        int32_t base, const char* name,
+                                                        int type, double start, double stop,
+                                                        const double* words, size_t count);
+
+/* As myb_spk_writer_size, _write and _write_file. */
+MYB_API size_t myb_pck_writer_size(const myb_pck_writer* writer);
+MYB_API MYB_NODISCARD myb_status myb_pck_writer_write(const myb_pck_writer* writer, void* buffer,
+                                                      size_t size);
+MYB_API MYB_NODISCARD myb_status myb_pck_writer_write_file(const myb_pck_writer* writer,
+                                                           const char* path);
+
+/* ---- Orientation providers -----------------------------------------------------------------
+ * The orientation of a body as a function of time, in the form the environment of a force
+ * model takes it (myb/env.h): the rotation from inertial axes to the body-fixed frame and, for
+ * a body whose rotation is observed (the Earth), what its tides need — the body's own rotation
+ * time (UT1) and the coordinates of its pole (polar motion). Providers without those give the
+ * argument t and zeros. The time scale of t is the provider's: named where it is registered. */
+
+struct myb_orientation {
+  myb_rotation rotation; /* inertial axes -> body-fixed frame */
+  myb_time ut;           /* rotation time of the body (UT1 for the Earth); t if it has none */
+  double xp;             /* pole coordinates (rad); 0 if not modelled */
+  double yp;
+};
+
+/* myb_orientation_function (declared above): any status other than MYB_OK is returned to the
+ * caller unchanged. */
+
+/* The CIO-based model with observed EOP (myb_eop_at, then myb_cip_terrestrial): t is TT, given
+ * as the instant on the scale `tt` of `timesys`; the rotation is celestial -> terrestrial, ut is
+ * UT1, xp and yp the polar motion. Errors: those of myb_eop_at. */
+typedef struct myb_cip_orientation {
+  const myb_cip* cip;
+  const myb_eop* eop;
+  const myb_timesys* timesys;
+  myb_scale tt;
+} myb_cip_orientation;
+
+/* myb_orientation_function; context: const myb_cip_orientation*. */
+MYB_API MYB_NODISCARD myb_status myb_orientation_cip(void* context, myb_time t,
+                                                     myb_orientation* orientation);
+
+/* A frame of a binary PCK (myb_pck_rotation; t on the file's scale, TDB for NAIF files). The
+ * segments give the frame relative to their base frame: `base` is the rotation from the
+ * inertial axes in use to that base (e.g. myb_tkframe of ECLIPJ2000 for ITRF93), NULL when the
+ * two coincide. Errors: those of myb_pck_rotation. */
+typedef struct myb_pck_orientation {
+  const myb_pck* pck;
+  int32_t id;
+  const myb_rotation* base;
+} myb_pck_orientation;
+
+/* myb_orientation_function; context: const myb_pck_orientation*. */
+MYB_API MYB_NODISCARD myb_status myb_orientation_pck(void* context, myb_time t,
+                                                     myb_orientation* orientation);
+
+/* A rotation model of the WGCCRE (myb_wgccre_rotation; t is TDB); base as above, relative to
+ * the model's reference frame (myb_wgccre_frame). */
+typedef struct myb_wgccre_orientation {
+  const myb_wgccre* model;
+  const myb_rotation* base;
+} myb_wgccre_orientation;
+
+/* myb_orientation_function; context: const myb_wgccre_orientation*. */
+MYB_API MYB_NODISCARD myb_status myb_orientation_wgccre(void* context, myb_time t,
+                                                        myb_orientation* orientation);
+
+/* A constant orientation. myb_orientation_function; context: const myb_rotation*. */
+MYB_API MYB_NODISCARD myb_status myb_orientation_fixed(void* rotation, myb_time t,
+                                                       myb_orientation* orientation);
+
 #ifdef __cplusplus
 }
 #endif

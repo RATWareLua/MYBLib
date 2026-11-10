@@ -18,6 +18,12 @@
 [[nodiscard]] myb_status myb_platform_read_file(const char* path, const myb_allocator* allocator,
                                                 size_t max_size, char** data, size_t* size);
 
+/* Creates the file at path (UTF-8), or replaces it, with the size bytes of data. Errors:
+ * MYB_E_IO (cannot create or write: what was written of a failed attempt is left behind),
+ * MYB_E_NOMEM (the path, on Windows). */
+[[nodiscard]] myb_status myb_platform_write_file(const char* path, const myb_allocator* allocator,
+                                                 const void* data, size_t size);
+
 /* A read-only view of a whole file, mapped into the address space: large data files (planetary
  * ephemerides reach gigabytes) are read on demand by the virtual memory system, without a
  * system call per access. The view stays valid until myb_platform_unmap_file; the file must

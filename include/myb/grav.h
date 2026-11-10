@@ -101,6 +101,17 @@ MYB_API MYB_NODISCARD myb_status myb_gravity_field_eval(const myb_gravity_field*
                                                         int n_min, int n_max, double* potential,
                                                         double a[3]);
 
+/* The gradient of the acceleration (the second derivatives of the potential, s^-2) at the
+ * body-fixed position r, for the degrees n_min .. n_max as above: gradient[3 i + j] =
+ * d a_i / d r_j, symmetric and, outside the body, free of trace. Exact to rounding like the
+ * potential: every component is a series of harmonics two degrees higher (in the source),
+ * with no division by cos(phi), so the poles are regular points. Errors: as
+ * myb_gravity_field_eval; MYB_E_DOMAIN also for n_max above 2698. */
+MYB_API MYB_NODISCARD myb_status myb_gravity_field_gradient(const myb_gravity_field* field,
+                                                            myb_gravity_work* work,
+                                                            const double r[3], int n_min,
+                                                            int n_max, double gradient[9]);
+
 /* ---- Tides ----------------------------------------------------------------------------------
  * Tidal changes of a field's coefficients after IERS Conventions 2010, chapter 6 (the formulas
  * are general; every number comes from data, e.g. data/grav/iers2010-tides.tk for the Earth):

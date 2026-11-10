@@ -3,6 +3,7 @@
  * C library's extensions. */
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -63,6 +64,37 @@ myb_status myb_platform_read_file(const char* path, const myb_allocator* allocat
 out:
   myb_internal_release(allocator, buffer);
   close(fd);
+  return status;
+}
+
+myb_status myb_platform_write_file(const char* path, const myb_allocator* allocator,
+                                   const void* data, size_t size) {
+  MYB_CHECK(path != NULL && allocator != NULL && (data != NULL || size == 0));
+  const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  if (fd < 0) {
+    return MYB_E_IO;
+  }
+  const char* bytes = data;
+  size_t done = 0;
+  myb_status status = MYB_OK;
+  /* bound: each iteration writes a positive number of bytes or stops; an interrupted call is
+   * repeated at most as many times as there are bytes */
+  for (size_t calls = 0; done < size && calls <= 2 * size + 8; ++calls) {
+    const ssize_t put = write(fd, bytes + done, size - done);
+    if (put < 0 && errno == EINTR) {
+      continue;
+    }
+    if (put <= 0) {
+      break;
+    }
+    done += (size_t)put;
+  }
+  if (done != size) {
+    status = MYB_E_IO;
+  }
+  if (close(fd) != 0) {
+    status = MYB_E_IO;
+  }
   return status;
 }
 

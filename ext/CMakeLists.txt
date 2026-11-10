@@ -1,34 +1,42 @@
 # Optional modules of empirical models of particular bodies (docs/PLAN.en.md §3): separate targets,
 # never part of libmyb.
 
-add_library(myb_nrlmsise00 STATIC nrlmsise00/nrlmsise00.c)
-add_library(myb::nrlmsise00 ALIAS myb_nrlmsise00)
-target_link_libraries(myb_nrlmsise00 PUBLIC myb)
-target_include_directories(myb_nrlmsise00
-  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/nrlmsise00"
-  PRIVATE "${PROJECT_SOURCE_DIR}/src")
-myb_apply_flags(myb_nrlmsise00)
+# myb_add_ext(<name> <sources>...): the static library myb_<name> (alias and exported name
+# myb::<name>) of ext/<name> and, with MYB_BUILD_SHARED, the shared one myb_<name>_shared
+# (libmyb_<name>.so) on top of the shared libmyb.
+function(myb_add_ext name)
+  add_library(myb_${name} STATIC ${ARGN})
+  add_library(myb::${name} ALIAS myb_${name})
+  set_target_properties(myb_${name} PROPERTIES EXPORT_NAME ${name})
+  target_link_libraries(myb_${name} PUBLIC myb)
+  target_include_directories(myb_${name}
+    PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/${name}>"
+           "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+    PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  myb_apply_flags(myb_${name})
+  if(MYB_BUILD_SHARED)
+    add_library(myb_${name}_shared SHARED ${ARGN})
+    add_library(myb::${name}_shared ALIAS myb_${name}_shared)
+    set_target_properties(myb_${name}_shared PROPERTIES
+      EXPORT_NAME ${name}_shared
+      OUTPUT_NAME myb_${name}
+      VERSION "${PROJECT_VERSION}"
+      SOVERSION "${PROJECT_VERSION_MAJOR}"
+      C_VISIBILITY_PRESET hidden)
+    target_link_libraries(myb_${name}_shared PUBLIC myb_shared)
+    target_include_directories(myb_${name}_shared
+      PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/${name}>"
+             "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+      PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_compile_definitions(myb_${name}_shared PRIVATE MYB_EXT_BUILDING)
+    myb_apply_flags(myb_${name}_shared)
+    myb_symbol_versions(myb_${name}_shared
+      "${CMAKE_CURRENT_SOURCE_DIR}/${name}/myb_${name}.map")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY MYB_EXT_MODULES ${name})
+endfunction()
 
-add_library(myb_sgp4 STATIC sgp4/sgp4.c)
-add_library(myb::sgp4 ALIAS myb_sgp4)
-target_link_libraries(myb_sgp4 PUBLIC myb)
-target_include_directories(myb_sgp4
-  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/sgp4"
-  PRIVATE "${PROJECT_SOURCE_DIR}/src")
-myb_apply_flags(myb_sgp4)
-
-add_library(myb_troposphere STATIC troposphere/troposphere.c)
-add_library(myb::troposphere ALIAS myb_troposphere)
-target_link_libraries(myb_troposphere PUBLIC myb)
-target_include_directories(myb_troposphere
-  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/troposphere"
-  PRIVATE "${PROJECT_SOURCE_DIR}/src")
-myb_apply_flags(myb_troposphere)
-
-add_library(myb_ionosphere STATIC ionosphere/ionosphere.c)
-add_library(myb::ionosphere ALIAS myb_ionosphere)
-target_link_libraries(myb_ionosphere PUBLIC myb)
-target_include_directories(myb_ionosphere
-  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ionosphere"
-  PRIVATE "${PROJECT_SOURCE_DIR}/src")
-myb_apply_flags(myb_ionosphere)
+myb_add_ext(nrlmsise00 nrlmsise00/nrlmsise00.c)
+myb_add_ext(sgp4 sgp4/sgp4.c)
+myb_add_ext(troposphere troposphere/troposphere.c)
+myb_add_ext(ionosphere ionosphere/ionosphere.c)

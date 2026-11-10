@@ -19,12 +19,13 @@
     },
     {
       "name": "windows-release",
-      "displayName": "Windows: Release -O2, MYB_CHECK kept",
+      "displayName": "Windows: Release -O2, MYB_CHECK kept; static and shared libraries",
       "inherits": "windows-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG",
-        "MYB_WARNINGS_AS_ERRORS": "ON"
+        "MYB_WARNINGS_AS_ERRORS": "ON",
+        "MYB_BUILD_SHARED": "ON"
       }
     },
     {
@@ -54,12 +55,13 @@
     },
     {
       "name": "linux-release",
-      "displayName": "Linux: Release -O2, MYB_CHECK kept",
+      "displayName": "Linux: Release -O2, MYB_CHECK kept; static and shared libraries",
       "inherits": "linux-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG",
-        "MYB_WARNINGS_AS_ERRORS": "ON"
+        "MYB_WARNINGS_AS_ERRORS": "ON",
+        "MYB_BUILD_SHARED": "ON"
       }
     },
     {

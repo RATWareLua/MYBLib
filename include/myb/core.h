@@ -17,10 +17,10 @@
 
 /* ---- Version (single source of truth; CMake reads it from here) ---------------------- */
 #define MYB_VERSION_MAJOR 1
-#define MYB_VERSION_MINOR 1
+#define MYB_VERSION_MINOR 2
 #define MYB_VERSION_PATCH 0
 #define MYB_VERSION_TWEAK 0
-/* major.minor.patch.tweak, each below 100: 1.1.0.0 = 1010000 */
+/* major.minor.patch.tweak, each below 100: 1.2.0.0 = 1020000 */
 #define MYB_VERSION_NUMBER                                                              \
   ((MYB_VERSION_MAJOR * 1000000L) + (MYB_VERSION_MINOR * 10000L) +                      \
    (MYB_VERSION_PATCH * 100L) + MYB_VERSION_TWEAK)
@@ -40,6 +40,22 @@
 #define MYB_API __attribute__((visibility("default")))
 #else
 #define MYB_API
+#endif
+
+/* The optional libraries of ext/ are separate binaries with the same scheme: MYB_EXT_BUILDING
+ * is defined only while compiling one of them as a shared library. */
+#if defined(MYB_STATIC)
+#define MYB_EXT_API
+#elif defined(_WIN32)
+#if defined(MYB_EXT_BUILDING)
+#define MYB_EXT_API __declspec(dllexport)
+#else
+#define MYB_EXT_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#define MYB_EXT_API __attribute__((visibility("default")))
+#else
+#define MYB_EXT_API
 #endif
 
 /* ---- Attributes ----------------------------------------------------------------------- */

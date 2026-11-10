@@ -326,107 +326,39 @@ typedef struct fit_result {
   double y0[6];
 } fit_result;
 
-/* Gauss-Newton on (y0, parameters) over observations first .. last of the track. */
+/* The least squares of the library (myb/estim.h) on (y0, parameters) over the positions first
+ * .. last of the track, `iterations` corrections at most. */
 static myb_status fit(myb_force_model* m, const track* tr, size_t first, size_t last, int iterations,
                       fit_result* out) {
-  const size_t np = myb_force_model_parameter_count(m);
-  const size_t nu = 6 + np;
+  static myb_observation obs[MAX_OBS];
+  static double residuals[3 * MAX_OBS];
+  const size_t count = last - first + 1;
+  for (size_t k = 0; k < count; ++k) {
+    obs[k] = (myb_observation){.t = tr->t[first + k],
+                               .measure = myb_measure_position,
+                               .count = 3,
+                               .value = {tr->y[first + k][0], tr->y[first + k][1],
+                                         tr->y[first + k][2]},
+                               .sigma = {1.0, 1.0, 1.0}};
+  }
   double y0[6];
   memcpy(y0, tr->y[first], sizeof y0);
-  const double t0 = tr->t[first];
-  myb_status st = MYB_OK;
-  for (int it = 0; it <= iterations && st == MYB_OK; ++it) {
-    myb_variational* var = NULL;
-    const myb_variational_options o = {.epsilon = 1e-11};
-    st = myb_variational_create(m, &o, NULL, &var);
-    if (st == MYB_OK) {
-      st = myb_variational_start(var, t0, y0);
-    }
-    double n[22 * 22];
-    double b[22];
-    memset(n, 0, sizeof n);
-    memset(b, 0, sizeof b);
-    double s2 = 0.0;
-    double mx = 0.0;
-    size_t k = first;
-    /* bound: the observations; one integrator step per iteration */
-    while (st == MYB_OK && k <= last) {
-      if (tr->t[k] <= myb_variational_time(var)) {
-        double y[6];
-        double phi[36];
-        double sens[6 * 16];
-        st = k == first ? MYB_OK : myb_variational_dense(var, tr->t[k], y, phi, sens);
-        if (k == first) {
-          memcpy(y, y0, sizeof y);
-          memset(phi, 0, sizeof phi);
-          for (int i = 0; i < 6; ++i) {
-            phi[i * 6 + i] = 1.0;
-          }
-          memset(sens, 0, sizeof sens);
-        }
-        double h[3][22];
-        for (int i = 0; i < 3; ++i) {
-          const double res = tr->y[k][i] - y[i];
-          s2 += res * res;
-          for (size_t j = 0; j < 6; ++j) {
-            h[i][j] = phi[(size_t)i * 6 + j];
-          }
-          for (size_t j = 0; j < np; ++j) {
-            h[i][6 + j] = sens[(size_t)i * np + j];
-          }
-          for (size_t p = 0; p < nu; ++p) {
-            b[p] += h[i][p] * res;
-            for (size_t q = 0; q < nu; ++q) {
-              n[p * nu + q] += h[i][p] * h[i][q];
-            }
-          }
-        }
-        const double dr = sqrt((tr->y[k][0] - y[0]) * (tr->y[k][0] - y[0]) +
-                               (tr->y[k][1] - y[1]) * (tr->y[k][1] - y[1]) +
-                               (tr->y[k][2] - y[2]) * (tr->y[k][2] - y[2]));
-        mx = fmax(mx, dr);
-        ++k;
-        continue;
-      }
-      st = myb_variational_step(var, tr->t[last]);
-    }
-    myb_variational_destroy(var);
-    if (st != MYB_OK) {
-      break;
-    }
-    out->rms = sqrt(s2 / (double)(last - first + 1));
-    out->max = mx;
-    memcpy(out->y0, y0, sizeof y0);
-    if (it == iterations) {
-      break;
-    }
-    /* scaled normal equations (diagonal equilibration) */
-    double d[22];
-    for (size_t p = 0; p < nu; ++p) {
-      d[p] = sqrt(n[p * nu + p]);
-      if (!(d[p] > 0.0)) {
-        return MYB_E_DOMAIN;
-      }
-    }
-    for (size_t p = 0; p < nu; ++p) {
-      b[p] /= d[p];
-      for (size_t q = 0; q < nu; ++q) {
-        n[p * nu + q] /= d[p] * d[q];
-      }
-    }
-    st = myb_cholesky(nu, n);
-    if (st != MYB_OK) {
-      break;
-    }
-    myb_cholesky_solve(nu, n, b);
-    for (size_t p = 0; p < 6; ++p) {
-      y0[p] += b[p] / d[p];
-    }
-    for (size_t p = 0; p < np; ++p) {
-      *myb_force_model_parameter(m, p) += b[6 + p] / d[6 + p];
-    }
+  const myb_fit_options options = {.max_iterations = iterations, .tolerance = 1e-9,
+                                   .epsilon = 1e-11};
+  myb_fit_result result;
+  const myb_status st =
+      myb_fit_orbit(m, tr->t[first], y0, obs, count, &options, NULL, &result, NULL, residuals);
+  if (st != MYB_OK) {
+    return st;
   }
-  return st;
+  double mx = 0.0;
+  for (size_t k = 0; k < count; ++k) {
+    mx = fmax(mx, myb_vec3_norm(residuals + 3 * k));
+  }
+  out->rms = result.rms * sqrt(3.0); /* per position, the sigmas being 1 m */
+  out->max = mx;
+  memcpy(out->y0, y0, sizeof y0);
+  return MYB_OK;
 }
 
 /* ---- Scenarios ---------------------------------------------------------------------------------- */

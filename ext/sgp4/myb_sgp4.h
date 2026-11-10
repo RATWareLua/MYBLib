@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 
+#include "myb/ccsds.h"
 #include "myb/core.h"
 #include "myb/frames.h"
 #include "myb/kin.h"
@@ -62,12 +63,32 @@ enum {
  * column 69 are ignored). When column 69 holds a digit it must equal the modulo-10 checksum
  * (digits, '-' = 1) unless flags has MYB_TLE_NO_CHECKSUM. Errors: MYB_E_FORMAT (diag tells the
  * line and column). */
-MYB_API MYB_NODISCARD myb_status myb_tle_parse(const char* line1, const char* line2,
+MYB_EXT_API MYB_NODISCARD myb_status myb_tle_parse(const char* line1, const char* line2,
                                                unsigned flags, myb_tle* tle, myb_diag* diag);
 
 /* The epoch as a UTC calendar date (the fraction of the day converted to seconds with one
  * rounding; the theory itself counts days since 1949 December 31 0h UTC). */
-MYB_API void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc);
+MYB_EXT_API void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc);
+
+/* The two lines of an element set, 69 characters each and a NUL, with their checksums: what
+ * myb_tle_parse reads back to the same values. The catalogue number is written from satnum
+ * when that holds 5 characters, otherwise from catalog_number (Alpha-5 above 99 999). Errors:
+ * MYB_E_DOMAIN (a value that does not fit its field: an eccentricity outside [0, 1), an angle
+ * outside [0, 1000), a derivative of the mean motion of 1 or more, a drag term whose decimal
+ * exponent has two digits, a number above the width of its field, values not finite). */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tle_format(const myb_tle* tle, char line1[70],
+                                                    char line2[70]);
+
+/* The element set of a mean-elements message of the CCSDS (myb/ccsds.h; the message must give
+ * MEAN_MOTION and the TLE-related parameters) and the message of an element set: the numbers
+ * pass unchanged, in the units of the catalogue. The epoch of a message is a calendar date,
+ * that of an element set a day of the year: the conversion is exact to the rounding of one
+ * division. From an element set the message gets the object's identifiers, centre EARTH,
+ * frame TEME, time UTC and theory SGP4; the originator, the name and the creation date are
+ * the caller's to fill. Errors: MYB_E_DOMAIN (a message without those values, a catalogue
+ * number above 339 999). */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle);
+MYB_EXT_API MYB_NODISCARD myb_status myb_omm_from_tle(const myb_tle* tle, myb_omm* omm);
 
 /* ---- The theory ---------------------------------------------------------------------------- */
 
@@ -91,7 +112,7 @@ typedef struct myb_sgp4_constants {
 
 /* The constants of a standard model (WGS-72 old: xke = 0.0743669161; WGS-72 and WGS-84:
  * xke = 60 / sqrt(radius^3 / GM) with GM = 398600.8 and 398600.5 km^3/s^2). */
-MYB_API void myb_sgp4_constants_of(myb_sgp4_gravity gravity, myb_sgp4_constants* constants);
+MYB_EXT_API void myb_sgp4_constants_of(myb_sgp4_gravity gravity, myb_sgp4_constants* constants);
 
 /* Initialised record; fields are internal (read-only for the caller). */
 typedef struct myb_sgp4 {
@@ -116,13 +137,13 @@ typedef struct myb_sgp4 {
 
 /* Initialises from a parsed TLE. Errors: MYB_E_DOMAIN (eccentricity outside [0, 1), mean motion
  * <= 0, perigee below the surface). */
-MYB_API MYB_NODISCARD myb_status myb_sgp4_init(const myb_tle* tle, myb_sgp4_gravity gravity,
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_init(const myb_tle* tle, myb_sgp4_gravity gravity,
                                                myb_sgp4_mode mode, myb_sgp4* sgp4);
 
 /* The same from elements in the units of the theory (epoch: days since 1949 December 31 0h
  * UTC; angles rad, Kozai mean motion rad/min; the derivatives of the mean motion in a TLE are
  * not used by SGP4). */
-MYB_API MYB_NODISCARD myb_status myb_sgp4_init_elements(
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_init_elements(
     const myb_sgp4_constants* constants, myb_sgp4_mode mode, double epoch, double bstar,
     double eccentricity, double argument_of_perigee, double inclination, double mean_anomaly,
     double mean_motion, double node, myb_sgp4* sgp4);
@@ -140,12 +161,12 @@ typedef enum myb_sgp4_error {
 /* TEME position (m) and velocity (m/s) at the given minutes since the epoch of the record.
  * *error (may be NULL) receives the code; codes 1..4 return MYB_E_DOMAIN and leave r, v
  * unchanged, code 6 returns MYB_OK with the state. Thread-safe. */
-MYB_API MYB_NODISCARD myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes,
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes,
                                                     double r[3], double v[3],
                                                     myb_sgp4_error* error);
 
 /* The same in the units of the theory (km, km/s), as printed by its verification program. */
-MYB_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes,
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes,
                                                        double r[3], double v[3],
                                                        myb_sgp4_error* error);
 
@@ -166,14 +187,42 @@ MYB_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, dou
  * relative to the segment's centre. system converts TDB to UTC (scale names "TDB"); equinox
  * gives TEME. Errors: MYB_E_FORMAT (not type 10, inconsistent layout), MYB_E_RANGE (et outside
  * the UTC table), statuses of the propagation (MYB_E_DOMAIN). */
-MYB_API MYB_NODISCARD myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index,
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index,
                                                       const myb_timesys* system,
                                                       const myb_equinox* equinox, myb_time et,
                                                       double state[6]);
 
+/* Writing such a segment: its words for myb_spk_writer_add_raw (myb/kin.h; type 10, frame 1,
+ * the centre 399, start and stop the span the segment is to answer for), laid out as SPKW10
+ * lays them out — the same words for the same element sets. */
+
+/* The eight constants: J2, J3, J4, KE of the model, QO = 120 and SO = 78 km (the density
+ * function), ER the radius in km, AE = 1. */
+MYB_EXT_API void myb_sgp4_spk10_constants(const myb_sgp4_constants* model, double constants[8]);
+
+/* The packet of an element set, in the units of the format: NDT20 (rad/min^2), NDD60
+ * (rad/min^3), BSTAR, the angles in rad, the mean motion in rad/min, the epoch in TDB seconds
+ * past J2000 (system gives the UTC table and the scale "TDB") and the nutation in obliquity
+ * and in longitude with their rates at the epoch (IAU 1980; rad, rad/s) from equinox — or
+ * zeros if it is NULL: SPICE since N0066 and myb_sgp4_spk10_state do not read them.
+ * Errors: those of myb_timesys_from_utc. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_packet(const myb_tle* tle,
+                                                       const myb_timesys* system,
+                                                       const myb_equinox* equinox,
+                                                       double packet[14]);
+
+/* The number of words of a segment of `count` element sets (0 if there are none or too
+ * many), and the words from the packets (14 each, in the order of their epochs, which must
+ * increase). Errors: MYB_E_DOMAIN (no sets, values not finite, epochs not increasing),
+ * MYB_E_OVERFLOW (size < myb_sgp4_spk10_size(count)). */
+MYB_EXT_API size_t myb_sgp4_spk10_size(size_t count);
+MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_words(const double constants[8],
+                                                      const double* packets, size_t count,
+                                                      double* words, size_t size);
+
 /* Greenwich mean sidereal time of IAU 1982 (rad, [0, 2 pi)) at the UT1 Julian date jd1 + jd2,
  * as the theory computes it (gstime). */
-MYB_API double myb_sgp4_gmst(double jd1, double jd2);
+MYB_EXT_API double myb_sgp4_gmst(double jd1, double jd2);
 
 #ifdef __cplusplus
 }

@@ -3,7 +3,9 @@
  * of SGP4-VER.TLE propagated over their time spans as the verification program does (WGS-72,
  * improved mode), compared line by line with tcppver.out (positions printed to 1e-8 km,
  * velocities to 1e-9 km/s), and the sequence of error codes [1, 1, 6, 6, 4, 3, 6]. Then the TLE
- * parser (Alpha-5, checksums, epochs), the modes and the error statuses. */
+ * parser (Alpha-5, checksums, epochs), the modes and the error statuses; the element sets
+ * written back (every set of the verification file reads back to the same values) and the
+ * mean-elements message of the CCSDS turned into an element set and back. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -478,11 +480,359 @@ static void test_spk10(void) {
   myb_timesys_destroy(sys);
 }
 
+static int same_tle(const myb_tle* a, const myb_tle* b) {
+  return strcmp(a->satnum, b->satnum) == 0 && a->catalog_number == b->catalog_number &&
+         a->classification == b->classification && strcmp(a->designator, b->designator) == 0 &&
+         a->epoch_year == b->epoch_year && a->epoch_day == b->epoch_day && a->ndot == b->ndot &&
+         a->nddot == b->nddot && a->bstar == b->bstar && a->ephemeris_type == b->ephemeris_type &&
+         a->element_number == b->element_number && a->inclination == b->inclination &&
+         a->node == b->node && a->eccentricity == b->eccentricity &&
+         a->argument_of_perigee == b->argument_of_perigee && a->mean_anomaly == b->mean_anomaly &&
+         a->mean_motion == b->mean_motion && a->revolution == b->revolution;
+}
+
+static void test_format(void) {
+  /* a set of the catalogue comes back character for character */
+  const char* l1 = "1 00005U 58002B   20287.20333880 -.00000016  00000-0 -22483-4 0  9998";
+  const char* l2 = "2 00005  34.2443 225.5254 1845686 162.2516 205.2356 10.84869164218149";
+  myb_tle t;
+  myb_tle back;
+  myb_diag diag = {0};
+  char f1[70];
+  char f2[70];
+  MT_CHECK(myb_tle_parse(l1, l2, 0, &t, &diag) == MYB_OK);
+  MT_CHECK(myb_tle_format(&t, f1, f2) == MYB_OK);
+  MT_CHECK(strcmp(f1, l1) == 0 && strcmp(f2, l2) == 0);
+
+  /* every set of the verification file: written from what was read, read again with its
+   * checksum, the same values to the bit */
+  char* text = read_all(MYB_TEST_DATA_DIR "/sgp4/SGP4-VER.TLE");
+  MT_CHECK(text != NULL);
+  if (text == NULL) {
+    return;
+  }
+  static char* lines[400];
+  const int n = split_lines(text, lines, 400);
+  int sets = 0;
+  int identical = 0;
+  for (int i = 0; i + 1 < n; ++i) {
+    if (lines[i][0] != '1') {
+      continue;
+    }
+    const char* line1 = lines[i];
+    const char* line2 = lines[++i];
+    MT_CHECK(myb_tle_parse(line1, line2, MYB_TLE_NO_CHECKSUM, &t, &diag) == MYB_OK);
+    const myb_status status = myb_tle_format(&t, f1, f2);
+    MT_CHECK(status == MYB_OK);
+    if (status != MYB_OK) {
+      printf("not written: %s\n", line1);
+      continue;
+    }
+    MT_CHECK(strlen(f1) == 69 && strlen(f2) == 69);
+    MT_CHECK(myb_tle_parse(f1, f2, 0, &back, &diag) == MYB_OK);
+    MT_CHECK(same_tle(&t, &back));
+    ++sets;
+    if (memcmp(f1, line1, 68) == 0 && memcmp(f2, line2, 68) == 0) {
+      ++identical;
+    } else if (getenv("MYB_TLE_SHOW") != NULL) {
+      printf("%.68s\n%.68s\n%.68s\n%.68s\n\n", line1, f1, line2, f2);
+    }
+  }
+  free(text);
+  printf("element sets written back: %d, character for character: %d\n", sets, identical);
+  /* two sets of the file are not as the catalogue writes them: one has no ephemeris type in
+   * its column, one a zero drag term as 00000-0 */
+  MT_CHECK(sets == 33 && identical == 31);
+
+  /* Alpha-5 from the number; what does not fit a field */
+  MT_CHECK(myb_tle_parse(l1, l2, 0, &t, &diag) == MYB_OK);
+  t.satnum[0] = '\0';
+  t.catalog_number = 181234;
+  MT_CHECK(myb_tle_format(&t, f1, f2) == MYB_OK);
+  MT_CHECK(memcmp(f1 + 2, "J1234", 5) == 0 && memcmp(f2 + 2, "J1234", 5) == 0);
+  MT_CHECK(myb_tle_parse(f1, f2, 0, &back, &diag) == MYB_OK && back.catalog_number == 181234);
+  t.catalog_number = 340000;
+  MT_CHECK(myb_tle_format(&t, f1, f2) == MYB_E_DOMAIN);
+  MT_CHECK(myb_tle_parse(l1, l2, 0, &t, &diag) == MYB_OK);
+  myb_tle bad = t;
+  bad.eccentricity = 1.0;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.eccentricity = 0.99999996; /* rounds to 1 */
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.bstar = 1.0e12;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.ndot = 1.5;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.ndot = 0.999999999;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.inclination = 1000.0;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.mean_motion = (double)NAN;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+  bad = t;
+  bad.revolution = 100000;
+  MT_CHECK(myb_tle_format(&bad, f1, f2) == MYB_E_DOMAIN);
+
+  /* a mean-elements message of the CCSDS: the same numbers as an element set */
+  static const char omm_text[] =
+      "CCSDS_OMM_VERS = 2.0\nCREATION_DATE = 2020-06-01T10:00:00\nORIGINATOR = 18 SPCS\n"
+      "OBJECT_NAME = ISS (ZARYA)\nOBJECT_ID = 1998-067A\nCENTER_NAME = EARTH\n"
+      "REF_FRAME = TEME\nTIME_SYSTEM = UTC\nMEAN_ELEMENT_THEORY = SGP4\n"
+      "EPOCH = 2020-06-01T03:22:38.887392\nMEAN_MOTION = 15.49438371\n"
+      "ECCENTRICITY = 0.0002335\nINCLINATION = 51.6443\nRA_OF_ASC_NODE = 93.0000\n"
+      "ARG_OF_PERICENTER = 45.4201\nMEAN_ANOMALY = 314.6988\nEPHEMERIS_TYPE = 0\n"
+      "CLASSIFICATION_TYPE = U\nNORAD_CAT_ID = 25544\nELEMENT_SET_NO = 999\n"
+      "REV_AT_EPOCH = 22954\nBSTAR = 0.000024949\nMEAN_MOTION_DOT = 0.00000907\n"
+      "MEAN_MOTION_DDOT = 0\n";
+  myb_omm omm;
+  MT_CHECK(myb_omm_parse(omm_text, strlen(omm_text), &omm, &diag) == MYB_OK);
+  MT_CHECK(myb_tle_from_omm(&omm, &t) == MYB_OK);
+  MT_CHECK(t.catalog_number == 25544 && strcmp(t.designator, "98067A") == 0);
+  MT_CHECK(t.mean_motion == 15.49438371 && t.bstar == 0.000024949 && t.ndot == 0.00000907);
+  MT_CHECK(myb_tle_format(&t, f1, f2) == MYB_OK);
+  MT_CHECK(memcmp(f1, "1 25544U 98067A   20153.14072786  .00000907  00000-0  24949-4 0  999",
+                  68) == 0);
+  MT_CHECK(memcmp(f2, "2 25544  51.6443  93.0000 0002335  45.4201 314.6988 15.4943837122954",
+                  68) == 0);
+  MT_CHECK(myb_tle_parse(f1, f2, 0, &back, &diag) == MYB_OK);
+  /* the theory gets the same elements from the message as from the lines */
+  myb_sgp4 from_message;
+  myb_sgp4 from_lines;
+  MT_CHECK(myb_sgp4_init(&t, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &from_message) == MYB_OK);
+  MT_CHECK(myb_sgp4_init(&back, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &from_lines) == MYB_OK);
+  double r1[3];
+  double v1[3];
+  double r2[3];
+  double v2[3];
+  MT_CHECK(invoke(&from_message, 720.0, r1, v1) == 0 && invoke(&from_lines, 720.0, r2, v2) == 0);
+  double apart = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    apart = fmax(apart, fabs(r1[i] - r2[i]));
+  }
+  /* the same motion from the epoch; the epoch of the lines keeps 1e-8 day */
+  MT_CHECK(apart == 0.0);
+  MT_CHECK(fabs(t.epoch_day - back.epoch_day) <= 0.5e-8 * (1.0 + 1.0e-6));
+  MT_CHECK(fabs(t.epoch_day - (153.0 + 12158.887392 / 86400.0)) < 1.0e-12);
+  /* and the element set as a message */
+  myb_omm made;
+  MT_CHECK(myb_omm_from_tle(&back, &made) == MYB_OK);
+  MT_CHECK(strcmp(made.object_id, "1998-067A") == 0 && strcmp(made.ref_frame, "TEME") == 0 &&
+           strcmp(made.mean_element_theory, "SGP4") == 0 && strcmp(made.time_system, "UTC") == 0);
+  MT_CHECK(made.has_mean_motion && made.has_tle && made.norad_cat_id == 25544 &&
+           made.element_set_no == 999 && made.rev_at_epoch == 22954);
+  MT_CHECK(made.mean_motion == omm.mean_motion && made.eccentricity == omm.eccentricity &&
+           made.inclination == omm.inclination && made.bstar == omm.bstar &&
+           made.mean_motion_dot == omm.mean_motion_dot);
+  MT_CHECK(made.epoch.year == 2020 && made.epoch.month == 6 && made.epoch.day == 1 &&
+           made.epoch.hour == 3 && made.epoch.minute == 22);
+  MT_CHECK(fabs(made.epoch.second - 38.887392) < 1.0e-3);
+  char text2[2048];
+  size_t length = 0;
+  MT_CHECK(myb_omm_write(&made, text2, sizeof text2, &length) == MYB_OK);
+  MT_CHECK(myb_omm_parse(text2, length, &omm, &diag) == MYB_OK);
+  MT_CHECK(myb_tle_from_omm(&omm, &t) == MYB_OK);
+  char g1[70];
+  char g2[70];
+  MT_CHECK(myb_tle_format(&t, g1, g2) == MYB_OK);
+  MT_CHECK(strcmp(g1, f1) == 0 && strcmp(g2, f2) == 0);
+  /* a message that is not an element set */
+  omm.has_tle = 0;
+  MT_CHECK(myb_tle_from_omm(&omm, &t) == MYB_E_DOMAIN);
+  omm.has_tle = 1;
+  omm.has_mean_motion = 0;
+  MT_CHECK(myb_tle_from_omm(&omm, &t) == MYB_E_DOMAIN);
+}
+
+/* Writing type 10: the words of the segments that CSPICE spkw10_c wrote (t10.bsp: three and
+ * two element sets; t10_many.bsp: 230, with a directory of the epochs) are rebuilt from their
+ * constants and packets; the file written from them is read as the original; the packet of
+ * a two-line set against getelm_c. */
+static void test_spk10_writer(void) {
+  myb_kpool* pool = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  const char* kernels[] = {MYB_DATA_DIR "/time/time-scales.tk", MYB_DATA_DIR "/time/tdb-tt-fb1990.tk",
+                           MYB_DATA_DIR "/time/utc-tai.tk", MYB_DATA_DIR "/frames/iau1980.tk"};
+  for (int i = 0; i < 4; ++i) {
+    MT_CHECK(myb_kpool_load_file(pool, kernels[i], &diag) == MYB_OK);
+  }
+  myb_timesys* sys = NULL;
+  myb_equinox* eq = NULL;
+  MT_CHECK(myb_timesys_create(pool, NULL, &sys, &diag) == MYB_OK);
+  MT_CHECK(myb_equinox_create(pool, "IAU1980", NULL, &eq, &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  if (sys == NULL || eq == NULL) {
+    myb_equinox_destroy(eq);
+    myb_timesys_destroy(sys);
+    return;
+  }
+  enum { MOST_WORDS = 4096, MOST_SETS = 256 };
+  static double words[MOST_WORDS];
+  static double rebuilt[MOST_WORDS];
+  static double packets[14 * MOST_SETS];
+  static unsigned char image[65536];
+  static const char* const files[2] = {MYB_TEST_DATA_DIR "/spk/t10.bsp",
+                                       MYB_TEST_DATA_DIR "/spk/t10_many.bsp"};
+  int segments = 0;
+  int sets = 0;
+  int different = 0;
+  int states = 0;
+  double worst_nutation = 0.0;
+  double first_packets[2][14];
+  for (int file = 0; file < 2; ++file) {
+    myb_spk* spk = NULL;
+    MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+    MT_CHECK(myb_spk_load_file(spk, files[file], &diag) == MYB_OK);
+    myb_spk_writer* writer = NULL;
+    MT_CHECK(myb_spk_writer_create("copy", NULL, &writer) == MYB_OK);
+    const size_t count = myb_spk_segment_count(spk);
+    for (size_t index = 0; index < count; ++index) {
+      myb_spk_segment_info info;
+      myb_spk_segment(spk, index, &info);
+      const size_t size = myb_spk_segment_size(spk, index);
+      MT_CHECK(info.type == 10 && size <= MOST_WORDS);
+      MT_CHECK(myb_spk_segment_data(spk, index, 0, size, words) == MYB_OK);
+      /* the sets: the meta data say how many; each packet follows one word */
+      const size_t n = (size_t)words[size - 17 + 6];
+      MT_CHECK(n >= 1 && n <= MOST_SETS && myb_sgp4_spk10_size(n) == size);
+      for (size_t k = 0; k < n; ++k) {
+        memcpy(packets + 14 * k, words + 8 + 15 * k + 1, 14 * sizeof(double));
+        /* the nutation SPKW10 stored against that of the library at the epoch */
+        double nutation[2];
+        double rates[2];
+        myb_equinox_nutation(eq, myb_time_from_seconds(packets[14 * k + 9]), nutation, rates);
+        worst_nutation = fmax(worst_nutation, fabs(nutation[1] - packets[14 * k + 10]));
+        worst_nutation = fmax(worst_nutation, fabs(nutation[0] - packets[14 * k + 11]));
+        worst_nutation = fmax(worst_nutation, 86400.0 * fabs(rates[1] - packets[14 * k + 12]));
+        worst_nutation = fmax(worst_nutation, 86400.0 * fabs(rates[0] - packets[14 * k + 13]));
+      }
+      if (file == 0 && index < 2) {
+        memcpy(first_packets[index], packets, sizeof first_packets[index]);
+      }
+      MT_CHECK(myb_sgp4_spk10_words(words, packets, n, rebuilt, MOST_WORDS) == MYB_OK);
+      different += memcmp(words, rebuilt, size * sizeof(double)) != 0;
+      const myb_spk_segment_header header = {
+          .target = info.target, .center = info.center, .frame = info.frame, .name = info.name};
+      MT_CHECK(myb_spk_writer_add_raw(writer, &header, 10, info.start, info.stop, rebuilt, size) ==
+               MYB_OK);
+      ++segments;
+      sets += (int)n;
+      /* too small a buffer, epochs out of order */
+      MT_CHECK(myb_sgp4_spk10_words(words, packets, n, rebuilt, size - 1) == MYB_E_OVERFLOW);
+      if (n > 1) {
+        const double keep = packets[14 + 9];
+        packets[14 + 9] = packets[9];
+        MT_CHECK(myb_sgp4_spk10_words(words, packets, n, rebuilt, MOST_WORDS) == MYB_E_DOMAIN);
+        packets[14 + 9] = keep;
+      }
+    }
+    /* the file written from the words: the same states, bit for bit */
+    const size_t bytes = myb_spk_writer_size(writer);
+    MT_CHECK(bytes > 0 && bytes <= sizeof image);
+    MT_CHECK(myb_spk_writer_write(writer, image, sizeof image) == MYB_OK);
+    myb_spk* copy = NULL;
+    MT_CHECK(myb_spk_create(NULL, &copy) == MYB_OK);
+    MT_CHECK(myb_spk_load_memory(copy, image, bytes, &diag) == MYB_OK);
+    MT_CHECK(myb_spk_segment_count(copy) == count);
+    for (size_t index = 0; index < count; ++index) {
+      myb_spk_segment_info info;
+      myb_spk_segment_info same;
+      myb_spk_segment(spk, index, &info);
+      myb_spk_segment(copy, index, &same);
+      MT_CHECK(info.target == same.target && info.center == same.center &&
+               info.frame == same.frame && same.type == 10 && info.start == same.start &&
+               info.stop == same.stop && strcmp(info.name, same.name) == 0);
+      for (int k = 0; k <= 12; ++k) {
+        const double et = info.start + (info.stop - info.start) * (double)k / 12.0;
+        double a[6];
+        double b[6];
+        MT_CHECK(myb_sgp4_spk10_state(spk, index, sys, eq, myb_time_from_seconds(et), a) ==
+                 MYB_OK);
+        MT_CHECK(myb_sgp4_spk10_state(copy, index, sys, eq, myb_time_from_seconds(et), b) ==
+                 MYB_OK);
+        MT_CHECK(memcmp(a, b, sizeof a) == 0);
+        ++states;
+      }
+    }
+    myb_spk_destroy(copy);
+    myb_spk_writer_destroy(writer);
+    myb_spk_destroy(spk);
+  }
+  printf("SPK type 10 written: %d segments of %d element sets rebuilt from their packets, %d "
+         "differ from the words of SPKW10; %d states of the copies as of the files; nutation of "
+         "the packets within %.1e rad (rates: a day)\n",
+         segments, sets, different, states, worst_nutation);
+  MT_CHECK(segments == 3 && sets == 235 && different == 0 && states == 39);
+  MT_CHECK(worst_nutation < 1e-9);
+  MT_CHECK(myb_sgp4_spk10_size(0) == 0 && myb_sgp4_spk10_size(1) == 8 + 15 + 1 + 17 &&
+           myb_sgp4_spk10_size(101) == 8 + 101 * 16 + 1 + 17);
+
+  /* the packet of a two-line set against getelm_c: the first sets of the two series are
+   * Vanguard 1 and Molniya 2-14 of the verification file */
+  char* tle_text = read_all(MYB_TEST_DATA_DIR "/sgp4/SGP4-VER.TLE");
+  MT_CHECK(tle_text != NULL);
+  if (tle_text != NULL) {
+    static char* lines[400];
+    const int n = split_lines(tle_text, lines, 400);
+    static const char* const numbers[2] = {"00005", "08195"};
+    double worst = 0.0;
+    double worst_epoch = 0.0;
+    int found = 0;
+    for (int which = 0; which < 2; ++which) {
+      for (int i = 0; i + 1 < n; ++i) {
+        if (lines[i][0] != '1' || strncmp(lines[i] + 2, numbers[which], 5) != 0) {
+          continue;
+        }
+        myb_tle tle;
+        MT_CHECK(myb_tle_parse(lines[i], lines[i + 1], MYB_TLE_NO_CHECKSUM, &tle, &diag) ==
+                 MYB_OK);
+        double packet[14];
+        MT_CHECK(myb_sgp4_spk10_packet(&tle, sys, eq, packet) == MYB_OK);
+        const double* expected = first_packets[which];
+        for (int k = 0; k < 9; ++k) {
+          const double scale = fabs(expected[k]) > 0.0 ? fabs(expected[k]) : 1.0;
+          worst = fmax(worst, fabs(packet[k] - expected[k]) / scale);
+        }
+        worst_epoch = fmax(worst_epoch, fabs(packet[9] - expected[9]));
+        for (int k = 10; k < 14; ++k) {
+          MT_CHECK(fabs(packet[k] - expected[k]) < 1e-9);
+        }
+        /* without the nutation model: zeros */
+        MT_CHECK(myb_sgp4_spk10_packet(&tle, sys, NULL, packet) == MYB_OK);
+        MT_CHECK(packet[10] == 0.0 && packet[13] == 0.0 && packet[9] != 0.0);
+        ++found;
+        break;
+      }
+    }
+    printf("packets of two-line sets against getelm_c: elements within %.1e, epochs within "
+           "%.1e s (SPICE's TDB - TT has one term)\n",
+           worst, worst_epoch);
+    MT_CHECK(found == 2 && worst < 1e-14 && worst_epoch < 1e-4);
+    free(tle_text);
+  }
+  double constants[8];
+  myb_sgp4_constants model;
+  myb_sgp4_constants_of(MYB_SGP4_WGS72, &model);
+  myb_sgp4_spk10_constants(&model, constants);
+  MT_CHECK(constants[0] == model.j2 && constants[3] == model.xke && constants[4] == 120.0 &&
+           constants[5] == 78.0 && constants[6] == model.radius && constants[7] == 1.0);
+  myb_equinox_destroy(eq);
+  myb_timesys_destroy(sys);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   run_verification();
   test_parser();
+  test_format();
   test_modes();
   test_spk10();
+  test_spk10_writer();
   return mt_finish("test_sgp4");
 }

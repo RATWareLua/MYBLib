@@ -1,0 +1,13 @@
+prefix=@MYB_PC_PREFIX@
+exec_prefix=${prefix}
+libdir=@MYB_PC_LIBDIR@
+includedir=@MYB_PC_INCLUDEDIR@
+datadir=@MYB_PC_DATADIR@
+
+Name: myb
+Description: @PROJECT_DESCRIPTION@
+URL: https://github.com/RATWareLua/MYBLib
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir} @MYB_PC_CFLAGS@
+Libs: -L${libdir} -lmyb @MYB_PC_LIBS@
+Libs.private: @MYB_PC_LIBS_PRIVATE@

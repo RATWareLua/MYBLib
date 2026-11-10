@@ -13,7 +13,9 @@
 #include <stddef.h>
 
 #include "myb/core.h"
+#include "myb/frames.h"
 #include "myb/grav.h"
+#include "myb/time.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +40,18 @@ MYB_API double myb_radiation_flux(double luminosity, double distance);
  * unit direction of propagation (from the source to the object), cr = 1 + reflectivity. */
 MYB_API void myb_force_radiation_sphere(double pressure, double cr, double area_over_mass,
                                         const double u[3], double a[3]);
+
+/* The same for an object that moves: to the first order in v / c the light comes from a
+ * direction changed by the aberration and with an energy changed by the Doppler shift
+ * (J. A. Burns, P. L. Lamy, S. Soter, Icarus 40, 1, 1979, eq. 2),
+ *   a += pressure cr area_over_mass [ (1 - u.v / c) u - v / c ],
+ * v the velocity of the object relative to the source. The part along -v is the
+ * Poynting-Robertson drag: for dust it shrinks and rounds the orbit,
+ *   da/dt = -(beta mu / c) (2 + 3 e^2) / (a (1 - e^2)^(3/2)), beta the ratio of the radiation
+ * force to the gravity of the source. */
+MYB_API void myb_force_radiation_moving(double pressure, double cr, double area_over_mass,
+                                        const double u[3], const double v[3], double c,
+                                        double a[3]);
 
 /* A flat plate: area (m^2), outward unit normal, fractions of the incoming light reflected
  * specularly and diffusely (the rest is absorbed); thermal != 0 re-emits the absorbed part at
@@ -74,6 +88,56 @@ MYB_API double myb_shadow_fraction(const double source[3], double source_radius,
                                    const double occulter[3], double occulter_radius,
                                    const double limb[2]);
 
+/* How far the disks of the source and of the occulter, seen from the object, are from touching
+ * (rad), with the geometry of myb_shadow_fraction: c - (a + b) with inner == 0 — zero where
+ * they touch from outside, the edge of the penumbra — and c - |b - a| otherwise — zero where
+ * one touches the other from inside, the edge of the umbra or of the annular phase; a and b
+ * the angular radii, c the angle between the centres. Positive clear of the edge, towards the
+ * light. Where myb_shadow_fraction takes the occulter not to be in front: 1; inside the
+ * occulter: -1. These zeros are where the visible fraction stops being smooth. */
+MYB_API double myb_shadow_margin(const double source[3], double source_radius,
+                                 const double occulter[3], double occulter_radius, int inner);
+
+/* The fraction left by several occulters at once (count <= 8; occulters: 3 values each,
+ * radii: one each): the part of the source's disk outside all of them. Where the disks of
+ * two occulters overlap on the source, the product of their separate fractions counts the
+ * overlap twice; here every circle around the source's centre loses the union of the arcs
+ * the occulters cover. With one occulter in front this is myb_shadow_fraction. */
+MYB_API double myb_shadow_fraction_many(const double source[3], double source_radius,
+                                        const double* occulters, const double* radii,
+                                        size_t count, const double limb[2]);
+
+/* The atmosphere of an occulting body as it bends and dims the light that grazes it: the
+ * refractivity n - 1 at the surface and the scale height of an exponential atmosphere, and
+ * its vertical optical depth at the surface (0: clear). */
+typedef struct myb_refraction {
+  double refractivity;
+  double scale_height;  /* m, > 0 */
+  double optical_depth; /* >= 0 */
+} myb_refraction;
+
+/* The angle (rad) by which a ray is bent that passes the body of the given radius at the
+ * height given: (n - 1) sqrt(2 pi (R + h) / H), the first order in the refractivity (within a
+ * few per cent at the surface of the Earth, where a ray that grazes it is bent by 1.1 deg). */
+MYB_API double myb_refraction_bending(const myb_refraction* atmosphere, double radius,
+                                      double height);
+
+/* The visible fraction of the source with the atmosphere of the occulter: every element of
+ * the disk is seen through the atmosphere displaced away from the body by the bending of its
+ * ray, squeezed towards the limb (which dims it, d apparent / d true < 1) and attenuated by
+ * the air along the ray (exp(-tau), tau the optical depth along the tangent path). Light so
+ * reaches inside the geometric shadow, and the penumbra is dimmer and wider than without
+ * air; with refractivity 0 and optical depth 0 this is myb_shadow_fraction. Rays whose
+ * tangent point lies under the surface — or under the level where the atmosphere bends
+ * light as fast as the planet curves — do not come out. The theory of the illumination of
+ * the eclipsed Moon (F. Link, Eclipse Phenomena in Astronomy, 1969), as it enters the
+ * radiation pressure on satellites (D. Vokrouhlicky, P. Farinella, F. Mignard, Astron.
+ * Astrophys. 280, 295, 1993). The source is taken far beyond the occulter. */
+MYB_API double myb_shadow_fraction_refracted(const double source[3], double source_radius,
+                                             const double occulter[3], double occulter_radius,
+                                             const myb_refraction* atmosphere,
+                                             const double limb[2]);
+
 /* Radiation of a planet: sunlight reflected by its surface (albedo, Lambertian) and its own
  * thermal emission (emissivity, the absorbed flux re-emitted uniformly over the sphere), both
  * coefficients zonal functions a = a0 + a1 P1(sin phi) + a2 P2(sin phi) of the latitude, with
@@ -98,12 +162,211 @@ MYB_API MYB_NODISCARD myb_status myb_force_planet_radiation(const myb_planet_rad
                                                             double cr_area_over_mass, int rings,
                                                             double a[3]);
 
+/* The gradient of that acceleration with respect to r (written, dadr[3 i + j]): the same
+ * elements of the surface with the derivative of what each sends, so it is the gradient of
+ * the radiation field to the accuracy of the rings, not the derivative of their sum (whose
+ * elements move with the object). */
+MYB_API MYB_NODISCARD myb_status myb_force_planet_radiation_gradient(
+    const myb_planet_radiation* planet, const double r[3], const double sun[3], double solar_flux,
+    double phase, double cr_area_over_mass, int rings, double dadr[9]);
+
+/* ---- What the object emits, and the tide it raises ------------------------------------------- */
+
+/* The recoil of radiation of the given power (W) leaving along the unit direction:
+ * a -= efficiency power / (mass c) direction. efficiency: the part of the power that carries
+ * momentum along the direction — 1 for a beam, 2/3 for a flat Lambertian radiator. */
+MYB_API void myb_force_emission(double power, double efficiency, double mass, double c,
+                                const double direction[3], double a[3]);
+
+/* The tide that a point mass (the raiser, GM = gm_raiser) raises on a body (GM = gm_body, Love
+ * number k2, radius, rotating with omega, rad/s) answers with a constant delay `lag` (s): the
+ * bulge is where the raiser was, as the body saw it, a time `lag` ago. The acceleration of
+ * the raiser relative to the body (F. Mignard, Moon and Planets 20, 301, 1979):
+ *   a -= 3 k2 gm_raiser (1 + gm_raiser / gm_body) R^5 / r^8
+ *        { [r] + lag [ 2 (r.v) r / r^2 + r x omega + v ] },
+ * r and v those of the raiser relative to the body; the term [r] — the tide without delay,
+ * which the tides of a gravity field (myb/grav.h) already give — only with with_static != 0.
+ * For a circular orbit in the equator da/dt = 6 k2 lag (m / M) (R / a)^5 n a (omega - n).
+ * The tide raised on the raiser by the body is the same call with the roles exchanged.
+ * Errors: MYB_E_DOMAIN. */
+MYB_API MYB_NODISCARD myb_status myb_force_tidal_lag(double gm_body, double gm_raiser, double k2,
+                                                     double radius, double lag,
+                                                     const double omega[3], const double r[3],
+                                                     const double v[3], int with_static,
+                                                     double a[3]);
+
+/* The torque of the same tide on the body, per unit of its mass (the unit of myb/attitude.h),
+ * in the axes of r: what the orbit gains in angular momentum the rotation of the body loses.
+ * It is written, not added. Errors: MYB_E_DOMAIN. */
+MYB_API MYB_NODISCARD myb_status myb_torque_tidal_lag(double gm_body, double gm_raiser, double k2,
+                                                      double radius, double lag,
+                                                      const double omega[3], const double r[3],
+                                                      const double v[3], double torque[3]);
+
+/* ---- Small bodies ------------------------------------------------------------------------------
+ * The accelerations that are not gravity in the motion of comets and asteroids, as the orbit
+ * fits of the catalogues take them: components along the radius from the Sun, across it in
+ * the orbital plane (towards the motion) and along the orbital angular momentum, each a
+ * constant times one function of the distance,
+ *   a = g(r) (A1 radial + A2 transverse + A3 normal),
+ *   g(r) = alpha (r / r0)^-m (1 + (r / r0)^n)^-k. */
+typedef struct myb_nongrav {
+  double a[3]; /* A1, A2, A3: m/s^2 where g = 1 */
+  double r0;   /* m */
+  double alpha;
+  double m;
+  double n;
+  double k; /* 0: no second factor */
+} myb_nongrav;
+
+/* The sublimation of water ice from a comet (B. G. Marsden, Z. Sekanina, D. K. Yeomans,
+ * Astron. J. 78, 211, 1973): r0 = 2.808 au, m = 2.15, n = 5.093, k = 4.6142, alpha such that
+ * g(1 au) = 1. */
+MYB_API void myb_nongrav_marsden(double a1, double a2, double a3, myb_nongrav* model);
+
+/* g(r) = (r0 / r)^exponent. With A2 alone and exponent 2 this is the Yarkovsky effect as
+ * fitted to asteroids (D. Farnocchia et al., Icarus 224, 1, 2013), which changes the
+ * semi-major axis by da/dt = 2 A2 (1 - e^2) (r0 / p)^2 / n. */
+MYB_API void myb_nongrav_power(double a1, double a2, double a3, double r0, double exponent,
+                               myb_nongrav* model);
+
+MYB_API double myb_nongrav_g(const myb_nongrav* model, double r);
+
+/* a += the acceleration at the position r and velocity v relative to the Sun. Errors:
+ * MYB_E_DOMAIN (r = 0, r parallel to v, values not finite). */
+MYB_API MYB_NODISCARD myb_status myb_force_nongrav(const myb_nongrav* model, const double r[3],
+                                                   const double v[3], double a[3]);
+
+/* The same with the activity lagging behind the heating (D. K. Yeomans, P. W. Chodas, Astron.
+ * J. 98, 1083, 1989): g is taken at the distance the body had `delay` seconds earlier on its
+ * orbit about the Sun — the two-body orbit of GM = gm through r, v. A positive delay puts the
+ * peak of the outgassing after the perihelion. Errors: MYB_E_DOMAIN, those of
+ * myb_kepler_propagate. */
+MYB_API MYB_NODISCARD myb_status myb_force_nongrav_delayed(const myb_nongrav* model, double gm,
+                                                           double delay, const double r[3],
+                                                           const double v[3], double a[3]);
+
+/* The Yarkovsky drift of the semi-major axis from the thermal properties of a body: the
+ * linear theory of heat conduction in a sphere on a circular orbit (D. Vokrouhlicky, Astron.
+ * Astrophys. 335, 1093, 1998; 344, 362, 1999), for a body much larger than the depth the
+ * thermal wave reaches (metres for the day, tens of metres for the year: asteroids of a
+ * hundred metres and more). */
+typedef struct myb_yarkovsky {
+  double radius;          /* m */
+  double density;         /* kg m^-3 */
+  double absorptivity;    /* 1 - Bond albedo */
+  double emissivity;
+  double thermal_inertia; /* sqrt(conductivity density heat capacity), J m^-2 s^-1/2 K^-1 */
+  double rotation_rate;   /* rad/s */
+  double obliquity;       /* rad: from the orbital angular momentum to the spin */
+  double conductivity;    /* W m^-1 K^-1; 0: the body is taken to be much larger than the depth
+                             of the thermal wave. Otherwise that depth, conductivity /
+                             (thermal_inertia sqrt(frequency)), is compared with the radius. */
+} myb_yarkovsky;
+
+/* da/dt (m/s) of the diurnal effect — outwards for a prograde rotation — and of the seasonal
+ * one, always inwards, at the flux (W m^-2) of the Sun on the orbit and the mean motion
+ * (rad/s); either output may be NULL. Errors: MYB_E_DOMAIN. */
+MYB_API MYB_NODISCARD myb_status myb_yarkovsky_drift(const myb_yarkovsky* body, double flux,
+                                                     double mean_motion, double c,
+                                                     double* diurnal, double* seasonal);
+
+/* How the surface temperature of a sphere of radius `ratio` depths of the thermal wave
+ * follows a heating that varies with the thermal parameter theta: the complex amplitude of
+ * the answer relative to a body without thermal inertia, 1 / (1 + lambda zeta(z)),
+ * zeta = z j1'(z) / j1(z), z = (1 - i) ratio / sqrt(2), lambda = theta / (sqrt(2) ratio) —
+ * the solution of the linear heat conduction in the sphere. Its imaginary part (negative: the
+ * answer lags) is the function F of the Yarkovsky drift; for ratio -> infinity it is
+ * 1 / (1 + theta (1 + i) / 2). ratio <= 0 stands for that limit. */
+MYB_API void myb_yarkovsky_response(double ratio, double theta, double* real, double* imaginary);
+
+/* The diurnal Yarkovsky acceleration of a body at an instant, for any orbit: the recoil of
+ * the heat radiated from the afternoon side,
+ *   a += -(4 alpha / 9) Phi [ Re(R) s - Im(R) (spin x s) ],
+ * s the part of the unit direction to_sun across the spin axis (unit), Phi the light's force
+ * per unit mass at the flux given, R the response above at the rotation frequency. The part
+ * along the spin axis — the seasonal effect — depends on the whole orbit and is not here
+ * (myb_yarkovsky_drift gives its mean on a circular orbit). obliquity of *body is not used.
+ * Errors: MYB_E_DOMAIN. */
+MYB_API MYB_NODISCARD myb_status myb_force_yarkovsky(const myb_yarkovsky* body,
+                                                     const double spin[3], double flux, double c,
+                                                     const double to_sun[3], double a[3]);
+
+/* The seasonal Yarkovsky effect on an orbit of any eccentricity up to 0.95: the part of the
+ * recoil along the spin axis. It follows the heating of the two hemispheres over the whole
+ * orbit, so it belongs to an orbit and not to an instant: the heating along the axis,
+ * Phi(M) (s . u(M)) — Phi the light's force per unit mass, u the direction to the Sun, s the
+ * spin axis —, is a Fourier series in the mean anomaly M, and each of its harmonics k is
+ * answered with the response of the body (myb_yarkovsky_response) at the frequency k n,
+ * linearised about the mean temperature of the orbit:
+ *   a = -(4 alpha / 9) s Re sum_k R(k n) c_k e^(i k M)
+ * (D. Vokrouhlicky, P. Farinella, Astron. J. 118, 3049, 1999, for the linear theory). The
+ * series is taken to the harmonic where its terms fall below 1e-14 of the first (2 at
+ * e = 0, 70 at e = 0.5, 3000 at e = 0.95). On a circular orbit the mean drift is that of
+ * myb_yarkovsky_drift. */
+typedef struct myb_yarkovsky_season myb_yarkovsky_season;
+
+/* state: the body relative to the Sun (m, m/s) — it gives the orbit; gm of the Sun; spin: the
+ * axis (unit); flux (W m^-2) of the Sun at `distance` (m). Errors: MYB_E_DOMAIN (the body, a
+ * spin that is not a unit vector, an orbit that is not an ellipse of e <= 0.95), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_yarkovsky_season_create(const myb_yarkovsky* body,
+                                                             const double spin[3], double gm,
+                                                             const double state[6], double flux,
+                                                             double distance, double c,
+                                                             const myb_allocator* allocator,
+                                                             myb_yarkovsky_season** season);
+MYB_API void myb_yarkovsky_season_destroy(myb_yarkovsky_season* season); /* accepts NULL */
+
+/* a += the acceleration of the body at the position r (m) relative to the Sun: where it is
+ * on the orbit given at the creation is taken from the direction of r in the plane of that
+ * orbit. */
+MYB_API void myb_force_yarkovsky_season(const myb_yarkovsky_season* season, const double r[3],
+                                        double a[3]);
+
+/* The drift of the semi-major axis (m/s) averaged over the orbit — inwards —, and the number
+ * of harmonics kept. */
+MYB_API double myb_yarkovsky_season_drift(const myb_yarkovsky_season* season);
+MYB_API size_t myb_yarkovsky_season_harmonics(const myb_yarkovsky_season* season);
+
 /* ---- Atmosphere -------------------------------------------------------------------------------- */
 
 /* Drag: a += -1/2 rho cd_area_over_mass |v| v, with v the velocity relative to the atmosphere
  * (e.g. v - w x r for an atmosphere rotating with the planet) and rho in kg m^-3. */
 MYB_API void myb_force_drag(double density, double cd_area_over_mass, const double v[3],
                             double a[3]);
+
+/* Density (kg m^-3) of an atmosphere at the body-fixed position r (m) and the instant t (the
+ * scale is the model's own, e.g. UT-based arguments of an empirical model are derived from it):
+ * the form in which atmospheres enter the drag of a force model (myb/env.h). Any status other
+ * than MYB_OK is returned to the caller unchanged. */
+typedef myb_status (*myb_density_function)(void* context, myb_time t, const double r[3],
+                                           double* density);
+
+/* An atmosphere in hydrostatic layers of constant scale height: above the base height
+ * base[k] (geodetic height over the ellipsoid, m; increasing with k) and below base[k + 1],
+ *   rho = density[k] exp(-(h - base[k]) / scale[k]);
+ * below base[0] the first layer is continued. The numbers are the caller's (a table of a
+ * standard atmosphere, or one layer fitted to the heights of interest). */
+enum { MYB_ATMOSPHERE_LAYERS = 32 };
+
+/* The wind: the velocity (m/s) of the gas relative to the rotating body, in its body-fixed
+ * frame, at the body-fixed position r and the instant t. Any status other than MYB_OK stops
+ * the evaluation. */
+typedef myb_status (*myb_wind_function)(void* context, myb_time t, const double r[3],
+                                        double w[3]);
+
+typedef struct myb_exponential_atmosphere {
+  myb_ellipsoid ellipsoid;
+  size_t count;                          /* layers used, 1 .. MYB_ATMOSPHERE_LAYERS */
+  double base[MYB_ATMOSPHERE_LAYERS];    /* m */
+  double density[MYB_ATMOSPHERE_LAYERS]; /* kg m^-3, >= 0 */
+  double scale[MYB_ATMOSPHERE_LAYERS];   /* m, > 0 */
+} myb_exponential_atmosphere;
+
+/* myb_density_function; context: const myb_exponential_atmosphere*; t is not used. Errors:
+ * MYB_E_DOMAIN (an invalid table or ellipsoid, non-finite r). */
+MYB_API MYB_NODISCARD myb_status myb_density_exponential(void* atmosphere, myb_time t,
+                                                         const double r[3], double* density);
 
 /* ---- Empirical ------------------------------------------------------------------------------- */
 

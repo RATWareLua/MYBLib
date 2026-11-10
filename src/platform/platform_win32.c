@@ -92,6 +92,41 @@ out:
   return status;
 }
 
+myb_status myb_platform_write_file(const char* path, const myb_allocator* allocator,
+                                   const void* data, size_t size) {
+  enum { CHUNK = 1 << 30 };
+
+  MYB_CHECK(path != NULL && allocator != NULL && (data != NULL || size == 0));
+  wchar_t* wide = NULL;
+  myb_status status = wide_path(path, allocator, &wide);
+  if (status != MYB_OK) {
+    return status;
+  }
+  HANDLE file =
+      CreateFileW(wide, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  myb_internal_release(allocator, wide);
+  if (file == INVALID_HANDLE_VALUE) {
+    return MYB_E_IO;
+  }
+  const char* bytes = data;
+  size_t done = 0;
+  /* bound: each iteration writes a positive number of bytes or stops */
+  for (size_t calls = 0; done < size && calls <= size / CHUNK + 1; ++calls) {
+    const size_t remaining = size - done;
+    const DWORD request = (DWORD)(remaining < CHUNK ? remaining : CHUNK);
+    DWORD put = 0;
+    if (!WriteFile(file, bytes + done, request, &put, NULL) || put == 0) {
+      break;
+    }
+    done += put;
+  }
+  status = done == size ? MYB_OK : MYB_E_IO;
+  if (!CloseHandle(file)) {
+    status = MYB_E_IO;
+  }
+  return status;
+}
+
 myb_status myb_platform_map_file(const char* path, const myb_allocator* allocator,
                                  myb_platform_mapping* mapping) {
   MYB_CHECK(path != NULL && allocator != NULL && mapping != NULL);

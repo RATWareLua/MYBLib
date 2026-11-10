@@ -29,7 +29,7 @@ extern "C" {
  * station. alpha = 1 is the standard model (with R = 6371 km, H = 450 km of the IGS maps; the
  * values of a file: myb_ionex_shell); the modified model of CODE uses H = 506.7 km,
  * alpha = 0.9782. */
-MYB_API MYB_NODISCARD myb_status myb_iono_pierce_point(double latitude, double longitude,
+MYB_EXT_API MYB_NODISCARD myb_status myb_iono_pierce_point(double latitude, double longitude,
                                                        double azimuth, double elevation,
                                                        double radius, double height,
                                                        double alpha, double* pierce_latitude,
@@ -43,20 +43,20 @@ typedef struct myb_ionex myb_ionex;
 /* Reads the two-dimensional TEC maps of an IONEX file (text of `size` bytes; RMS and height maps
  * are skipped). Errors: MYB_E_FORMAT (with the line in diag), MYB_E_NOMEM, MYB_E_DOMAIN
  * (three-dimensional maps). */
-MYB_API MYB_NODISCARD myb_status myb_ionex_load(const char* text, size_t size,
+MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_load(const char* text, size_t size,
                                                 const myb_allocator* allocator,
                                                 myb_ionex** maps, myb_diag* diag);
-MYB_API void myb_ionex_destroy(myb_ionex* maps); /* NULL is allowed */
+MYB_EXT_API void myb_ionex_destroy(myb_ionex* maps); /* NULL is allowed */
 
 /* Base radius and shell height of the maps (m). */
-MYB_API void myb_ionex_shell(const myb_ionex* maps, double* radius, double* height);
+MYB_EXT_API void myb_ionex_shell(const myb_ionex* maps, double* radius, double* height);
 
 /* Vertical total electron content (electrons/m^2) at the modified Julian date (UT), geodetic
  * latitude and longitude of the shell: bilinear in latitude and longitude, linear in time
  * between the maps rotated with the Sun (the recommended interpolation of the IONEX
  * description, eq. 3: E_i at longitude + (t - T_i) 360 deg / day). Errors: MYB_E_RANGE (time
  * outside the maps, latitude outside the grid, a missing value of the map). */
-MYB_API MYB_NODISCARD myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
+MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
                                                 double latitude, double longitude, double* vtec);
 
 #ifdef __cplusplus

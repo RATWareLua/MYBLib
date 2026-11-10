@@ -77,6 +77,114 @@ myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm_external, const doubl
   return MYB_OK;
 }
 
+/* [a x]: the matrix of the cross product, ([a x] b) = a x b. */
+static void cross_matrix(const double a[3], double m[9]) {
+  m[0] = 0.0;
+  m[1] = -a[2];
+  m[2] = a[1];
+  m[3] = a[2];
+  m[4] = 0.0;
+  m[5] = -a[0];
+  m[6] = -a[1];
+  m[7] = a[0];
+  m[8] = 0.0;
+}
+
+myb_status myb_rel_schwarzschild_jacobian(const myb_ppn* ppn, double gm, const double r[3],
+                                          const double v[3], double dadr[9], double dadv[9]) {
+  MYB_CHECK(ppn != NULL && r != NULL && v != NULL);
+  const double rn = myb_vec3_norm(r);
+  if (!usable(ppn, r, v) || !isfinite(gm) || !(rn > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  /* a = k (A r + B v), k = gm / (c^2 r^3), A = 2 (beta + gamma) gm / r - gamma v.v,
+   * B = 2 (1 + gamma) r.v */
+  const double c2 = ppn->c * ppn->c;
+  const double k = gm / (c2 * rn * rn * rn);
+  const double radial = 2.0 * (ppn->beta + ppn->gamma) * gm / rn - ppn->gamma * myb_vec3_dot(v, v);
+  const double along = 2.0 * (1.0 + ppn->gamma) * myb_vec3_dot(r, v);
+  const double d_radial = -2.0 * (ppn->beta + ppn->gamma) * gm / (rn * rn * rn);
+  for (int i = 0; i < 3; ++i) {
+    const double ai = radial * r[i] + along * v[i];
+    for (int j = 0; j < 3; ++j) {
+      if (dadr != NULL) {
+        dadr[3 * i + j] = -3.0 * k * ai * r[j] / (rn * rn) +
+                          k * ((i == j ? radial : 0.0) + r[i] * d_radial * r[j] +
+                               2.0 * (1.0 + ppn->gamma) * v[i] * v[j]);
+      }
+      if (dadv != NULL) {
+        dadv[3 * i + j] = k * (-2.0 * ppn->gamma * r[i] * v[j] + (i == j ? along : 0.0) +
+                               2.0 * (1.0 + ppn->gamma) * v[i] * r[j]);
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status myb_rel_lense_thirring_jacobian(const myb_ppn* ppn, double gm, const double j[3],
+                                           const double r[3], const double v[3], double dadr[9],
+                                           double dadv[9]) {
+  MYB_CHECK(ppn != NULL && j != NULL && r != NULL && v != NULL);
+  const double rn = myb_vec3_norm(r);
+  if (!usable(ppn, r, v) || !myb_vec3_finite(j) || !isfinite(gm) || !(rn > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  /* a = K (3 h p / r^5 + q / r^3), K = (1 + gamma) gm / c^2, h = r x v, p = r.j, q = v x j */
+  const double c2 = ppn->c * ppn->c;
+  const double big_k = (1.0 + ppn->gamma) * gm / c2;
+  const double r2 = rn * rn;
+  const double r3 = r2 * rn;
+  const double r5 = r3 * r2;
+  double h[3];
+  double q[3];
+  myb_vec3_cross(r, v, h);
+  myb_vec3_cross(v, j, q);
+  const double p = myb_vec3_dot(r, j);
+  double vx[9];
+  double rx[9];
+  double jx[9];
+  cross_matrix(v, vx);
+  cross_matrix(r, rx);
+  cross_matrix(j, jx);
+  for (int i = 0; i < 3; ++i) {
+    for (int k = 0; k < 3; ++k) {
+      if (dadr != NULL) {
+        /* d h / d r = -[v x], d p / d r = j */
+        dadr[3 * i + k] = big_k * (3.0 * (h[i] * j[k] - p * vx[3 * i + k]) / r5 -
+                                   15.0 * h[i] * p * r[k] / (r5 * r2) - 3.0 * q[i] * r[k] / r5);
+      }
+      if (dadv != NULL) {
+        /* d h / d v = [r x], d q / d v = -[j x] */
+        dadv[3 * i + k] = big_k * (3.0 * p * rx[3 * i + k] / r5 - jx[3 * i + k] / r3);
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status myb_rel_de_sitter_jacobian(const myb_ppn* ppn, double gm_external, const double R[3],
+                                      const double V[3], double dadv[9]) {
+  MYB_CHECK(ppn != NULL && R != NULL && V != NULL && dadv != NULL);
+  const double rn = myb_vec3_norm(R);
+  if (!usable(ppn, R, V) || !isfinite(gm_external) || !(rn > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  /* a = Omega x v, Omega = (1 + 2 gamma) V x (-gm R / (c^2 R^3)) */
+  const double c2 = ppn->c * ppn->c;
+  const double k = -gm_external / (c2 * rn * rn * rn);
+  double field[3];
+  double omega[3];
+  for (int i = 0; i < 3; ++i) {
+    field[i] = k * R[i];
+  }
+  myb_vec3_cross(V, field, omega);
+  for (int i = 0; i < 3; ++i) {
+    omega[i] *= 1.0 + 2.0 * ppn->gamma;
+  }
+  cross_matrix(omega, dadv);
+  return MYB_OK;
+}
+
 /* (1/c^2) [ 1/2 ve (ve.r) + w_ext r + r (ae.r) - 1/2 ae r^2 ] */
 static void local_correction(const myb_rel_local_frame* f, const double r[3], double out[3]) {
   const double c2 = f->c * f->c;

@@ -15,9 +15,15 @@
  *    Moon and the limb darkening of the Sun; Earth's albedo and infrared after Knocke et al.;
  *  - empirical accelerations as estimated by the ILRS analysis centres: a constant along-track
  *    term and once-per-revolution along- and cross-track terms.
- * The initial state, cr and the five empirical parameters are fitted to the positions by
- * Gauss-Newton with partials by finite differences; the residual is the misfit of our dynamics
- * to the ILRS orbit (itself fitted to laser ranges at the cm level by models of the same kind).
+ * The model is built twice: from the ready-made terms of myb/env.h in a force model, propagated
+ * by myb/orbit.h — the one that is fitted — and by hand from the same functions (the function
+ * `acceleration` below), kept as the reference the first must agree with at every state.
+ * The initial state and the five empirical parameters are fitted to the positions by the
+ * least squares of myb/estim.h: variational equations with the analytic Jacobians of the
+ * field (its gradient with the tides), the bodies, relativity and sunlight; the gradients of
+ * the Earth's radiation and of the empirical terms, 1e-9 of the field's, are left out. The
+ * residual is the misfit of our dynamics to the ILRS orbit (itself fitted to laser ranges at
+ * the cm level by models of the same kind).
  * Needs data/download (scripts/fetch-data.cmd: de440.bsp, header.440, eopc04.1962-now,
  * GOCO06s.gfc, fes2004_Cnm-Snm.dat); skipped otherwise. Measured contributions (RMS over the
  * week after the fit, the full model 2.0 cm): without the solid tides 21 cm, without the ocean
@@ -31,7 +37,6 @@
 
 #include "mtest.h"
 #include "myb/myb.h"
-#include "core/pool.h"
 #include "num/vec3.h"
 
 #define DOWNLOAD MYB_DATA_DIR "/download/"
@@ -39,6 +44,9 @@
 enum { DEGREE = 30, OCEAN_DEGREE = 20, PARAMETERS = 12, STRIDE = 1, BODIES = 7 };
 
 static const double c_light = 299792458.0;
+static const double pi = 3.141592653589793;
+static const double lageos_mass = 406.965;                         /* kg */
+static const double lageos_area = 3.141592653589793 * 0.30 * 0.30; /* m^2 */
 static const double area_over_mass = 3.141592653589793 * 0.30 * 0.30 / 406.965; /* LAGEOS-1 */
 static const double solar_flux_1au = 1361.0;  /* W m^-2 (Kopp & Lean 2011) */
 static const double au_m = 149597870700.0;
@@ -46,6 +54,14 @@ static const double earth_j = 9.8e8;           /* angular momentum per unit mass
 static const double sun_radius = 695700000.0;  /* IAU 2015 B3 */
 static const double moon_radius = 1737400.0;
 static const double earth_radius = 6378137.0;
+
+/* albedo and infrared of the Earth (Knocke et al. 1988), seasonal phase from 1981-12-22 */
+static const myb_planet_radiation knocke = {
+    .radius = 6378137.0,
+    .albedo = {0.34, 0.0, 0.10, 0.0, 0.29},
+    .emissivity = {0.68, 0.0, -0.07, 0.0, -0.18},
+    .omega = 2.0 * 3.141592653589793 / (365.25 * 86400.0)};
+static const double knocke_epoch = 568915200.0; /* s from 1981-12-22 to J2000.0 */
 
 typedef struct model {
   myb_timesys* sys;
@@ -273,14 +289,9 @@ static myb_status acceleration(void* context, double t, const double* x, const d
                     myb_shadow_fraction(source, sun_radius, luna, moon_radius, limb);
   const double pressure = solar_flux_1au * (au_m / dn) * (au_m / dn) / c_light;
   myb_force_radiation_sphere(nu * pressure, m->cr, area_over_mass, u, a);
-  /* albedo and infrared of the Earth (Knocke et al. 1988), seasonal phase from 1981-12-22 */
-  static const myb_planet_radiation knocke = {
-      .radius = 6378137.0,
-      .albedo = {0.34, 0.0, 0.10, 0.0, 0.29},
-      .emissivity = {0.68, 0.0, -0.07, 0.0, -0.18},
-      .omega = 2.0 * 3.141592653589793 / (365.25 * 86400.0)};
+  /* albedo and infrared of the Earth */
   const double rs = sqrt(sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2]);
-  const double phase = knocke.omega * (myb_time_seconds(tt) + 568915200.0);
+  const double phase = knocke.omega * (myb_time_seconds(tt) + knocke_epoch);
   double sun_itrs[3];
   myb_rotation_apply_position(&rot, sun, sun_itrs);
   double albedo[3] = {0.0, 0.0, 0.0};
@@ -308,6 +319,187 @@ static myb_status acceleration(void* context, double t, const double* x, const d
   const double* e = m->empirical;
   const double rtn[3] = {0.0, e[0] + e[1] * cu + e[2] * su, e[3] * cu + e[4] * su};
   return myb_force_empirical_rtn(x, v, rtn, a);
+}
+
+/* ---- The same model from the ready-made terms of myb/env.h ---------------------------------- */
+
+typedef struct assembly {
+  myb_env* env;
+  myb_force_model* forces;
+  myb_orbit* orbit;
+  myb_gravity_field* field; /* its own: the term changes the coefficients */
+  myb_gravity_work* work;
+  myb_cip_orientation earth_orientation;
+  myb_spk_body ephemeris[BODIES];
+  myb_object object;
+  myb_field_term gravity;
+  myb_third_body_term third[BODIES];
+  myb_relativity_term relativity;
+  myb_radiation_term pressure;
+  myb_eclipse_event edges[4]; /* of the shadows of the Earth and the Moon */
+  myb_planet_radiation_term albedo;
+  myb_empirical_term empirical;
+} assembly;
+
+static void disassemble(assembly* s) {
+  myb_orbit_destroy(s->orbit);
+  myb_force_model_destroy(s->forces);
+  myb_gravity_work_destroy(s->work);
+  myb_gravity_field_destroy(s->field);
+  myb_env_destroy(s->env);
+}
+
+/* Builds the environment, the terms and the propagator from the data of m (shared, read
+ * only); m->off leaves out the same parts as in the reference. */
+static int assemble(const model* m, assembly* s, int estimate_cr) {
+  memset(s, 0, sizeof *s);
+  const myb_env_options options = {.epoch = m->t0, .timesys = m->sys, .scale = "TT"};
+  int ok = myb_env_create(&options, NULL, &s->env) == MYB_OK &&
+           myb_gravity_field_clone(m->field, NULL, &s->field) == MYB_OK &&
+           myb_gravity_work_create(DEGREE, NULL, &s->work) == MYB_OK &&
+           myb_force_model_create(NULL, &s->forces) == MYB_OK;
+  if (!ok) {
+    return 0;
+  }
+  /* bodies: the Earth at the origin, the others from DE440 on TDB */
+  s->earth_orientation = (myb_cip_orientation){m->cip, m->eop, m->sys, m->tt};
+  size_t earth = 0;
+  const myb_env_body b_earth = {.id = 399,
+                                .gm = m->gm_earth,
+                                .orientation = myb_orientation_cip,
+                                .orientation_context = &s->earth_orientation,
+                                .radius = earth_radius,
+                                .spin = {0.0, 0.0, earth_j}};
+  ok = myb_env_add_body(s->env, &b_earth, &earth) == MYB_OK;
+  size_t index[BODIES] = {0};
+  for (int b = 0; b < BODIES && ok; ++b) {
+    s->ephemeris[b] = (myb_spk_body){m->spk, m->body[b], 399, 1};
+    myb_env_body body = {.id = m->body[b],
+                         .gm = m->gm_body[b],
+                         .state = myb_spk_body_state,
+                         .state_context = &s->ephemeris[b],
+                         .state_scale = "TDB"};
+    if (b == 0) {
+      body.radius = sun_radius;
+      body.luminosity = 4.0 * pi * au_m * au_m * solar_flux_1au;
+      body.limb[0] = 0.6;
+    } else if (b == 1) {
+      body.radius = moon_radius;
+    }
+    ok = myb_env_add_body(s->env, &body, &index[b]) == MYB_OK;
+  }
+  if (!ok) {
+    return 0;
+  }
+  const int off = m->off;
+  s->object = (myb_object){.mass = lageos_mass, .area = lageos_area, .cr = 1.13};
+  /* the field with its trends, annual terms and tides */
+  s->gravity = (myb_field_term){
+      .env = s->env,
+      .body = earth,
+      .field = s->field,
+      .work = s->work,
+      .n_min = 0,
+      .n_max = -1,
+      .update = 1,
+      .tides = m->tides,
+      .tide_flags = MYB_TIDES_ALL & ~((off & 1 ? MYB_TIDES_SOLID | MYB_TIDES_FREQUENCY : 0) |
+                                      (off & 256 ? MYB_TIDES_FREQUENCY : 0) |
+                                      (off & 2 ? MYB_TIDES_OCEAN : 0) |
+                                      (off & 4 ? MYB_TIDES_POLE_SOLID | MYB_TIDES_POLE_OCEAN : 0)),
+      .permanent = MYB_PERMANENT_TIDE_AUTO,
+      .raisers = {index[0], index[1]},
+      .raiser_count = 2};
+  ok = myb_force_model_add(s->forces, "earth", myb_term_field, myb_term_field_jacobian,
+                           &s->gravity, NULL) == MYB_OK;
+  static const char* const names[BODIES] = {"sun",  "moon",    "mercury", "venus",
+                                            "mars", "jupiter", "saturn"};
+  for (int b = 0; b < BODIES && ok; ++b) {
+    s->third[b] = (myb_third_body_term){s->env, index[b]};
+    size_t term = 0;
+    ok = myb_force_model_add(s->forces, names[b], myb_term_third_body,
+                             myb_term_third_body_jacobian, &s->third[b], &term) == MYB_OK;
+    if (ok && b >= 2 && (off & 32)) {
+      myb_force_model_set_enabled(s->forces, term, 0);
+    }
+  }
+  /* relativity of IERS 2010 eq. 10.12 */
+  s->relativity = (myb_relativity_term){
+      .env = s->env, .ppn = {c_light, 1.0, 1.0}, .central = earth, .external = index[0]};
+  const myb_term_function relativistic[3] = {myb_term_schwarzschild, myb_term_lense_thirring,
+                                             myb_term_de_sitter};
+  const myb_term_jacobian relativistic_jacobian[3] = {myb_term_schwarzschild_jacobian,
+                                                      myb_term_lense_thirring_jacobian,
+                                                      myb_term_de_sitter_jacobian};
+  static const char* const rel_names[3] = {"schwarzschild", "lense-thirring", "de sitter"};
+  for (int k = 0; k < 3 && ok; ++k) {
+    size_t term = 0;
+    ok = myb_force_model_add(s->forces, rel_names[k], relativistic[k], relativistic_jacobian[k],
+                             &s->relativity, &term) == MYB_OK;
+    if (ok && (off & 8)) {
+      myb_force_model_set_enabled(s->forces, term, 0);
+    }
+  }
+  /* sunlight with the shadows of the Earth and the Moon; the Earth's own radiation */
+  s->pressure = (myb_radiation_term){.env = s->env,
+                                     .source = index[0],
+                                     .object = &s->object,
+                                     .c = c_light,
+                                     .occulters = {earth, index[1]},
+                                     .occulter_count = (off & 128) ? 0 : 2};
+  s->albedo = (myb_planet_radiation_term){
+      .env = s->env,
+      .planet = earth,
+      .source = index[0],
+      .model = &knocke,
+      .object = &s->object,
+      .phase0 = knocke.omega * (myb_time_seconds(m->t0) + knocke_epoch),
+      .rings = 10};
+  size_t term = 0;
+  ok = ok &&
+       myb_force_model_add(s->forces, "sunlight", myb_term_radiation,
+                           myb_term_radiation_jacobian, &s->pressure, NULL) == MYB_OK &&
+       myb_force_model_add(s->forces, "earthlight", myb_term_planet_radiation,
+                           myb_term_no_jacobian, &s->albedo, &term) == MYB_OK;
+  if (ok && (off & 16)) {
+    myb_force_model_set_enabled(s->forces, term, 0);
+  }
+  /* the edges of the shadows end the steps of the integrator (MYB_LAGEOS_NO_BREAKS: not) */
+  if (ok && getenv("MYB_LAGEOS_NO_BREAKS") == NULL) {
+    ok = myb_term_radiation_breaks(&s->pressure, s->forces, s->edges) == MYB_OK;
+  }
+  size_t empirical = 0;
+  ok = ok && myb_force_model_add(s->forces, "empirical", myb_term_empirical,
+                                 myb_term_no_jacobian, &s->empirical, &empirical) == MYB_OK;
+  /* the parameters of the fit, in the order of p[6 ..]: cr only on request (it enters two
+   * terms), the five empirical ones bound to their term */
+  if (estimate_cr) {
+    ok = ok && myb_force_model_add_parameter(s->forces, "cr", &s->object.cr, 0.01, NULL) == MYB_OK;
+  }
+  double* const fitted[5] = {&s->empirical.constant[1], &s->empirical.cosine[1],
+                             &s->empirical.sine[1], &s->empirical.cosine[2],
+                             &s->empirical.sine[2]};
+  static const char* const fitted_names[5] = {"along", "along cos", "along sin", "cross cos",
+                                              "cross sin"};
+  for (int k = 0; k < 5 && ok; ++k) {
+    size_t parameter = 0;
+    ok = myb_force_model_add_parameter(s->forces, fitted_names[k], fitted[k], 1e-11,
+                                       &parameter) == MYB_OK &&
+         myb_force_model_bind_parameter(s->forces, parameter, empirical) == MYB_OK;
+  }
+  const myb_orbit_options orbit_options = {.epsilon = 1e-10};
+  return ok && myb_orbit_create(s->forces, &orbit_options, NULL, &s->orbit) == MYB_OK;
+}
+
+/* The parameters of the fit after the state: cr, then along-track constant, cos u, sin u and
+ * cross-track cos u, sin u. */
+static void set_parameters(assembly* s, const double* p) {
+  s->object.cr = p[6];
+  s->empirical.constant[1] = p[7];
+  s->empirical.cosine[1] = p[8];
+  s->empirical.sine[1] = p[9];
+  s->empirical.cosine[2] = p[10];
+  s->empirical.sine[2] = p[11];
 }
 
 /* MYB_LAGEOS_PROFILE: time of the pieces of one evaluation of the acceleration. */
@@ -348,9 +540,6 @@ static void profile(model* m, const double* x, const double* v) {
     clock_t c5 = clock();
     (void)myb_gravity_field_eval(m->field, m->work, x, 0, -1, NULL, a);
     clock_t c6 = clock();
-    static const myb_planet_radiation knocke = {
-        .radius = 6378137.0, .albedo = {0.34, 0.0, 0.10, 0.0, 0.29},
-        .emissivity = {0.68, 0.0, -0.07, 0.0, -0.18}, .omega = 1.99e-7};
     (void)myb_force_planet_radiation(&knocke, x, (const double[3]){1.4e11, 2e10, 1e10}, 1361.0,
                                      0.3, 1e-3, 10, a);
     clock_t c7 = clock();
@@ -379,103 +568,40 @@ typedef struct observations {
   double rtn[2000][9];  /* rows R, T, N of the orbital frame at the observation */
 } observations;
 
-/* Propagates from the parameters p and fills the residuals obs - model (3 per epoch). */
-static myb_status residuals(model* m, const observations* obs, const double* p, double* res,
-                            long* steps) {
-  m->cr = p[6];
-  memcpy(m->empirical, p + 7, 5 * sizeof(double));
-  myb_ias15* ias = NULL;
-  const myb_ias15_options opt = {.epsilon = 1e-10};
-  myb_status st = myb_ias15_create(3, &opt, NULL, &ias);
-  if (st != MYB_OK) {
-    return st;
-  }
-  st = myb_ias15_start(ias, acceleration, m, 0.0, p);
-  size_t k = 0;
-  /* bound: the observations, one accepted step per iteration */
-  while (st == MYB_OK && k < obs->count) {
-    const double before = myb_ias15_time(ias);
-    if (obs->t[k] <= before) {
-      double y[6];
-      if (k == 0) {
-        memcpy(y, p, 6 * sizeof(double));
-      } else {
-        st = myb_ias15_dense(ias, obs->t[k], y);
-      }
-      for (int i = 0; i < 3 && st == MYB_OK; ++i) {
-        res[3 * k + (size_t)i] = obs->r[k][i] - y[i];
-      }
-      ++k;
-      continue;
+/* The force model of the ready-made terms against the model assembled by hand, at states
+ * along the orbit from p: the largest difference relative to the acceleration. */
+static myb_status compare_models(model* m, assembly* s, const observations* obs, const double* p,
+                                 double* worst, int* states) {
+  /* every parameter in play */
+  double q[PARAMETERS];
+  memcpy(q, p, sizeof q);
+  const double trial[5] = {1e-11, -2e-11, 3e-11, 4e-11, -5e-11};
+  memcpy(q + 7, trial, sizeof trial);
+  set_parameters(s, q);
+  m->cr = q[6];
+  memcpy(m->empirical, q + 7, 5 * sizeof(double));
+  *worst = 0.0;
+  *states = 0;
+  myb_status st = myb_orbit_start(s->orbit, 0.0, q, obs->t[obs->count - 1]);
+  for (size_t k = 0; k < obs->count && st == MYB_OK; k += 40) {
+    double y[6];
+    double a[3];
+    double ref[3];
+    st = myb_orbit_state(s->orbit, obs->t[k], y);
+    if (st == MYB_OK) {
+      st = myb_force_model_acceleration(s->forces, obs->t[k], y, y + 3, a);
     }
-    st = myb_ias15_step(ias, obs->t[obs->count - 1]);
+    if (st == MYB_OK) {
+      st = acceleration(m, obs->t[k], y, y + 3, ref);
+    }
+    if (st == MYB_OK) {
+      const double d[3] = {a[0] - ref[0], a[1] - ref[1], a[2] - ref[2]};
+      const double e = myb_vec3_norm(d) / myb_vec3_norm(ref);
+      *worst = e > *worst ? e : *worst;
+      ++*states;
+    }
   }
-  if (steps != NULL) {
-    *steps = (long)myb_ias15_statistics(ias).accepted;
-  }
-  myb_ias15_destroy(ias);
   return st;
-}
-
-/* Solves the symmetric positive definite system a x = b (n <= 12) by Cholesky. */
-static int solve(int n, double a[PARAMETERS][PARAMETERS], double* b) {
-  for (int j = 0; j < n; ++j) {
-    double d = a[j][j];
-    for (int k = 0; k < j; ++k) {
-      d -= a[j][k] * a[j][k];
-    }
-    if (!(d > 0.0)) {
-      return 0;
-    }
-    a[j][j] = sqrt(d);
-    for (int i = j + 1; i < n; ++i) {
-      double s = a[i][j];
-      for (int k = 0; k < j; ++k) {
-        s -= a[i][k] * a[j][k];
-      }
-      a[i][j] = s / a[j][j];
-    }
-  }
-  for (int i = 0; i < n; ++i) {
-    double s = b[i];
-    for (int k = 0; k < i; ++k) {
-      s -= a[i][k] * b[k];
-    }
-    b[i] = s / a[i][i];
-  }
-  for (int i = n - 1; i >= 0; --i) {
-    double s = b[i];
-    for (int k = i + 1; k < n; ++k) {
-      s -= a[k][i] * b[k];
-    }
-    b[i] = s / a[i][i];
-  }
-  return 1;
-}
-
-typedef struct partial_job {
-  model models[PARAMETERS];
-  const observations* obs;
-  const double* p;
-  const double* step;
-  const double* res;
-  double (*jac)[6000];
-  size_t nres;
-  myb_status status[PARAMETERS];
-  double scratch[PARAMETERS][6000];
-} partial_job;
-
-static void partial_range(void* context, size_t begin, size_t end) {
-  partial_job* job = context;
-  for (size_t j = begin; j < end; ++j) {
-    double q[PARAMETERS];
-    memcpy(q, job->p, sizeof q);
-    q[j] += job->step[j];
-    job->status[j] = residuals(&job->models[j], job->obs, q, job->scratch[j], NULL);
-    for (size_t i = 0; i < job->nres; ++i) {
-      job->jac[j][i] = -(job->scratch[j][i] - job->res[i]) / job->step[j]; /* d(model)/dp */
-    }
-  }
 }
 
 static void statistics(const observations* obs, const double* res, double* rms, double rtn[3]) {
@@ -618,89 +744,80 @@ int main(void) {
     profile(&m, p, p + 3);
   }
   static double res[6000];
-  static double jac[PARAMETERS][6000];
-  const double step[PARAMETERS] = {1.0,   1.0,   1.0,   1e-3,  1e-3,  1e-3,
-                                   0.01,  1e-11, 1e-11, 1e-11, 1e-11, 1e-11};
-  long steps = 0;
-  MT_CHECK(residuals(&m, &obs, p, res, &steps) == MYB_OK);
+  static myb_observation fit_obs[2000];
+  for (size_t k = 0; k < obs.count; ++k) {
+    fit_obs[k] = (myb_observation){.t = obs.t[k],
+                                   .measure = myb_measure_position,
+                                   .count = 3,
+                                   .value = {obs.r[k][0], obs.r[k][1], obs.r[k][2]},
+                                   .sigma = {1.0, 1.0, 1.0}};
+  }
+  static assembly set;
+  MT_CHECK(assemble(&m, &set, estimate_cr));
+  double model_difference = 1.0;
+  int model_states = 0;
+  MT_CHECK(compare_models(&m, &set, &obs, p, &model_difference, &model_states) == MYB_OK);
+  printf("  ready-made terms against the model assembled by hand: %.1e of the acceleration at "
+         "%d states\n",
+         model_difference, model_states);
+  MT_CHECK(model_states >= 40);
+  MT_CHECK(model_difference < 1e-13);
+  printf("  the week: %lld steps of the integrator, %lld edges of shadows met\n",
+         (long long)myb_orbit_steps(set.orbit), (long long)myb_orbit_breaks(set.orbit));
+  set_parameters(&set, p);
+  /* the residuals of the first guess: every unknown held */
+  const unsigned char held[PARAMETERS] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  const double epsilon = getenv("MYB_LAGEOS_EPS") != NULL ? atof(getenv("MYB_LAGEOS_EPS")) : 0.0;
+  myb_fit_options options = {.fixed = held, .epsilon = epsilon};
+  myb_fit_result result;
+  double y0[6];
+  memcpy(y0, p, sizeof y0);
+  MT_CHECK(myb_fit_orbit(set.forces, 0.0, y0, fit_obs, obs.count, &options, NULL, &result, NULL,
+                         res) == MYB_OK);
   double rms = 0.0;
   double rtn[3];
   statistics(&obs, res, &rms, rtn);
-  printf("  from the ILRS state at the first epoch, cr 1.13, no empirical: RMS %.3f m "
-         "(R %.3f, T %.3f, N %.3f), %ld steps\n",
-         rms, rtn[0], rtn[1], rtn[2], steps);
-  const size_t nres = 3 * obs.count;
-  for (int iteration = 0; iteration < 3; ++iteration) {
-    if (iteration == 0) {
-      /* the 12 propagations of the partials in parallel, each with its own field */
-      static partial_job job;
-      job.obs = &obs;
-      job.p = p;
-      job.step = step;
-      job.res = res;
-      job.jac = jac;
-      job.nres = nres;
-      int fields_ok = 1;
-      for (int j = 0; j < PARAMETERS; ++j) {
-        job.models[j] = m;
-        job.models[j].cached = 0;
-        fields_ok = fields_ok &&
-                    myb_gravity_field_clone(m.field, NULL, &job.models[j].field) == MYB_OK &&
-                    myb_gravity_work_create(DEGREE, NULL, &job.models[j].work) == MYB_OK;
-      }
-      MT_CHECK(fields_ok);
-      myb_pool* pool_threads = NULL;
-      MT_CHECK(myb_pool_create(0, NULL, &pool_threads) == MYB_OK);
-      myb_internal_pool_for(pool_threads, PARAMETERS, 1, partial_range, &job);
-      myb_pool_destroy(pool_threads);
-      for (int j = 0; j < PARAMETERS; ++j) {
-        MT_CHECK(job.status[j] == MYB_OK);
-        myb_gravity_work_destroy(job.models[j].work);
-        myb_gravity_field_destroy(job.models[j].field);
-      }
-    }
-    /* normal equations in scaled parameters */
-    /* cr is held at 1.13 as by the ILRS analysis centres: over a week a force of fixed
-     * inertial direction is nearly a once-per-revolution signal in R, T, N, so cr and the
-     * once-per-revolution terms cannot be separated */
-    int free_index[PARAMETERS];
-    int nfree = 0;
-    for (int i = 0; i < PARAMETERS; ++i) {
-      if (i != 6 || estimate_cr) {
-        free_index[nfree++] = i;
-      }
-    }
-    double n[PARAMETERS][PARAMETERS];
-    double b[PARAMETERS];
-    for (int i = 0; i < nfree; ++i) {
-      const int fi = free_index[i];
-      b[i] = myb_dot2(jac[fi], res, nres) * step[fi];
-      for (int j = 0; j <= i; ++j) {
-        const int fj = free_index[j];
-        n[i][j] = myb_dot2(jac[fi], jac[fj], nres) * step[fi] * step[fj];
-        n[j][i] = n[i][j];
-      }
-    }
-    MT_CHECK(solve(nfree, n, b));
-    for (int i = 0; i < nfree; ++i) {
-      p[free_index[i]] += b[i] * step[free_index[i]];
-    }
-    MT_CHECK(residuals(&m, &obs, p, res, NULL) == MYB_OK);
-    statistics(&obs, res, &rms, rtn);
-    printf("  iteration %d: RMS %.4f m (R %.4f, T %.4f, N %.4f)\n", iteration + 1, rms, rtn[0],
-           rtn[1], rtn[2]);
+  printf("  from the ILRS state at the first epoch, cr 1.13, no empirical: RMS %.4f m "
+         "(R %.4f, T %.4f, N %.4f)\n",
+         rms, rtn[0], rtn[1], rtn[2]);
+  /* with the edges of the shadows declared this number does not depend on the precision of
+   * the integrator (25.9587 m at epsilon 1e-10, 1e-11 and 1e-12); with steps over the edges
+   * it is 25.9520 m at 1e-10 and 25.9582 m at 1e-12 */
+  if (m.off == 0 && !estimate_cr && getenv("MYB_LAGEOS_NO_BREAKS") == NULL) {
+    MT_CHECK(fabs(rms - 25.9587) < 5.0e-4);
   }
+  /* cr is held at 1.13 as by the ILRS analysis centres (it is not a parameter of the model
+   * unless MYB_LAGEOS_CR asks): over a week a force of fixed inertial direction is nearly a
+   * once-per-revolution signal in R, T, N, so cr and the once-per-revolution terms cannot be
+   * separated */
+  static double covariance[PARAMETERS * PARAMETERS];
+  options = (myb_fit_options){.max_iterations = 5, .tolerance = 1e-3, .epsilon = epsilon};
+  const clock_t started = clock();
+  MT_CHECK(myb_fit_orbit(set.forces, 0.0, y0, fit_obs, obs.count, &options, NULL, &result,
+                         covariance, res) == MYB_OK);
+  const double seconds = (double)(clock() - started) / (double)CLOCKS_PER_SEC;
+  statistics(&obs, res, &rms, rtn);
+  const size_t unknowns = 6 + myb_force_model_parameter_count(set.forces);
+  printf("  least squares of the library (%zu unknowns, %zu values): RMS %.4f m (R %.4f, "
+         "T %.4f, N %.4f) after %d corrections, %.1f s\n",
+         unknowns, result.values, rms, rtn[0], rtn[1], rtn[2], result.iterations, seconds);
+  const double* e = &set.empirical.constant[0];
   printf("  fitted: cr %.4f; along-track %.2f, %.2f cos u, %.2f sin u; cross-track %.2f cos u, "
          "%.2f sin u (pm/s^2)\n",
-         p[6], p[7] * 1e12, p[8] * 1e12, p[9] * 1e12, p[10] * 1e12, p[11] * 1e12);
+         set.object.cr, set.empirical.constant[1] * 1e12, set.empirical.cosine[1] * 1e12,
+         set.empirical.sine[1] * 1e12, set.empirical.cosine[2] * 1e12,
+         set.empirical.sine[2] * 1e12);
+  (void)e;
   /* measured: 2.0 cm (R 2.6 mm, T 1.8 cm, N 8 mm), constant along-track -1.4 pm/s^2 (the
    * thermal drag of LAGEOS); the once-per-revolution cross-track terms (~600 pm/s^2) absorb
    * what differs from the ILRS models (ocean tides EOT11a and their admittance, S1/S2
    * atmospheric tides) — the terms the analysis centres estimate for the same reason */
   if (m.off == 0 && !estimate_cr) {
+    MT_CHECK(result.converged);
     MT_CHECK(rms < 0.03);
-    MT_CHECK(fabs(p[7]) < 5e-12);
+    MT_CHECK(fabs(set.empirical.constant[1]) < 5e-12);
   }
+  disassemble(&set);
   myb_gravity_work_destroy(m.work);
   myb_gravity_field_destroy(m.field);
   myb_tides_destroy(m.tides);

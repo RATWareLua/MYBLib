@@ -20,6 +20,7 @@
 #include "core/alloc.h"
 #include "core/base.h"
 #include "integ/event.h"
+#include "integ/ias15_internal.h"
 #include "integ/ias15_coefficients.h"
 #include "myb/cmath.h"
 #include "myb/integ.h"
@@ -77,6 +78,11 @@ struct myb_ias15 {
   double* e;        /* 7n: prediction the current step started from */
   double* b_last;   /* 7n: converged b of the last accepted step */
   double* e_last;   /* 7n */
+  /* a step withdrawn (myb_internal_ias15_retake): its polynomial predicts the next step */
+  int hint;
+  double hint_h;  /* the length of the step withdrawn (signed) */
+  double hint_s0; /* where the next step starts in it, as a fraction */
+  double* b_hint; /* 7n */
 };
 
 static int finite(double x) {
@@ -114,9 +120,9 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
   myb_ias15* s = block;
   *s = (myb_ias15){.allocator = a, .n = n, .options = o};
   s->eta = myb_exp(myb_log(5040.0 * o.epsilon) / 7.0);
-  /* 8 vectors of 2n, 3 of n, 5 of 7n: 54 n values. */
+  /* 8 vectors of 2n, 3 of n, 6 of 7n: 61 n values. */
   size_t count = 0;
-  if (ckd_mul(&count, (size_t)(8 * 2 + 3 + 5 * ORDER), n)) {
+  if (ckd_mul(&count, (size_t)(8 * 2 + 3 + 6 * ORDER), n)) {
     status = MYB_E_OVERFLOW;
     goto fail;
   }
@@ -137,8 +143,8 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
     *narrow[i] = p;
     p += n;
   }
-  double** series[5] = {&s->g, &s->b, &s->e, &s->b_last, &s->e_last};
-  for (int i = 0; i < 5; ++i) {
+  double** series[6] = {&s->g, &s->b, &s->e, &s->b_last, &s->e_last, &s->b_hint};
+  for (int i = 0; i < 6; ++i) {
     *series[i] = p;
     p += (size_t)ORDER * n;
   }
@@ -217,6 +223,7 @@ myb_status myb_ias15_start(myb_ias15* integrator, myb_accel_function a, void* co
   s->context = context;
   s->t = t0;
   s->t_comp = 0.0;
+  s->hint = 0;
   s->have_step = 0;
   s->prediction = 0;
   s->last_prediction = 0;
@@ -382,6 +389,39 @@ static double power_int(double q, int k) {
   return r;
 }
 
+/* binom(k + 1, m + 1) for m <= k */
+static const double binomial[ORDER][ORDER] = {
+    {1, 2, 3, 4, 5, 6, 7},   {0, 1, 3, 6, 10, 15, 21}, {0, 0, 1, 4, 10, 20, 35},
+    {0, 0, 0, 1, 5, 15, 35}, {0, 0, 0, 0, 1, 6, 21},   {0, 0, 0, 0, 0, 1, 7},
+    {0, 0, 0, 0, 0, 0, 1},
+};
+
+/* b and e for a step of q times the step withdrawn, starting at the fraction s0 of it: the
+ * polynomial sum b_k s^(k+1) of that step in the variable s = s0 + q u. */
+static void predict_from_hint(myb_ias15* s, double q) {
+  const size_t n = s->n;
+  double qp[ORDER];
+  double sp[ORDER];
+  for (int m = 0; m < ORDER; ++m) {
+    qp[m] = power_int(q, m + 1);
+    sp[m] = power_int(s->hint_s0, m);
+  }
+  for (size_t i = 0; i < n; ++i) {
+    const double* bh = s->b_hint + (size_t)ORDER * i;
+    double* e = s->e + (size_t)ORDER * i;
+    double* b = s->b + (size_t)ORDER * i;
+    for (int m = 0; m < ORDER; ++m) {
+      double sum = 0.0;
+      for (int k = ORDER - 1; k >= m; --k) {
+        sum += binomial[m][k] * sp[k - m] * bh[k];
+      }
+      e[m] = qp[m] * sum;
+      b[m] = e[m];
+    }
+  }
+  s->prediction = 1;
+}
+
 /* b and e for a step of q times the last accepted one, from b_last and e_last. */
 static void predict(myb_ias15* s, double q) {
   const size_t n = s->n;
@@ -391,12 +431,6 @@ static void predict(myb_ias15* s, double q) {
     s->prediction = 0;
     return;
   }
-  /* binom(k + 1, m + 1) for m <= k */
-  static const double binomial[ORDER][ORDER] = {
-      {1, 2, 3, 4, 5, 6, 7},   {0, 1, 3, 6, 10, 15, 21}, {0, 0, 1, 4, 10, 20, 35},
-      {0, 0, 0, 1, 5, 15, 35}, {0, 0, 0, 0, 1, 6, 21},   {0, 0, 0, 0, 0, 1, 7},
-      {0, 0, 0, 0, 0, 0, 1},
-  };
   double qp[ORDER];
   for (int m = 0; m < ORDER; ++m) {
     qp[m] = power_int(q, m + 1);
@@ -444,6 +478,7 @@ static void accept(myb_ias15* s, double dt, int last, double t_limit) {
   s->h_last = dt;
   s->have_step = 1;
   s->a0_valid = 0;
+  s->hint = 0;
   s->stats.accepted++;
 }
 
@@ -479,7 +514,11 @@ myb_status myb_ias15_step(myb_ias15* integrator, double t_limit) {
     if (!last && s->t + dt == s->t) {
       return MYB_E_STEP_MIN;
     }
-    predict(s, s->have_step ? dt / s->h_last : 0.0); /* for the actual length of the attempt */
+    if (s->hint) {
+      predict_from_hint(s, dt / s->hint_h);
+    } else {
+      predict(s, s->have_step ? dt / s->h_last : 0.0); /* for the actual length of the attempt */
+    }
     const myb_status status = sweeps(s, dt);
     if (status != MYB_OK) {
       return status;
@@ -504,6 +543,63 @@ myb_status myb_ias15_step(myb_ias15* integrator, double t_limit) {
     return MYB_OK;
   }
   return MYB_E_NOCONV;
+}
+
+double myb_internal_ias15_planned_step(const myb_ias15* integrator) {
+  MYB_CHECK(integrator != NULL);
+  return integrator->started && integrator->have_step ? fabs(integrator->h) : 0.0;
+}
+
+void myb_internal_ias15_plan_step(myb_ias15* integrator, double h) {
+  MYB_CHECK(integrator != NULL && integrator->started && h > 0.0);
+  integrator->h = h;
+}
+
+myb_status myb_internal_ias15_retake(myb_ias15* integrator, double t_limit) {
+  MYB_CHECK(integrator != NULL && integrator->started);
+  myb_ias15* s = integrator;
+  const size_t n = s->n;
+  const double withdrawn = s->h_last;
+  const double dt = (t_limit - s->t_old) - s->t_comp_old;
+  if (!s->have_step || !finite(t_limit) || !(dt * withdrawn > 0.0) ||
+      !(fabs(dt) < fabs(withdrawn))) {
+    return MYB_E_DOMAIN;
+  }
+  /* back to the beginning of the step, with its polynomial as the prediction */
+  memcpy(s->b_hint, s->b_last, (size_t)ORDER * n * sizeof(double));
+  memcpy(s->y, s->y_old, 2 * n * sizeof(double));
+  memcpy(s->y_comp, s->comp_old, 2 * n * sizeof(double));
+  memcpy(s->a0, s->a_old, n * sizeof(double));
+  s->t = s->t_old;
+  s->t_comp = s->t_comp_old;
+  s->a0_valid = 1;
+  s->have_step = 0; /* until the step is taken again there is none */
+  s->stats.accepted--;
+  s->stats.rejected++;
+  s->hint = 1;
+  s->hint_h = withdrawn;
+  s->hint_s0 = 0.0;
+  predict_from_hint(s, dt / withdrawn);
+  const myb_status status = sweeps(s, dt);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const double proposed = proposed_step(s, dt);
+  state_at(n, s->y, s->y_comp, s->a0, s->b, dt, 1.0, s->y_new, s->comp_new);
+  for (size_t i = 0; i < 2 * n; ++i) {
+    if (!finite(s->y_new[i])) {
+      return MYB_E_STEP_MIN;
+    }
+  }
+  accept(s, dt, 1, t_limit);
+  s->hint = 1;
+  s->hint_s0 = dt / withdrawn;
+  double next = fabs(withdrawn);
+  if (finite(proposed) && fabs(proposed) < next) {
+    next = fabs(proposed);
+  }
+  s->h = clamp_step(s, withdrawn > 0.0 ? next : -next);
+  return MYB_OK;
 }
 
 myb_status myb_ias15_integrate(myb_ias15* integrator, double t_end) {

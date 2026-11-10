@@ -22,6 +22,8 @@ typedef struct parameter {
   char name[MYB_MODEL_NAME];
   double* value;
   double step;
+  int bound;   /* the parameter enters one term only */
+  size_t term; /* that term */
 } parameter;
 
 struct myb_force_model {
@@ -30,6 +32,9 @@ struct myb_force_model {
   size_t count;
   parameter parameters[MYB_MODEL_MAX_PARAMETERS];
   size_t parameter_count;
+  myb_break_function breaks[MYB_MODEL_MAX_BREAKS];
+  void* break_contexts[MYB_MODEL_MAX_BREAKS];
+  size_t break_count;
   double length_scale;
   double velocity_scale;
 };
@@ -134,6 +139,7 @@ myb_status myb_force_model_add_parameter(myb_force_model* model, const char* nam
     return MYB_E_OVERFLOW;
   }
   parameter* p = &model->parameters[model->parameter_count];
+  memset(p, 0, sizeof *p);
   memcpy(p->name, name, strlen(name) + 1);
   p->value = value;
   p->step = step;
@@ -141,6 +147,40 @@ myb_status myb_force_model_add_parameter(myb_force_model* model, const char* nam
     *index = model->parameter_count;
   }
   model->parameter_count++;
+  return MYB_OK;
+}
+
+myb_status myb_force_model_add_break(myb_force_model* model, myb_break_function g,
+                                     void* context) {
+  MYB_CHECK(model != NULL && g != NULL);
+  if (model->break_count == MYB_MODEL_MAX_BREAKS) {
+    return MYB_E_OVERFLOW;
+  }
+  model->breaks[model->break_count] = g;
+  model->break_contexts[model->break_count] = context;
+  model->break_count++;
+  return MYB_OK;
+}
+
+size_t myb_force_model_break_count(const myb_force_model* model) {
+  MYB_CHECK(model != NULL);
+  return model->break_count;
+}
+
+void myb_force_model_break(const myb_force_model* model, size_t index, myb_break_function* g,
+                           void** context) {
+  MYB_CHECK(model != NULL && index < model->break_count && g != NULL && context != NULL);
+  *g = model->breaks[index];
+  *context = model->break_contexts[index];
+}
+
+myb_status myb_force_model_bind_parameter(myb_force_model* model, size_t parameter, size_t term) {
+  MYB_CHECK(model != NULL);
+  if (parameter >= model->parameter_count || term >= model->count) {
+    return MYB_E_DOMAIN;
+  }
+  model->parameters[parameter].bound = 1;
+  model->parameters[parameter].term = term;
   return MYB_OK;
 }
 
@@ -285,16 +325,24 @@ myb_status myb_force_model_jacobian(myb_force_model* model, double t, const doub
     const size_t np = model->parameter_count;
     for (size_t k = 0; k < np; ++k) {
       parameter* p = &model->parameters[k];
+      if (p->bound && !model->terms[p->term].enabled) {
+        for (int i = 0; i < 3; ++i) {
+          dadp[(size_t)i * np + k] = 0.0;
+        }
+        continue;
+      }
       const double saved = *p->value;
       double ap[3];
       double am[3];
       *p->value = saved + p->step;
       const double up = *p->value;
-      myb_status st = myb_force_model_acceleration(model, t, x, v, ap);
+      myb_status st = p->bound ? myb_force_model_term(model, p->term, t, x, v, ap)
+                               : myb_force_model_acceleration(model, t, x, v, ap);
       *p->value = saved - p->step;
       const double down = *p->value;
       if (st == MYB_OK) {
-        st = myb_force_model_acceleration(model, t, x, v, am);
+        st = p->bound ? myb_force_model_term(model, p->term, t, x, v, am)
+                      : myb_force_model_acceleration(model, t, x, v, am);
       }
       *p->value = saved;
       if (st != MYB_OK) {
@@ -305,6 +353,18 @@ myb_status myb_force_model_jacobian(myb_force_model* model, double t, const doub
       }
     }
   }
+  return MYB_OK;
+}
+
+myb_status myb_term_no_jacobian(void* context, double t, const double x[3], const double v[3],
+                                double dadx[9], double dadv[9]) {
+  MYB_CHECK(dadx != NULL && dadv != NULL);
+  (void)context;
+  (void)t;
+  (void)x;
+  (void)v;
+  memset(dadx, 0, 9 * sizeof(double));
+  memset(dadv, 0, 9 * sizeof(double));
   return MYB_OK;
 }
 
