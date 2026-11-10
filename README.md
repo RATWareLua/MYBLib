@@ -104,11 +104,11 @@ ctest --preset linux-dev
 платформе, при любом уровне оптимизации и ISA (x86-64-v2/v3).
 
 **CI** (`.github/workflows/ci.yml`, GitHub Actions): те же пресеты — Linux (Ubuntu 24.04,
-Clang 20): `linux-dev`, `linux-release`, `linux-asan`, `linux-ubsan`, `linux-lsan`, `linux-tsan`
-и раз в неделю `linux-asan-debug`; Windows (Clang + MSYS2 MINGW64): `windows-dev`,
-`windows-release`, `windows-ubsan`. Данные скачиваются `FetchData.cmake` и кешируются; раз в
-неделю живые ряды EOP обновляются. Запуск — при каждом push в `main`, на pull request, раз в
-неделю и вручную (`workflow_dispatch`).
+Clang 20): `linux-dev`, `linux-release`, `linux-asan`, `linux-asan-debug`, `linux-ubsan`,
+`linux-lsan`, `linux-tsan`; Windows (Clang + MSYS2 MINGW64): `windows-dev`, `windows-release`,
+`windows-ubsan`. Данные скачиваются `FetchData.cmake` и кешируются, живые ряды EOP при каждом
+прогоне обновляются. Запуск — только при отправке тега (выпуск) и вручную (`workflow_dispatch`),
+не на каждый push.
 
 ## Числовой контракт
 

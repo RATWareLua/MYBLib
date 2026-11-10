@@ -2,15 +2,15 @@
 # Windows (Clang targeting x86_64-w64-windows-gnu with the MSYS2 MINGW64 sysroot), with the
 # sanitizers. Every job runs the whole test suite, the reproducibility hash included, so a
 # result that changes by one bit on one platform fails the build. Large data sets are fetched
-# by cmake/FetchData.cmake (SHA-256 checked) and cached between runs.
+# by cmake/FetchData.cmake (SHA-256 checked) and cached between runs; the live series (EOP,
+# Earth orientation kernel) are refreshed on every run.
+#
+# Runs on pushed tags (releases) and on request only — not on every push.
 name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
-  schedule:
-    - cron: "17 3 * * 1" # weekly: also the slow ASan at -O0 and fresh EOP series
+    tags: ["*"]
   workflow_dispatch:
 
 concurrency:
@@ -32,27 +32,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [linux-dev, linux-release, linux-asan, linux-ubsan, linux-lsan, linux-tsan]
-        include:
-          - preset: linux-asan-debug
-            weekly: true
+        preset: [linux-dev, linux-release, linux-asan, linux-asan-debug, linux-ubsan, linux-lsan,
+                 linux-tsan]
     steps:
-      - name: Skip the weekly-only preset outside the weekly run
-        id: gate
-        shell: bash
-        run: |
-          if [ "${{ matrix.weekly }}" = "true" ] && [ "${{ github.event_name }}" != "schedule" ] \
-             && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/checkout@v4
-        if: steps.gate.outputs.run == 'true'
 
       - name: Install Clang ${{ env.LLVM_VERSION }}, Ninja, MPFR
-        if: steps.gate.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -64,36 +49,30 @@ jobs:
           echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
 
       - name: Allow the sanitizers' shadow memory (kernel ASLR entropy)
-        if: steps.gate.outputs.run == 'true'
         shell: bash
         run: sudo sysctl -w vm.mmap_rnd_bits=28
 
       - name: Cache the downloaded data
-        if: steps.gate.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: data/download
-          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.event_name == 'schedule' && github.run_id || 'stable' }}
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.run_id }}
           restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
 
-      - name: Fetch the data
-        if: steps.gate.outputs.run == 'true'
+      - name: Fetch the data (fresh live series)
         shell: bash
-        run: cmake ${{ github.event_name == 'schedule' && '-DREFRESH=ON' || '' }} -P cmake/FetchData.cmake
+        run: cmake -DREFRESH=ON -P cmake/FetchData.cmake
 
       - name: Configure
-        if: steps.gate.outputs.run == 'true'
         shell: bash
         run: |
           clang --version
           cmake --preset ${{ matrix.preset }}
 
       - name: Build
-        if: steps.gate.outputs.run == 'true'
         run: cmake --build --preset ${{ matrix.preset }} --parallel 4
 
       - name: Test
-        if: steps.gate.outputs.run == 'true'
         run: ctest --preset ${{ matrix.preset }} --parallel 4 --timeout ${{ env.CTEST_TIMEOUT }}
 
   windows:
@@ -137,12 +116,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/download
-          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.event_name == 'schedule' && github.run_id || 'stable' }}
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.run_id }}
           restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
 
-      - name: Fetch the data
+      - name: Fetch the data (fresh live series)
         shell: pwsh
-        run: cmake ${{ github.event_name == 'schedule' && '-DREFRESH=ON' || '' }} -P cmake/FetchData.cmake
+        run: cmake -DREFRESH=ON -P cmake/FetchData.cmake
 
       - name: Configure
         shell: pwsh
