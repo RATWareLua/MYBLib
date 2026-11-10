@@ -159,6 +159,14 @@ with the SHA-256 of the source PDF in the kernel. `tests/data/grav/fes2004_excer
 unchanged excerpt of `fes2004_Cnm-Snm.dat` (FES2004 ocean tide model of F. Lyard et al.,
 converted to Stokes coefficients for the IERS Conventions).
 
+`ext/troposphere/troposphere_tables.inc` holds the coefficient tables of the Global Mapping
+Function and the Global Pressure and Temperature model (J. Boehm et al., 2006, 2007) taken from
+the DATA statements of `GMF.F` and `GPT.F` of the IERS Conventions software, chapter 9 (SHA-256
+in the file) — numbers only; `ext/troposphere/troposphere.c` is written from the published
+equations and is not a translation of that software, whose licence is not BSD-compatible. The
+test cases printed in the headers of `FCUL_ZD_HPA.F`, `FCUL_A.F`, `VMF1.F`, `VMF1_HT.F`, `GMF.F`
+and `GPT.F` are the references of `tests/ext/test_troposphere.c`.
+
 ## Gravity field models (ICGEM)
 
 `tests/data/grav/EGM2008_n20.gfc` is EGM2008 (N. K. Pavlis, S. A. Holmes, S. C. Kenyon,
@@ -195,6 +203,32 @@ free use), made from its Python translation in python-sgp4 by Brandon Rhodes
 (https://github.com/brandon-rhodes/python-sgp4, MIT licence). The module is under the same MIT
 licence; its verification data `tests/data/sgp4/SGP4-VER.TLE` and `tcppver.out` are those of
 Vallado et al. as distributed with python-sgp4. Full text: `ext/sgp4/NOTICE`.
+
+## fdlibm (src/num/erf.c)
+
+`src/num/erf.c` (error function and its complement) is derived from `s_erf.c` of FreeBSD's
+libm (lib/msun/src/s_erf.c, from Sun's fdlibm), with exp replaced by myb_exp and the word
+access by memcpy:
+
+    Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+    Developed at SunPro, a Sun Microsystems, Inc. business.
+    Permission to use, copy, modify, and distribute this
+    software is freely granted, provided that this notice
+    is preserved.
+
+The 15-point Gauss-Kronrod rule of `myb_plasma_column` (src/observe/observe.c) uses the nodes
+and weights of QUADPACK (R. Piessens, E. de Doncker-Kapenga, C. Ueberhuber, D. Kahaner, 1983;
+public domain).
+
+## Post-Newtonian references (tests)
+
+`tests/data/pn/blanchet_coefficients.txt` was computed by the authors of myb: the coefficients
+of the relative acceleration of L. Blanchet, "Post-Newtonian theory for gravitational waves"
+(Living Rev. Relativ., revision of 2024; arXiv:1310.1528) were parsed by machine from the
+LaTeX source of the article into sympy and evaluated with mpmath. Only the evaluated numbers
+are stored. The synthetic IONEX file `tests/data/ionosphere/synthetic.inx` and its references
+were written by the authors of myb.
 
 ## IGRF and ppigrf
 

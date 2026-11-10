@@ -128,52 +128,216 @@ double myb_rel_proper_time_rate(double c, double v2, double potential) {
 
 /* ---- Compact binaries ---------------------------------------------------------------------- */
 
-myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c, unsigned orders,
-                                      const double x[3], const double v[3], double a[3]) {
-  MYB_CHECK(x != NULL && v != NULL && a != NULL);
-  const double r2 = myb_vec3_dot(x, x);
-  const double r = sqrt(r2);
-  if (!(gm1 > 0.0) || !(gm2 > 0.0) || !(c > 0.0) || !(r > 0.0) || !isfinite(r) ||
-      !isfinite(gm1 + gm2 + c) || !isfinite(myb_vec3_dot(v, v))) {
-    return MYB_E_DOMAIN;
-  }
-  const double gm = gm1 + gm2;
-  const double nu = gm1 * gm2 / (gm * gm);
+/* pi^2 */
+#define MYB_PI2 9.8696044010893586188
+
+/* Coefficients A and B of a = -(gm / r^2) [(1 + A) n + B v] (myb/rel.h), each order divided by
+ * its power of c. u = gm / r, rd = n.v, v2 = v.v, log_r = ln(r / r0). */
+static void pn_coefficients(unsigned orders, double nu, double u, double rd, double v2, double c,
+                            double log_r, double* aa_out, double* bb_out) {
   const double nu2 = nu * nu;
-  const double n[3] = {x[0] / r, x[1] / r, x[2] / r};
-  const double rd = myb_vec3_dot(n, v);
-  const double v2 = myb_vec3_dot(v, v);
-  const double u = gm / r; /* gm / r */
+  const double nu3 = nu2 * nu;
+  const double rd2 = rd * rd;
+  const double rd4 = rd2 * rd2;
+  const double v4 = v2 * v2;
   const double c2 = c * c;
+  const double c4 = c2 * c2;
   double aa = 0.0;
   double bb = 0.0;
   if (orders & MYB_PN_1) {
-    aa += (-1.5 * rd * rd * nu + v2 + 3.0 * nu * v2 - u * (4.0 + 2.0 * nu)) / c2;
+    aa += (-1.5 * rd2 * nu + v2 + 3.0 * nu * v2 - u * (4.0 + 2.0 * nu)) / c2;
     bb += (-4.0 * rd + 2.0 * rd * nu) / c2;
   }
   if (orders & MYB_PN_2) {
-    const double rd2 = rd * rd;
-    const double a2 = 15.0 / 8.0 * rd2 * rd2 * nu - 45.0 / 8.0 * rd2 * rd2 * nu2 -
-                      4.5 * rd2 * nu * v2 + 6.0 * rd2 * nu2 * v2 + 3.0 * nu * v2 * v2 -
-                      4.0 * nu2 * v2 * v2 +
+    const double a2 = 15.0 / 8.0 * rd4 * nu - 45.0 / 8.0 * rd4 * nu2 - 4.5 * rd2 * nu * v2 +
+                      6.0 * rd2 * nu2 * v2 + 3.0 * nu * v4 - 4.0 * nu2 * v4 +
                       u * (-2.0 * rd2 - 25.0 * rd2 * nu - 2.0 * rd2 * nu2 - 6.5 * nu * v2 +
                            2.0 * nu2 * v2) +
                       u * u * (9.0 + 87.0 / 4.0 * nu);
     const double b2 = 4.5 * rd2 * rd * nu + 3.0 * rd2 * rd * nu2 - 7.5 * rd * nu * v2 -
                       2.0 * rd * nu2 * v2 + u * (2.0 * rd + 20.5 * rd * nu + 4.0 * rd * nu2);
-    aa += a2 / (c2 * c2);
-    bb += b2 / (c2 * c2);
+    aa += a2 / c4;
+    bb += b2 / c4;
   }
   if (orders & MYB_PN_25) {
-    const double c5 = c2 * c2 * c;
+    const double c5 = c4 * c;
     aa += (-24.0 / 5.0 * rd * nu * v2 * u - 136.0 / 15.0 * rd * nu * u * u) / c5;
     bb += (8.0 / 5.0 * nu * v2 * u + 24.0 / 5.0 * nu * u * u) / c5;
   }
+  if (orders & MYB_PN_3) {
+    const double rd6 = rd4 * rd2;
+    const double v6 = v4 * v2;
+    const double u2 = u * u;
+    const double a0 = rd6 * (-35.0 / 16.0 * nu + 175.0 / 16.0 * nu2 - 175.0 / 16.0 * nu3) +
+                      rd4 * v2 * (7.5 * nu - 135.0 / 4.0 * nu2 + 255.0 / 8.0 * nu3) +
+                      rd2 * v4 * (-7.5 * nu + 237.0 / 8.0 * nu2 - 22.5 * nu3) +
+                      v6 * (11.0 / 4.0 * nu - 49.0 / 4.0 * nu2 + 13.0 * nu3);
+    const double a1 = rd4 * (79.0 * nu - 34.5 * nu2 - 30.0 * nu3) +
+                      rd2 * v2 * (-121.0 * nu + 16.0 * nu2 + 20.0 * nu3) +
+                      v4 * (75.0 / 4.0 * nu + 8.0 * nu2 - 10.0 * nu3);
+    const double a2 = rd2 * (1.0 + 32573.0 / 168.0 * nu + 11.0 / 8.0 * nu2 - 7.0 * nu3 +
+                             615.0 / 64.0 * MYB_PI2 * nu - 110.0 * nu * log_r) +
+                      v2 * (-26987.0 / 840.0 * nu + nu3 - 123.0 / 64.0 * MYB_PI2 * nu +
+                            22.0 * nu * log_r);
+    const double a3 = -16.0 - 437.0 / 4.0 * nu - 35.5 * nu2 + 41.0 / 16.0 * MYB_PI2 * nu;
+    const double b0 = rd4 * rd * (-45.0 / 8.0 * nu + 15.0 * nu2 + 3.75 * nu3) +
+                      rd2 * rd * v2 * (12.0 * nu - 111.0 / 4.0 * nu2 - 12.0 * nu3) +
+                      rd * v4 * (-65.0 / 8.0 * nu + 19.0 * nu2 + 6.0 * nu3);
+    const double b1 = rd2 * rd * (329.0 / 6.0 * nu + 29.5 * nu2 + 18.0 * nu3) +
+                      rd * v2 * (-15.0 * nu - 27.0 * nu2 - 10.0 * nu3);
+    const double b2 = rd * (-4.0 - 18169.0 / 840.0 * nu + 25.0 * nu2 + 8.0 * nu3 -
+                            123.0 / 32.0 * MYB_PI2 * nu + 44.0 * nu * log_r);
+    const double c6 = c4 * c2;
+    aa += (a0 + u * a1 + u2 * a2 + u2 * u * a3) / c6;
+    bb += (b0 + u * b1 + u2 * b2) / c6;
+  }
+  if (orders & MYB_PN_35) {
+    const double u2 = u * u;
+    const double a35 = u * nu * rd *
+                       (u2 * (3956.0 / 35.0 + 184.0 / 5.0 * nu) +
+                        u * v2 * (692.0 / 35.0 - 724.0 / 15.0 * nu) + v4 * (366.0 / 35.0 + 12.0 * nu) +
+                        u * rd2 * (294.0 / 5.0 + 376.0 / 5.0 * nu) - v2 * rd2 * (114.0 + 12.0 * nu) +
+                        112.0 * rd4);
+    const double b35 = u * nu *
+                       (u2 * (-1060.0 / 21.0 - 104.0 / 5.0 * nu) +
+                        u * v2 * (164.0 / 21.0 + 148.0 / 5.0 * nu) +
+                        v4 * (-626.0 / 35.0 - 12.0 / 5.0 * nu) +
+                        u * rd2 * (-82.0 / 3.0 - 848.0 / 15.0 * nu) +
+                        v2 * rd2 * (678.0 / 5.0 + 12.0 / 5.0 * nu) - 120.0 * rd4);
+    const double c7 = c4 * c2 * c;
+    aa += a35 / c7;
+    bb += b35 / c7;
+  }
+  *aa_out = aa;
+  *bb_out = bb;
+}
+
+/* out += s * (Omega x chi) */
+static void precess(const double omega[3], const double chi[3], double out[3]) {
+  double t[3];
+  myb_vec3_cross(omega, chi, t);
+  for (int i = 0; i < 3; ++i) {
+    out[i] += t[i];
+  }
+}
+
+myb_status myb_pn_binary_evaluate(const myb_pn_binary* b, const double x[3], const double v[3],
+                                  const double chi1[3], const double chi2[3], double a[3],
+                                  double dchi1[3], double dchi2[3]) {
+  MYB_CHECK(b != NULL && x != NULL && v != NULL && a != NULL);
+  static const double zero[3] = {0.0, 0.0, 0.0};
+  const double* s1 = chi1 != NULL ? chi1 : zero;
+  const double* s2 = chi2 != NULL ? chi2 : zero;
+  const double gm1 = b->gm1;
+  const double gm2 = b->gm2;
+  const double c = b->c;
+  const unsigned orders = b->orders;
+  const double r2 = myb_vec3_dot(x, x);
+  const double r = sqrt(r2);
+  if (!(gm1 > 0.0) || !(gm2 > 0.0) || !(c > 0.0) || !(r > 0.0) || !isfinite(r) ||
+      !isfinite(gm1 + gm2 + c) || !myb_vec3_finite(v) || !myb_vec3_finite(s1) ||
+      !myb_vec3_finite(s2) || (orders & ~(unsigned)MYB_PN_ALL) != 0u) {
+    return MYB_E_DOMAIN;
+  }
+  if ((orders & MYB_PN_3) && !(b->r0 > 0.0 && b->r0 < 1e300)) {
+    return MYB_E_DOMAIN;
+  }
+  if ((orders & MYB_PN_SS) && !(b->kappa1 >= 0.0 && b->kappa1 < 1e300 && b->kappa2 >= 0.0 &&
+                                b->kappa2 < 1e300)) {
+    return MYB_E_DOMAIN;
+  }
+  const double gm = gm1 + gm2;
+  const double nu = gm1 * gm2 / (gm * gm);
+  const double n[3] = {x[0] / r, x[1] / r, x[2] / r};
+  const double rd = myb_vec3_dot(n, v);
+  const double v2 = myb_vec3_dot(v, v);
+  const double u = gm / r;
+  const double log_r = (orders & MYB_PN_3) ? myb_log(r / b->r0) : 0.0;
+  double aa = 0.0;
+  double bb = 0.0;
+  pn_coefficients(orders, nu, u, rd, v2, c, log_r, &aa, &bb);
   const double f = gm / r2;
   for (int i = 0; i < 3; ++i) {
     a[i] = -f * ((1.0 + aa) * n[i] + bb * v[i]);
   }
+  double w1[3] = {0.0, 0.0, 0.0}; /* precession angular velocities of the spins */
+  double w2[3] = {0.0, 0.0, 0.0};
+  const double c3 = c * c * c;
+  const double r3 = r2 * r;
+  if (orders & MYB_PN_SO) {
+    /* G S / c^2 (m^3/s) and (dm / m) G Delta / c^2 */
+    double sig[3];
+    double sigd[3];
+    for (int i = 0; i < 3; ++i) {
+      sig[i] = (gm1 * gm1 * s1[i] + gm2 * gm2 * s2[i]) / c3;
+      sigd[i] = (gm1 - gm2) * (gm2 * s2[i] - gm1 * s1[i]) / c3;
+    }
+    double nxv[3];
+    myb_vec3_cross(n, v, nxv);
+    double p[3];
+    double q[3];
+    double t[3];
+    for (int i = 0; i < 3; ++i) {
+      p[i] = 2.0 * sig[i] + sigd[i];
+      q[i] = 7.0 * sig[i] + 3.0 * sigd[i];
+      t[i] = 3.0 * sig[i] + sigd[i];
+    }
+    double vxq[3];
+    double nxt[3];
+    myb_vec3_cross(v, q, vxq);
+    myb_vec3_cross(n, t, nxt);
+    const double k = 6.0 * myb_vec3_dot(nxv, p);
+    for (int i = 0; i < 3; ++i) {
+      a[i] += (k * n[i] - vxq[i] + 3.0 * rd * nxt[i]) / r3;
+    }
+    /* geodetic precession: (G mu / (c^2 r^3)) (2 + 3 m_B / (2 m_A)) x x v */
+    double l[3];
+    myb_vec3_cross(x, v, l);
+    const double g = gm1 * gm2 / (gm * c * c * r3);
+    for (int i = 0; i < 3; ++i) {
+      w1[i] += g * (2.0 + 1.5 * gm2 / gm1) * l[i];
+      w2[i] += g * (2.0 + 1.5 * gm1 / gm2) * l[i];
+    }
+  }
+  if (orders & MYB_PN_SS) {
+    const double n1 = myb_vec3_dot(n, s1);
+    const double n2 = myb_vec3_dot(n, s2);
+    const double s12 = myb_vec3_dot(s1, s2);
+    const double c4 = c3 * c;
+    const double r4 = r2 * r2;
+    const double kss = -3.0 * gm * gm1 * gm2 / (c4 * r4);
+    const double k1 = -1.5 * b->kappa1 * gm * gm1 * gm1 / (c4 * r4);
+    const double k2 = -1.5 * b->kappa2 * gm * gm2 * gm2 / (c4 * r4);
+    const double q1 = myb_vec3_dot(s1, s1) - 5.0 * n1 * n1;
+    const double q2 = myb_vec3_dot(s2, s2) - 5.0 * n2 * n2;
+    for (int i = 0; i < 3; ++i) {
+      a[i] += kss * (n[i] * (s12 - 5.0 * n1 * n2) + s1[i] * n2 + s2[i] * n1) +
+              k1 * (2.0 * n1 * s1[i] + q1 * n[i]) + k2 * (2.0 * n2 * s2[i] + q2 * n[i]);
+    }
+    const double h = 1.0 / (c3 * r3);
+    const double qm1 = 3.0 * b->kappa1 * gm1 * gm2 * n1 * h;
+    const double qm2 = 3.0 * b->kappa2 * gm1 * gm2 * n2 * h;
+    for (int i = 0; i < 3; ++i) {
+      w1[i] += gm2 * gm2 * h * (3.0 * n2 * n[i] - s2[i]) + qm1 * n[i];
+      w2[i] += gm1 * gm1 * h * (3.0 * n1 * n[i] - s1[i]) + qm2 * n[i];
+    }
+  }
+  if (dchi1 != NULL) {
+    dchi1[0] = dchi1[1] = dchi1[2] = 0.0;
+    precess(w1, s1, dchi1);
+  }
+  if (dchi2 != NULL) {
+    dchi2[0] = dchi2[1] = dchi2[2] = 0.0;
+    precess(w2, s2, dchi2);
+  }
   return MYB_OK;
+}
+
+myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c, unsigned orders,
+                                      const double x[3], const double v[3], double a[3]) {
+  MYB_CHECK(x != NULL && v != NULL && a != NULL);
+  const myb_pn_binary b = {.gm1 = gm1, .gm2 = gm2, .c = c, .orders = orders, .r0 = (double)NAN};
+  return myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL);
 }
 
 double myb_peters_period_derivative(double gm1, double gm2, double c, double period, double e) {

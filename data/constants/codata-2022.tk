@@ -16,11 +16,27 @@ defining constants have none.
    C   Speed of light in vacuum, m s^-1: 299 792 458 exactly (SI definition of
        the metre, 1983; SI Brochure, 9th edition, 2019).
 
+   E     Elementary charge, C: 1.602 176 634 x 10^-19 exactly (SI, 2019).
+   K     Boltzmann constant, J K^-1: 1.380 649 x 10^-23 exactly (SI, 2019).
+   ME    Electron mass, kg: 9.109 383 7139(28) x 10^-31 (CODATA 2022).
+   MP    Proton mass, kg: 1.672 621 925 95(52) x 10^-27 (CODATA 2022).
+   EPS0  Vacuum electric permittivity, F m^-1: 8.854 187 8188(14) x 10^-12 (CODATA 2022).
+         Sources: https://physics.nist.gov/cgi-bin/cuu/Value?e, ?k, ?me, ?mp, ?ep0.
+
 \begindata
 
    MYB_CONST_G       = 6.67430D-11
    MYB_CONST_G_SIGMA = 0.00015D-11
 
    MYB_CONST_C       = 299792458.0
+
+   MYB_CONST_E          = 1.602176634D-19
+   MYB_CONST_K          = 1.380649D-23
+   MYB_CONST_ME         = 9.1093837139D-31
+   MYB_CONST_ME_SIGMA   = 0.0000000028D-31
+   MYB_CONST_MP         = 1.67262192595D-27
+   MYB_CONST_MP_SIGMA   = 0.00000000052D-27
+   MYB_CONST_EPS0       = 8.8541878188D-12
+   MYB_CONST_EPS0_SIGMA = 0.0000000014D-12
 
 \begintext

@@ -103,6 +103,37 @@ MYB_API void myb_light_deflection(double gm, double c, double gamma, const doubl
 /* Right ascension in [0, 2 pi) and declination of a direction (any length). */
 MYB_API void myb_direction_radec(const double p[3], double* ra, double* dec);
 
+/* ---- Dispersive delay in a plasma ----------------------------------------------------------
+ * A radio signal of frequency f (Hz) crossing a column of N free electrons per m^2 (the total
+ * electron content along the path) is delayed, to first order in (f_plasma / f)^2,
+ *   group delay = +K N / f^2,  phase delay = -K N / f^2 (metres; the phase advances),
+ *   K = e^2 / (8 pi^2 eps0 m_e) = 40.308 m^3/s^2
+ * (e, m_e, eps0: MYB_CONST_E, MYB_CONST_ME, MYB_CONST_EPS0 of data/constants/codata-2022.tk).
+ * Ranging measures the group delay, carrier phase and Doppler the phase delay; two frequencies
+ * remove it. Higher orders ((f_p / f)^4, the magnetic field) are below 1 mm above 1 GHz on
+ * Earth paths. Returns K N / f^2, NaN for invalid input. */
+MYB_API double myb_plasma_group_delay(double column, double frequency, double e, double m_e,
+                                      double eps0);
+
+/* Power-law electron density about the centre of a body, n_e(r) = sum_k density[k] (radius /
+ * r)^power[k] (m^-3), as the models of the solar corona and wind (e.g. Muhleman & Anderson,
+ * Astrophys. J. 247, 1093, 1981: ~ r^-6 near the Sun and ~ r^-2 in the wind). */
+enum { MYB_PLASMA_TERMS = 8 };
+typedef struct myb_plasma_profile {
+  double radius;                    /* reference radius (m, > 0) */
+  size_t count;                     /* terms used, 1..MYB_PLASMA_TERMS */
+  double density[MYB_PLASMA_TERMS]; /* n_k (m^-3, >= 0) */
+  double power[MYB_PLASMA_TERMS];   /* p_k (> 0) */
+} myb_plasma_profile;
+
+/* Electron column (m^-2) of the profile along the straight segment from p1 to p2 (positions
+ * relative to the centre of the body, m): adaptive Gauss-Kronrod quadrature in the angle seen
+ * from the centre, relative accuracy 1e-13. Errors: MYB_E_DOMAIN (invalid profile, a segment
+ * through the centre, non-finite input), MYB_E_NOCONV (quadrature budget exhausted). */
+MYB_API MYB_NODISCARD myb_status myb_plasma_column(const myb_plasma_profile* profile,
+                                                   const double p1[3], const double p2[3],
+                                                   double* column);
+
 #ifdef __cplusplus
 }
 #endif

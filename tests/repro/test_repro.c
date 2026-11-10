@@ -38,7 +38,7 @@
 #include "myb/uncert.h"
 #include "myb_sgp4.h"
 
-static const uint64_t golden_hash = UINT64_C(0xd1bce261642c87ac);
+static const uint64_t golden_hash = UINT64_C(0xc9b659a710498026);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -1428,6 +1428,60 @@ static void workload_phase10(hasher* h, mt_rng* rng) {
   myb_magnetic_field_destroy(field);
 }
 
+static void workload_phase11(hasher* h, mt_rng* rng) {
+  /* compact binaries at 3.5PN with spins */
+  myb_pn_binary b = {.gm1 = 0.6, .gm2 = 0.4, .c = 1.0, .orders = MYB_PN_ALL, .r0 = 3.0,
+                     .kappa1 = 1.0, .kappa2 = 4.5};
+  for (int k = 0; k < 20; ++k) {
+    const double x[3] = {30.0 + 10.0 * repro_uniform(rng), 5.0 * repro_uniform(rng), 1.0};
+    const double v[3] = {0.01 * repro_uniform(rng), 0.17, 0.02 * repro_uniform(rng)};
+    const double c1[3] = {0.3, -0.5 * repro_uniform(rng), 0.6};
+    const double c2[3] = {0.7 * repro_uniform(rng), 0.2, -0.4};
+    double a[3];
+    double d1[3];
+    double d2[3];
+    MT_CHECK(myb_pn_binary_evaluate(&b, x, v, c1, c2, a, d1, d2) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, a[i]);
+      hash_double(h, d1[i]);
+      hash_double(h, d2[i]);
+    }
+  }
+  /* electron columns and dispersive delay */
+  const myb_plasma_profile prof = {.radius = 6.957e8, .count = 3,
+                                   .density = {2.99e14, 1.55e14, 3.44e11},
+                                   .power = {16.0, 6.0, 2.3}};
+  for (int k = 0; k < 6; ++k) {
+    const double p1[3] = {1.496e11, 1e9 * repro_uniform(rng), 0.0};
+    const double p2[3] = {-2e11, (3.0 + 20.0 * repro_uniform(rng)) * 6.957e8, 1e8};
+    double n = 0.0;
+    MT_CHECK(myb_plasma_column(&prof, p1, p2, &n) == MYB_OK);
+    hash_double(h, n);
+    hash_double(h, myb_plasma_group_delay(n, 8.4e9, 1.602176634e-19, 9.1093837139e-31,
+                                          8.8541878188e-12));
+  }
+  /* charging */
+  const myb_plasma_species wind[2] = {
+      {.charge = -1.602176634e-19, .mass = 9.1093837139e-31, .density = 5e6,
+       .temperature = 12.0 * 1.602176634e-19, .drift = 4e5},
+      {.charge = 1.602176634e-19, .mass = 1.67262192595e-27, .density = 5e6,
+       .temperature = 8.0 * 1.602176634e-19, .drift = 4e5}};
+  const myb_photoemission photo = {.current_density = 4e-5,
+                                   .temperature = 2.0 * 1.602176634e-19,
+                                   .charge = 1.602176634e-19};
+  for (int k = 0; k < 6; ++k) {
+    double i = 0.0;
+    MT_CHECK(myb_charging_current(wind, 2, &photo, 1e-6, -20.0 + 40.0 * repro_uniform(rng), &i) ==
+             MYB_OK);
+    hash_double(h, i);
+  }
+  double phi = 0.0;
+  MT_CHECK(myb_charging_equilibrium(wind, 2, &photo, 1e-6, &phi) == MYB_OK);
+  hash_double(h, phi);
+  MT_CHECK(myb_charging_equilibrium(wind, 2, NULL, 1e-6, &phi) == MYB_OK);
+  hash_double(h, phi);
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -1460,6 +1514,9 @@ int main(void) {
   if (upto >= 10) {
     workload_phase10(&h, &rng);
   }
+  if (upto >= 11) {
+    workload_phase11(&h, &rng);
+  }
   uint64_t expected = golden_hash;
   if (upto == 5) {
     expected = UINT64_C(0x38f060f6206c4bf6);
@@ -1471,6 +1528,8 @@ int main(void) {
     expected = UINT64_C(0xb1b77fd24243268f);
   } else if (upto == 9) {
     expected = UINT64_C(0x827497389931b8a9);
+  } else if (upto == 10) {
+    expected = UINT64_C(0xd1bce261642c87ac);
   }
   printf("repro hash: 0x%016" PRIx64 " over %ld values (golden 0x%016" PRIx64 ")\n", h.state,
          h.values, expected);

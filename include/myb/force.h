@@ -169,6 +169,57 @@ MYB_API void myb_force_plasma_stream(double rho0, double r0, double speed,
                                      double cd_area_over_mass, const double r[3],
                                      const double v[3], double a[3]);
 
+/* ---- Charging in a plasma ------------------------------------------------------------------
+ * A conducting sphere of radius a at the potential phi (V, relative to the undisturbed plasma)
+ * collects the particles of each species s (charge q, mass m, density n, temperature T as
+ * k T in joules, bulk speed u relative to the sphere) whose orbits meet it: the
+ * orbit-motion-limited (OML) current (H. M. Mott-Smith, I. Langmuir, Phys. Rev. 28, 727, 1926;
+ * for drifting plasmas E. C. Whipple, Rep. Prog. Phys. 44, 1197, 1981), with v_th = sqrt(2 k T
+ * / m), M = u / v_th, chi = q phi / (k T):
+ *   attracted (chi <= 0): I = q n pi a^2 v_th [(M + 1/(2M)) erf M + e^(-M^2) / sqrt(pi)
+ *                               - chi erf(M) / M],
+ *   repelled  (chi > 0):  I = q n pi a^2 v_th / (sqrt(pi) M) int_sqrt(chi)^inf (x^2 - chi)
+ *                               [e^(-(x - M)^2) - e^(-(x + M)^2)] dx   (closed form in erfc),
+ * which for M -> 0 are 4 pi a^2 q n sqrt(k T / (2 pi m)) times (1 - chi) and e^(-chi). Sunlight
+ * releases photoelectrons from the cross-section: I = pi a^2 j (j the emitted current density,
+ * A/m^2, at the body's distance), times (1 + chi_p) e^(-chi_p) when phi > 0 holds them back
+ * (chi_p = e phi / (k T_p)). The total current makes the body float at the potential where it
+ * vanishes; the charge is then Q = 4 pi eps0 a phi (a sphere far from others), and the
+ * charge-to-mass ratio for myb_lorentz_acceleration Q / m. Secondary emission by electron
+ * impact (important for some materials above ~100 eV) and the thick-sheath limit (a much
+ * larger than the Debye length) are not modelled. */
+typedef struct myb_plasma_species {
+  double charge;      /* C (-e for electrons) */
+  double mass;        /* kg */
+  double density;     /* m^-3 */
+  double temperature; /* k T, J */
+  double drift;       /* bulk speed relative to the body, m/s (>= 0) */
+} myb_plasma_species;
+
+typedef struct myb_photoemission {
+  double current_density; /* emitted current density of the sunlit cross-section, A/m^2 */
+  double temperature;     /* k T of the photoelectrons, J */
+  double charge;          /* elementary charge, C (MYB_CONST_E) */
+} myb_photoemission;
+
+/* Total current (A; positive charges the body positively) to a sphere of radius a at the
+ * potential phi from `count` species and, if photo is not NULL, photoemission. Errors:
+ * MYB_E_DOMAIN (invalid input). */
+MYB_API MYB_NODISCARD myb_status myb_charging_current(const myb_plasma_species* species,
+                                                      size_t count,
+                                                      const myb_photoemission* photo,
+                                                      double radius, double potential,
+                                                      double* current);
+
+/* Floating potential (V): the root of myb_charging_current, which decreases monotonically with
+ * phi (bracketing outwards from 0 in steps of the largest k T / |q|, then bisection to the
+ * resolution of the doubles). Errors: MYB_E_DOMAIN (invalid input, or currents of one sign
+ * only, so that no potential balances them), MYB_E_NOCONV. */
+MYB_API MYB_NODISCARD myb_status myb_charging_equilibrium(const myb_plasma_species* species,
+                                                          size_t count,
+                                                          const myb_photoemission* photo,
+                                                          double radius, double* potential);
+
 #ifdef __cplusplus
 }
 #endif

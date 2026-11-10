@@ -1,0 +1,34 @@
+Tropospheric delay in myb (ext/troposphere)
+
+The models are those of the IERS Conventions (2010), chapter 9 (G. Petit, B. Luzum (eds.), IERS
+Technical Note No. 36, Verlag des Bundesamts fuer Kartographie und Geodaesie, 2010, with the
+updates at https://iers-conventions.obspm.fr/):
+
+  - J. Saastamoinen, "Atmospheric correction for the troposphere and stratosphere in radio
+    ranging of satellites", Geophys. Monogr. 15, AGU, 1972, in the form of J. L. Davis et al.,
+    Radio Sci. 20, 1593, 1985;
+  - V. B. Mendes, E. C. Pavlis, "High-accuracy zenith delay prediction at optical wavelengths",
+    Geophys. Res. Lett. 31, L14602, 2004;
+  - V. B. Mendes, G. Prates, E. C. Pavlis, D. E. Pavlis, R. B. Langley, "Improved mapping
+    functions for atmospheric refraction correction in SLR", Geophys. Res. Lett. 29, 1414, 2002
+    (FCULa; coefficients of table 9.1 of the Conventions);
+  - J. Boehm, B. Werl, H. Schuh, "Troposphere mapping functions for GPS and very long baseline
+    interferometry from European Centre for Medium-Range Weather Forecasts operational analysis
+    data", J. Geophys. Res. 111, B02406, 2006 (VMF1);
+  - J. Boehm, A. Niell, P. Tregoning, H. Schuh, "Global Mapping Function (GMF): A new empirical
+    mapping function based on numerical weather model data", Geophys. Res. Lett. 33, L07304,
+    2006;
+  - J. Boehm, R. Heinkelmann, H. Schuh, "Short Note: A global model of pressure and temperature
+    for geodetic applications", J. Geod. 81, 679, 2007 (GPT);
+  - A. E. Niell, "Global mapping functions for the atmosphere delay at radio wavelengths",
+    J. Geophys. Res. 101, 3227, 1996 (height correction, seasonal phase);
+  - G. Chen, T. A. Herring, "Effects of atmospheric azimuthal asymmetry on the analysis of space
+    geodetic data", J. Geophys. Res. 102, 20489, 1997 (gradient mapping function).
+
+troposphere.c is written by the authors of myb from these published equations; it is not a
+translation of the IERS Conventions software (whose licence is not BSD-compatible). The
+coefficient tables of GMF and GPT in troposphere_tables.inc are numbers (model data, like the
+tables of the Conventions used elsewhere in myb) taken from the DATA statements of GMF.F and
+GPT.F of the Conventions software, chapter 9, identified by SHA-256 in that file. The test cases
+in the headers of FCUL_ZD_HPA.F, FCUL_A.F, VMF1.F, VMF1_HT.F, GMF.F and GPT.F serve as the
+reference of tests/ext/test_troposphere.c.

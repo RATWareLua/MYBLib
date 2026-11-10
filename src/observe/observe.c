@@ -195,3 +195,171 @@ void myb_direction_radec(const double p[3], double* ra, double* dec) {
   *ra = a;
   *dec = (rxy > 0.0 || p[2] != 0.0) ? myb_atan2(p[2], rxy) : 0.0;
 }
+
+/* ---- Dispersive delay in a plasma -------------------------------------------------------- */
+
+double myb_plasma_group_delay(double column, double frequency, double e, double m_e,
+                              double eps0) {
+  if (!(column >= 0.0) || !isfinite(column) || !(frequency > 0.0) || !isfinite(frequency) ||
+      !(e > 0.0) || !(m_e > 0.0) || !(eps0 > 0.0) || !isfinite(e + m_e + eps0)) {
+    return (double)NAN;
+  }
+  const double pi2 = 9.8696044010893586188;
+  const double k = e * e / (8.0 * pi2 * eps0 * m_e);
+  return k * column / (frequency * frequency);
+}
+
+/* sum_k coef[k] cos(theta)^q[k]: the electron density along a line of impact parameter b in the
+ * angle theta seen from the centre (s - s0 = b tan theta, r = b / cos theta, ds = b dtheta /
+ * cos^2 theta) */
+typedef struct column_terms {
+  size_t count;
+  double coef[MYB_PLASMA_TERMS];
+  double q[MYB_PLASMA_TERMS];
+} column_terms;
+
+static double column_integrand(const column_terms* t, double theta) {
+  const double lc = myb_log(myb_cos(theta));
+  double s = 0.0;
+  for (size_t k = 0; k < t->count; ++k) {
+    s += t->coef[k] * (t->q[k] == 0.0 ? 1.0 : myb_exp(t->q[k] * lc));
+  }
+  return s;
+}
+
+/* 15-point Gauss-Kronrod rule with its embedded 7-point Gauss rule (nodes and weights of
+ * QUADPACK, public domain) */
+static void gauss_kronrod15(const column_terms* t, double a, double b, double* integral,
+                            double* error) {
+  static const double xgk[8] = {
+      0.991455371120812639206854697526329, 0.949107912342758524526189684047851,
+      0.864864423359769072789712788640926, 0.741531185599394439863864773280788,
+      0.586087235467691130294144845693013, 0.405845151377397166906606412076961,
+      0.207784955007898467600689403773245, 0.0};
+  static const double wgk[8] = {
+      0.022935322010529224963732008058970, 0.063092092629978553290700663189204,
+      0.104790010322250183839876322541518, 0.140653259715525918745189590510238,
+      0.169004726639267902826583426598550, 0.190350578064785409913256402421014,
+      0.204432940075298892414161999234649, 0.209482141084727828012999174891714};
+  static const double wg[4] = {
+      0.129484966168869693270611432679082, 0.279705391489276667901467771423780,
+      0.381830050505118944950369775488975, 0.417959183673469387755102040816327};
+  const double center = 0.5 * (a + b);
+  const double half = 0.5 * (b - a);
+  const double fc = column_integrand(t, center);
+  double resk = fc * wgk[7];
+  double resg = fc * wg[3];
+  for (int j = 0; j < 7; ++j) {
+    const double dx = half * xgk[j];
+    const double f = column_integrand(t, center - dx) + column_integrand(t, center + dx);
+    resk += wgk[j] * f;
+    if (j % 2 == 1) {
+      resg += wg[j / 2] * f;
+    }
+  }
+  *integral = resk * half;
+  *error = fabs((resk - resg) * half);
+}
+
+myb_status myb_plasma_column(const myb_plasma_profile* profile, const double p1[3],
+                             const double p2[3], double* column) {
+  MYB_CHECK(profile != NULL && p1 != NULL && p2 != NULL && column != NULL);
+  const size_t count = profile->count;
+  const double radius = profile->radius;
+  if (count < 1 || count > MYB_PLASMA_TERMS || !(radius > 0.0) || !isfinite(radius) ||
+      !myb_vec3_finite(p1) || !myb_vec3_finite(p2)) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < count; ++k) {
+    if (!(profile->density[k] >= 0.0) || !isfinite(profile->density[k]) ||
+        !(profile->power[k] > 0.0) || !isfinite(profile->power[k])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  double d[3];
+  for (int i = 0; i < 3; ++i) {
+    d[i] = p2[i] - p1[i];
+  }
+  const double len = myb_vec3_norm(d);
+  if (len == 0.0) {
+    *column = 0.0;
+    return MYB_OK;
+  }
+  const double u[3] = {d[0] / len, d[1] / len, d[2] / len};
+  double c[3];
+  myb_vec3_cross(p1, u, c);
+  const double b = myb_vec3_norm(c);   /* impact parameter */
+  const double s0 = -myb_vec3_dot(p1, u); /* closest approach along the segment */
+  const double r1 = myb_vec3_norm(p1);
+  const double r2 = myb_vec3_norm(p2);
+  if (!(b > 1e-12 * fmax(r1, r2))) {
+    /* radial segment: n R [(R / r_near)^(p - 1) - (R / r_far)^(p - 1)] / (p - 1) */
+    if (s0 >= 0.0 && s0 <= len) {
+      return MYB_E_DOMAIN;
+    }
+    const double r_near = fmin(r1, r2);
+    const double r_far = fmax(r1, r2);
+    double sum = 0.0;
+    for (size_t k = 0; k < count; ++k) {
+      const double p = profile->power[k];
+      const double n = profile->density[k];
+      if (p == 1.0) {
+        sum += n * radius * myb_log(r_far / r_near);
+      } else {
+        sum += n * radius *
+               (myb_exp((p - 1.0) * myb_log(radius / r_near)) -
+                myb_exp((p - 1.0) * myb_log(radius / r_far))) /
+               (p - 1.0);
+      }
+    }
+    *column = sum;
+    return MYB_OK;
+  }
+  column_terms t = {.count = count};
+  const double lrb = myb_log(radius / b);
+  for (size_t k = 0; k < count; ++k) {
+    t.coef[k] = profile->density[k] * myb_exp(profile->power[k] * lrb) * b;
+    t.q[k] = profile->power[k] - 2.0;
+  }
+  const double ta = myb_atan2(-s0, b);
+  const double tb = myb_atan2(len - s0, b);
+  double whole = 0.0;
+  double whole_error = 0.0;
+  gauss_kronrod15(&t, ta, tb, &whole, &whole_error);
+  /* adaptive bisection on an explicit stack: accept an interval when its error estimate is
+   * below its share of 1e-13 of the integral */
+  enum { STACK = 64, BUDGET = 4000 };
+  double lo[STACK];
+  double hi[STACK];
+  int top = 0;
+  lo[0] = ta;
+  hi[0] = tb;
+  top = 1;
+  const double tol = 1e-13 * fabs(whole);
+  double total = 0.0;
+  for (int it = 0; it < BUDGET; ++it) { /* bound: BUDGET intervals */
+    if (top == 0) {
+      *column = total;
+      return MYB_OK;
+    }
+    --top;
+    const double a = lo[top];
+    const double z = hi[top];
+    double value = 0.0;
+    double error = 0.0;
+    gauss_kronrod15(&t, a, z, &value, &error);
+    if (error <= tol * fabs((z - a) / (tb - ta)) || error <= 1e-300) {
+      total += value;
+    } else if (top + 2 <= STACK) {
+      const double mid = 0.5 * (a + z);
+      lo[top] = a;
+      hi[top] = mid;
+      lo[top + 1] = mid;
+      hi[top + 1] = z;
+      top += 2;
+    } else {
+      return MYB_E_NOCONV;
+    }
+  }
+  return MYB_E_NOCONV;
+}

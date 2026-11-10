@@ -1,0 +1,15 @@
+Ionosphere in myb (ext/ionosphere)
+
+ionosphere.c is written by the authors of myb from:
+
+  - S. Schaer, W. Gurtner, J. Feltens, "IONEX: The IONosphere Map EXchange Format Version 1",
+    Proceedings of the IGS AC Workshop, Darmstadt, 1998, and the IONEX 1.1 description (IGS,
+    2015): the file format, the interpolation of the maps (bilinear in space, eq. 4; linear in
+    time between maps rotated with the Sun, eq. 3);
+  - the single-layer model of the ionosphere and its modified form of the Center for Orbit
+    Determination in Europe (S. Schaer, "Mapping and predicting the Earth's ionosphere using the
+    Global Positioning System", dissertation, University of Bern, 1999).
+
+No code of others is included. The test file tests/data/ionosphere/synthetic.inx is synthetic
+(an analytic field written in the format by the authors of myb), not data of any analysis
+centre.

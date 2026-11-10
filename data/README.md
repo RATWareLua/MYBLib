@@ -9,7 +9,7 @@
 | `time/time-scales.tk` | дерево шкал TAI, TT, TCG, TDB, TCB, GPS, GST, BDT | резолюции МАС 1991 A4, 2000 B1.9, 2006 B3; IS-GPS-200 | определения (факты) |
 | `time/tdb-tt-fb1990.tk` | ряд TDB−TT (787 членов + 5 поправок JPL) | Fairhead & Bretagnon 1990 в редакции SOFA, числа из ERFA `dtdb.c` | BSD-3 (ERFA) |
 | `time/utc-tai.tk` | TAI−UTC с 1960 г. (дрейф до 1972), срок действия | USNO tai-utc.dat через ERFA `dat.c`; IERS `Leap_Second.dat` (бюллетень C 72, до 28.06.2027) | BSD-3 (ERFA); данные IERS |
-| `constants/codata-2022.tk` | G (CODATA 2022), c | NIST CODATA 2022; определение метра | факты |
+| `constants/codata-2022.tk` | G, mₑ, m_p, ε₀ (CODATA 2022), c, e, k (определения SI) | NIST CODATA 2022; определение метра | факты |
 | `frames/iau2006-cip.tk` | ряды X, Y, s + XY/2 модели CIP IAU 2006/2000A (2941 член), 14 фундаментальных аргументов, ERA, s′ | IERS Conventions 2010, табл. 5.2a, 5.2b, 5.2d (iers-conventions.obspm.fr; SHA-256 в файле) | конвенции IERS (факты) |
 | `frames/eop-tides.tk` | суточные и полусуточные вариации EOP: океанские приливы (71 член) и либрация (10 + 11) | IERS Conventions 2010, табл. 8.2–8.3 и 5.1a/b, таблицы программ interp.f, PMSDNUT2.F, UTLIBR.F (SHA-256 в файле) | конвенции IERS (факты) |
 | `grav/iers2010-tides.tk` | приливы поля Земли: числа Лява (табл. 6.3), частотные поправки шага 2 (табл. 6.5a–c, 71 член, ряды Пуассона), постоянный прилив, полюсные приливы, вековой полюс | IERS Conventions 2010, гл. 6 и 7 (редакция 2018; SHA-256 в файле) | конвенции IERS (факты) |

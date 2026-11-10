@@ -68,6 +68,7 @@ add_library(myb STATIC
   src/frames/tkframe.c
   src/force/force.c
   src/force/magnetic.c
+  src/force/charging.c
   src/force/radiation.c
   src/force/thrust.c
   src/frames/wgccre.c
@@ -97,6 +98,7 @@ add_library(myb STATIC
   src/io/numparse.c
   src/num/dd.c
   src/num/elliptic.c
+  src/num/erf.c
   src/num/linalg.c
   src/num/poisson.c
   src/num/root.c
@@ -156,7 +158,7 @@ if(CMAKE_CXX_COMPILER)
 endif()
 
 # ---- Optional modules of particular bodies (ext/) -------------------------------------
-option(MYB_BUILD_EXT "Build the empirical models of ext/ (NRLMSISE-00)" ON)
+option(MYB_BUILD_EXT "Build the body-specific models of ext/ (NRLMSISE-00, SGP4, troposphere, ionosphere)" ON)
 if(MYB_BUILD_EXT)
   add_subdirectory(ext)
 endif()
