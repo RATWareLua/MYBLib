@@ -373,7 +373,8 @@ static int assemble(const model* m, assembly* s, int estimate_cr) {
   ok = myb_env_add_body(s->env, &b_earth, &earth) == MYB_OK;
   size_t index[BODIES] = {0};
   for (int b = 0; b < BODIES && ok; ++b) {
-    s->ephemeris[b] = (myb_spk_body){m->spk, m->body[b], 399, 1};
+    s->ephemeris[b] =
+        (myb_spk_body){.spk = m->spk, .target = m->body[b], .center = 399, .frame = 1};
     myb_env_body body = {.id = m->body[b],
                          .gm = m->gm_body[b],
                          .state = myb_spk_body_state,
@@ -781,10 +782,12 @@ int main(void) {
          "(R %.4f, T %.4f, N %.4f)\n",
          rms, rtn[0], rtn[1], rtn[2]);
   /* with the edges of the shadows declared this number does not depend on the precision of
-   * the integrator (25.9587 m at epsilon 1e-10, 1e-11 and 1e-12); with steps over the edges
-   * it is 25.9520 m at 1e-10 and 25.9582 m at 1e-12 */
+   * the integrator (25.8887 m at epsilon 1e-10, 1e-11 and 1e-12); with steps over the edges
+   * it is 25.8821 m at 1e-10 and 25.8882 m at 1e-12. Without the secondary waves of the
+   * ocean tides (MYB_TIDES_ADMITTANCE) it was 25.9587 m, and the fit below 2.05 cm in place
+   * of 1.57 cm */
   if (m.off == 0 && !estimate_cr && getenv("MYB_LAGEOS_NO_BREAKS") == NULL) {
-    MT_CHECK(fabs(rms - 25.9587) < 5.0e-4);
+    MT_CHECK(fabs(rms - 25.8887) < 5.0e-4);
   }
   /* cr is held at 1.13 as by the ILRS analysis centres (it is not a parameter of the model
    * unless MYB_LAGEOS_CR asks): over a week a force of fixed inertial direction is nearly a
@@ -808,13 +811,14 @@ int main(void) {
          set.empirical.sine[1] * 1e12, set.empirical.cosine[2] * 1e12,
          set.empirical.sine[2] * 1e12);
   (void)e;
-  /* measured: 2.0 cm (R 2.6 mm, T 1.8 cm, N 8 mm), constant along-track -1.4 pm/s^2 (the
-   * thermal drag of LAGEOS); the once-per-revolution cross-track terms (~600 pm/s^2) absorb
-   * what differs from the ILRS models (ocean tides EOT11a and their admittance, S1/S2
-   * atmospheric tides) — the terms the analysis centres estimate for the same reason */
+  /* measured: 1.6 cm (R 2.8 mm, T 1.3 cm, N 8 mm; 2.0 cm before the secondary waves of the
+   * ocean tides), constant along-track -2.2 pm/s^2 (the thermal drag of LAGEOS); the
+   * once-per-revolution cross-track terms (~600 pm/s^2) absorb what differs from the ILRS
+   * models (ocean tides EOT11a, S1/S2 atmospheric tides) — the terms the analysis centres
+   * estimate for the same reason */
   if (m.off == 0 && !estimate_cr) {
     MT_CHECK(result.converged);
-    MT_CHECK(rms < 0.03);
+    MT_CHECK(rms < 0.02);
     MT_CHECK(fabs(set.empirical.constant[1]) < 5e-12);
   }
   disassemble(&set);

@@ -463,8 +463,8 @@ static myb_status frame_of_dual(const myb_dual a[3], const myb_dual b[3], myb_du
 
 /* The attitude with its derivatives in the state. The laws of this file are differentiated
  * as they are written; any other law by central differences of the law. */
-static myb_status attitude_dual(myb_attitude_function attitude, void* context, double t,
-                                const double x[3], const double v[3], myb_dual m[9]) {
+myb_status myb_internal_attitude_dual(myb_attitude_function attitude, void* context, double t,
+                                      const double x[3], const double v[3], myb_dual m[9]) {
   if (attitude == myb_attitude_orbital) {
     const myb_orbital_attitude* o = context;
     MYB_CHECK(o != NULL && o->env != NULL);
@@ -641,7 +641,7 @@ myb_status myb_term_surface_radiation_jacobian(void* term, double t, const doubl
   const myb_dual pressure = myb_dual_div(
       myb_dual_constant(flux * distance * distance / (r->c * mass)), myb_dual_mul(dn, dn));
   myb_dual m[9];
-  status = attitude_dual(r->attitude, r->attitude_context, t, x, v, m);
+  status = myb_internal_attitude_dual(r->attitude, r->attitude_context, t, x, v, m);
   if (status != MYB_OK) {
     return status;
   }
@@ -774,7 +774,7 @@ myb_status myb_term_surface_drag_jacobian(void* term, double t, const double x[3
   memset(dadx, 0, 9 * sizeof(double));
   memset(dadv, 0, 9 * sizeof(double));
   myb_dual m[9];
-  status = attitude_dual(d->attitude, d->attitude_context, t, x, v, m);
+  status = myb_internal_attitude_dual(d->attitude, d->attitude_context, t, x, v, m);
   if (status != MYB_OK) {
     return status;
   }
@@ -841,7 +841,7 @@ myb_status myb_term_recoil_jacobian(void* term, double t, const double x[3], con
     return MYB_E_DOMAIN;
   }
   myb_dual m[9];
-  const myb_status status = attitude_dual(r->attitude, r->attitude_context, t, x, v, m);
+  const myb_status status = myb_internal_attitude_dual(r->attitude, r->attitude_context, t, x, v, m);
   if (status != MYB_OK) {
     return status;
   }

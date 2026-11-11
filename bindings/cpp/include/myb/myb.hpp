@@ -359,7 +359,7 @@ class ephemeris {
   // the pointer returned, which lives as long as this object. frame 0 accepts any frame.
   ::myb_spk_body* body(std::int32_t target, std::int32_t center, std::int32_t frame = 0) {
     bodies_.push_back(std::make_unique<::myb_spk_body>(
-        ::myb_spk_body{spk_.get(), target, center, frame}));
+        ::myb_spk_body{spk_.get(), target, center, frame, nullptr}));
     return bodies_.back().get();
   }
 

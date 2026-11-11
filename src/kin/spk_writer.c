@@ -12,6 +12,7 @@
 
 #include "core/alloc.h"
 #include "core/base.h"
+#include "myb/ck.h"
 #include "myb/cmath.h"
 #include "myb/frames.h"
 #include "myb/kin.h"
@@ -43,7 +44,7 @@ typedef struct segment {
   size_t length;
 } segment;
 
-enum { KIND_SPK = 0, KIND_PCK = 1 };
+enum { KIND_SPK = 0, KIND_PCK = 1, KIND_CK = 2 };
 
 struct myb_spk_writer {
   myb_allocator allocator;
@@ -394,9 +395,10 @@ myb_status myb_spk_writer_write(const myb_spk_writer* writer, void* buffer, size
                                         ':', '\r', '\n', ':', '\r', 0x00, ':', 0x81, ':', 0x10,
                                         0xCE, ':', 'E', 'N', 'D', 'F', 'T', 'P'};
   const size_t groups = summary_records(w);
-  memcpy(out, w->kind == KIND_SPK ? "DAF/SPK " : "DAF/PCK ", 8);
+  memcpy(out, w->kind == KIND_SPK ? "DAF/SPK " : (w->kind == KIND_PCK ? "DAF/PCK " : "DAF/CK  "),
+         8);
   store32(out + 8, 2);
-  store32(out + 12, w->kind == KIND_SPK ? 6 : 5);
+  store32(out + 12, w->kind == KIND_PCK ? 5 : 6);
   memset(out + 16, ' ', INTERNAL_NAME_CHARS);
   memcpy(out + 16, w->internal_name, strlen(w->internal_name));
   store32(out + 76, 2);                                  /* first summary record */
@@ -426,6 +428,14 @@ myb_status myb_spk_writer_write(const myb_spk_writer* writer, void* buffer, size
         store32(p + 20, s->center);
         store32(p + 24, s->frame);
         store32(p + 28, s->type);
+        store32(p + 32, (int32_t)begin);
+        store32(p + 36, (int32_t)(begin + s->length - 1));
+      } else if (w->kind == KIND_CK) { /* the instrument, the base frame, the type, whether
+                                          there are angular velocities, the addresses */
+        store32(p + 16, s->target);
+        store32(p + 20, s->frame);
+        store32(p + 24, s->type);
+        store32(p + 28, s->center);
         store32(p + 32, (int32_t)begin);
         store32(p + 36, (int32_t)(begin + s->length - 1));
       } else { /* the frame, its base, the type and the addresses: five integers */
@@ -625,6 +635,189 @@ myb_status myb_pck_writer_write(const myb_pck_writer* writer, void* buffer, size
 }
 
 myb_status myb_pck_writer_write_file(const myb_pck_writer* writer, const char* path) {
+  MYB_CHECK(writer != NULL);
+  return myb_spk_writer_write_file(&writer->w, path);
+}
+
+/* ---- CK (myb/ck.h) --------------------------------------------------------------------------------
+ * The same file with the label of a CK; a summary holds the instrument, the base frame, the
+ * type and the flag of the angular velocities where an SPK holds the target, the centre,
+ * the frame and the type. */
+
+struct myb_ck_writer {
+  myb_spk_writer w;
+};
+
+myb_status myb_ck_writer_create(const char* internal_name, const myb_allocator* allocator,
+                                myb_ck_writer** writer) {
+  MYB_CHECK(writer != NULL);
+  myb_spk_writer* w = NULL;
+  const myb_status status = create(internal_name, allocator, KIND_CK, &w);
+  if (status == MYB_OK) {
+    *writer = (myb_ck_writer*)w; /* its only member */
+  }
+  return status;
+}
+
+void myb_ck_writer_destroy(myb_ck_writer* writer) {
+  if (writer != NULL) {
+    myb_spk_writer_destroy(&writer->w);
+  }
+}
+
+/* A quaternion made unit into out; 0 for one that is zero or not finite. */
+static int unit_quaternion(const double q[4], double out[4]) {
+  const double n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  if (!(n > 0.0) || !isfinite(n)) {
+    return 0;
+  }
+  for (int i = 0; i < 4; ++i) {
+    out[i] = q[i] / n;
+  }
+  return 1;
+}
+
+static int finite3(const double v[3]) {
+  return isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]);
+}
+
+/* The header of an SPK segment that stands for one of a CK. */
+static myb_spk_segment_header ck_header(const myb_ck_segment_header* h, int has_rates) {
+  const myb_spk_segment_header out = {.target = h->instrument, .center = has_rates,
+                                      .frame = h->frame, .name = h->name};
+  return out;
+}
+
+myb_status myb_ck_writer_add_pointings(myb_ck_writer* writer,
+                                       const myb_ck_segment_header* header, int type,
+                                       const double* ticks, const double* quaternions,
+                                       const double* rates, size_t count,
+                                       const double* interval_starts, size_t interval_count) {
+  MYB_CHECK(writer != NULL && header != NULL && ticks != NULL && quaternions != NULL);
+  myb_spk_writer* w = &writer->w;
+  if (header->name == NULL || !printable(header->name, NAME_CHARS) || (type != 1 && type != 3) ||
+      count == 0 || count > SIZE_MAX / 16) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < count; ++k) {
+    double q[4];
+    if (!isfinite(ticks[k]) || (k > 0 && !(ticks[k] > ticks[k - 1])) ||
+        !unit_quaternion(quaternions + 4 * k, q) || (rates != NULL && !finite3(rates + 3 * k))) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  const size_t intervals = type == 3 ? (interval_starts != NULL ? interval_count : 1) : 0;
+  if (type == 3) {
+    if (intervals == 0 || intervals > count ||
+        (interval_starts != NULL && interval_starts[0] != ticks[0])) {
+      return MYB_E_DOMAIN;
+    }
+    /* every start is one of the ticks, in their order */
+    size_t at = 0;
+    for (size_t i = 0; interval_starts != NULL && i < intervals; ++i) {
+      /* bound: the ticks, each passed once over all the starts */
+      while (at < count && ticks[at] < interval_starts[i]) {
+        ++at;
+      }
+      if (at == count || ticks[at] != interval_starts[i] ||
+          (i > 0 && !(interval_starts[i] > interval_starts[i - 1]))) {
+        return MYB_E_DOMAIN;
+      }
+    }
+  }
+  const size_t record = rates != NULL ? 7 : 4;
+  size_t length = count * (record + 1) + (count - 1) / DIRECTORY_SPACING + 1;
+  if (type == 3) {
+    length += intervals + (intervals - 1) / DIRECTORY_SPACING + 1;
+  }
+  const myb_status status = reserve(w, length);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* out = w->data + w->words;
+  for (size_t k = 0; k < count; ++k) {
+    (void)unit_quaternion(quaternions + 4 * k, out);
+    out += 4;
+    if (rates != NULL) {
+      memcpy(out, rates + 3 * k, 3 * sizeof *out);
+      out += 3;
+    }
+  }
+  memcpy(out, ticks, count * sizeof *out);
+  out += count;
+  for (size_t k = DIRECTORY_SPACING; k < count; k += DIRECTORY_SPACING) {
+    *out++ = ticks[k - 1];
+  }
+  if (type == 3) {
+    for (size_t i = 0; i < intervals; ++i) {
+      *out++ = interval_starts != NULL ? interval_starts[i] : ticks[0];
+    }
+    for (size_t i = DIRECTORY_SPACING; i < intervals; i += DIRECTORY_SPACING) {
+      *out++ = interval_starts[i - 1];
+    }
+    *out++ = (double)intervals;
+  }
+  *out++ = (double)count;
+  const myb_spk_segment_header h = ck_header(header, rates != NULL);
+  commit(w, &h, type, ticks[0], ticks[count - 1], length);
+  return MYB_OK;
+}
+
+myb_status myb_ck_writer_add_intervals(myb_ck_writer* writer,
+                                       const myb_ck_segment_header* header, const double* starts,
+                                       const double* stops, const double* quaternions,
+                                       const double* rates, const double* seconds_per_tick,
+                                       size_t count) {
+  MYB_CHECK(writer != NULL && header != NULL && starts != NULL && stops != NULL &&
+            quaternions != NULL && rates != NULL && seconds_per_tick != NULL);
+  myb_spk_writer* w = &writer->w;
+  if (header->name == NULL || !printable(header->name, NAME_CHARS) || count == 0 ||
+      count > SIZE_MAX / 16) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < count; ++k) {
+    double q[4];
+    if (!isfinite(starts[k]) || !isfinite(stops[k]) || !(stops[k] >= starts[k]) ||
+        (k > 0 && !(starts[k] > stops[k - 1])) || !unit_quaternion(quaternions + 4 * k, q) ||
+        !finite3(rates + 3 * k) || !isfinite(seconds_per_tick[k])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  const size_t length = 10 * count + (count - 1) / DIRECTORY_SPACING;
+  const myb_status status = reserve(w, length);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* out = w->data + w->words;
+  for (size_t k = 0; k < count; ++k) {
+    (void)unit_quaternion(quaternions + 4 * k, out);
+    memcpy(out + 4, rates + 3 * k, 3 * sizeof *out);
+    out[7] = seconds_per_tick[k];
+    out += 8;
+  }
+  memcpy(out, starts, count * sizeof *out);
+  out += count;
+  memcpy(out, stops, count * sizeof *out);
+  out += count;
+  for (size_t k = DIRECTORY_SPACING; k < count; k += DIRECTORY_SPACING) {
+    *out++ = starts[k - 1];
+  }
+  const myb_spk_segment_header h = ck_header(header, 1);
+  commit(w, &h, 2, starts[0], stops[count - 1], length);
+  return MYB_OK;
+}
+
+size_t myb_ck_writer_size(const myb_ck_writer* writer) {
+  MYB_CHECK(writer != NULL);
+  return myb_spk_writer_size(&writer->w);
+}
+
+myb_status myb_ck_writer_write(const myb_ck_writer* writer, void* buffer, size_t size) {
+  MYB_CHECK(writer != NULL);
+  return myb_spk_writer_write(&writer->w, buffer, size);
+}
+
+myb_status myb_ck_writer_write_file(const myb_ck_writer* writer, const char* path) {
   MYB_CHECK(writer != NULL);
   return myb_spk_writer_write_file(&writer->w, path);
 }

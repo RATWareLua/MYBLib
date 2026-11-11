@@ -1,0 +1,28 @@
+KPL/SCLK
+Two clocks for the tests of myb/ck.h (cspice_ck.py). 9099: three fields, two partitions,
+times on TDB with a jump and two changes of the rate. 9098: two fields, the second counted
+from 1, one partition that starts at the count 100, times on TT.
+\begindata
+SCLK_KERNEL_ID            = ( @2026-11-11 )
+SCLK_DATA_TYPE_9099       = ( 1 )
+SCLK01_TIME_SYSTEM_9099   = ( 1 )
+SCLK01_N_FIELDS_9099      = ( 3 )
+SCLK01_MODULI_9099        = ( 10000000 256 8 )
+SCLK01_OFFSETS_9099       = ( 0 0 0 )
+SCLK01_OUTPUT_DELIM_9099  = ( 2 )
+SCLK_PARTITION_START_9099 = ( 0 20480 )
+SCLK_PARTITION_END_9099   = ( 3000000 2048000000 )
+SCLK01_COEFFICIENTS_9099  = ( 0        599996400.0   1.0
+                              4096000  599998400.5   1.00001
+                              12288000 600002400.79  0.99999 )
+SCLK_DATA_TYPE_9098       = ( 1 )
+SCLK01_TIME_SYSTEM_9098   = ( 2 )
+SCLK01_N_FIELDS_9098      = ( 2 )
+SCLK01_MODULI_9098        = ( 4294967296 65536 )
+SCLK01_OFFSETS_9098       = ( 0 1 )
+SCLK01_OUTPUT_DELIM_9098  = ( 1 )
+SCLK_PARTITION_START_9098 = ( 6553600 )
+SCLK_PARTITION_END_9098   = ( 280000000000000 )
+SCLK01_COEFFICIENTS_9098  = ( 0        500000000.0         1.0
+                              65536000 500001000.000123    0.9999975 )
+\begintext

@@ -2142,3 +2142,48 @@ myb_status myb_nrlmsise00(const myb_nrlmsise00_input* input, const int* switches
   output->temperature = result.t[1];
   return MYB_OK;
 }
+
+/* ---- The model as an atmosphere --------------------------------------------------------------- */
+
+myb_status myb_nrlmsise00_density(void* atmosphere, myb_time t, const double r[3],
+                                  double* density) {
+  const myb_nrlmsise00_atmosphere* a = atmosphere;
+  MYB_CHECK(a != NULL && a->timesys != NULL && r != NULL && density != NULL);
+  const myb_thermosphere_setting setting = {.weather = a->weather,
+                                            .f107 = a->f107,
+                                            .f107_average = a->f107_average,
+                                            .ap = a->ap,
+                                            .timesys = a->timesys,
+                                            .scale = a->scale,
+                                            .ellipsoid = a->ellipsoid};
+  myb_thermosphere_point p;
+  myb_status status = myb_thermosphere_point_at(&setting, t, r, &p);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const double degree = 57.29577951308232;
+  int switches[24];
+  for (int i = 0; i < 24; ++i) {
+    switches[i] = 1;
+  }
+  if (p.indices.has_history) {
+    switches[9] = -1; /* the history of ap in place of the daily value */
+  }
+  const myb_nrlmsise00_input input = {
+      .day_of_year = p.day_of_year,
+      .seconds = p.seconds,
+      .altitude = p.height / 1000.0,
+      .latitude = p.latitude * degree,
+      .longitude = p.longitude * degree,
+      .local_solar_time = p.local_solar_time,
+      .f107_average = p.indices.f107_average,
+      .f107 = p.indices.f107,
+      .ap = p.indices.ap,
+      .ap_history = p.indices.has_history ? p.indices.ap_history : NULL};
+  myb_nrlmsise00_output output;
+  status = myb_nrlmsise00(&input, switches, a->anomalous_oxygen, &output);
+  if (status == MYB_OK) {
+    *density = output.density[5];
+  }
+  return status;
+}

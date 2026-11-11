@@ -2,7 +2,9 @@
 /* Instants, calendar, time scale systems and UTC: exact properties and known values.
  * Comparison with IAU SOFA (through ERFA) is in tests/erfa/test_erfa_time.c. */
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "core/fpguard.h"
 #include "mtest.h"
@@ -277,13 +279,123 @@ static void test_bad_definitions(void) {
   }
 }
 
+/* A difference of scales given by a function: a constant with a slope, or a refusal. */
+typedef struct ramp {
+  double value;
+  double slope;
+  int calls;
+  int fail;
+} ramp;
+
+static myb_status ramp_difference(void* context, myb_time t, double* difference) {
+  ramp* r = context;
+  ++r->calls;
+  if (r->fail) {
+    return MYB_E_RANGE;
+  }
+  *difference = r->value + r->slope * myb_time_seconds(t);
+  return MYB_OK;
+}
+
+/* The series relation of TDB as a table and as a function. */
+static void test_differences(myb_timesys* s) {
+  myb_scale tt;
+  myb_scale tdb;
+  myb_scale tcb;
+  MT_CHECK(myb_timesys_scale(s, "TT", &tt) == MYB_OK);
+  MT_CHECK(myb_timesys_scale(s, "TDB", &tdb) == MYB_OK);
+  MT_CHECK(myb_timesys_scale(s, "TCB", &tcb) == MYB_OK);
+  const myb_time start = myb_time_from_seconds(7.9e8 + 0.125);
+  const double span = 60.0 * 86400.0;
+  enum { SAMPLES = 2000 };
+  static myb_time asked[SAMPLES];
+  static myb_time by_series[SAMPLES];
+  static myb_time back_series[SAMPLES];
+  mt_rng rng = {77};
+  const clock_t c0 = clock();
+  for (int k = 0; k < SAMPLES; ++k) {
+    const double u = (double)(mt_next(&rng) >> 11) * 0x1p-53;
+    asked[k] = myb_time_add(start, k < 2 ? span * (double)k : span * u);
+    MT_CHECK(myb_timesys_convert(s, asked[k], tt, tdb, &by_series[k]) == MYB_OK);
+    MT_CHECK(myb_timesys_convert(s, asked[k], tdb, tt, &back_series[k]) == MYB_OK);
+  }
+  const clock_t c1 = clock();
+  /* the table: the nodes are instants of TDB; a margin for TT instants at its ends */
+  MT_CHECK(myb_timesys_tabulate(s, tdb, myb_time_add(start, -10.0),
+                                myb_time_add(start, span + 10.0), 0.0) == MYB_OK);
+  double worst = 0.0;
+  const clock_t c2 = clock();
+  for (int k = 0; k < SAMPLES; ++k) {
+    myb_time there;
+    myb_time back;
+    MT_CHECK(myb_timesys_convert(s, asked[k], tt, tdb, &there) == MYB_OK);
+    MT_CHECK(myb_timesys_convert(s, asked[k], tdb, tt, &back) == MYB_OK);
+    worst = fmax(worst, fabs(seconds_between(there, by_series[k])));
+    worst = fmax(worst, fabs(seconds_between(back, back_series[k])));
+  }
+  const clock_t c3 = clock();
+  /* outside the table the series, bit for bit */
+  myb_time far;
+  myb_time far_series;
+  MT_CHECK(myb_timesys_convert(s, myb_time_add(start, 2.0 * span), tt, tdb, &far) == MYB_OK);
+  MT_CHECK(myb_timesys_set_difference(s, tdb, NULL, NULL) == MYB_OK); /* drops the table */
+  MT_CHECK(myb_timesys_convert(s, myb_time_add(start, 2.0 * span), tt, tdb, &far_series) ==
+           MYB_OK);
+  MT_CHECK(myb_time_compare(far, far_series) == 0);
+  printf("TDB - TT at steps of an hour against the series: %.1e s; %.2f us a conversion "
+         "against %.2f\n",
+         worst, 1e6 * (double)(c3 - c2) / CLOCKS_PER_SEC / (2.0 * (double)SAMPLES),
+         1e6 * (double)(c1 - c0) / CLOCKS_PER_SEC / (2.0 * (double)SAMPLES));
+  MT_CHECK(worst < 2e-15);
+  /* a function in place of the series: X = FROM + S(X), there and back */
+  ramp r = {.value = 1.5e-3, .slope = 1.0e-12};
+  MT_CHECK(myb_timesys_set_difference(s, tdb, ramp_difference, &r) == MYB_OK);
+  myb_time there;
+  myb_time back;
+  MT_CHECK(myb_timesys_convert(s, start, tt, tdb, &there) == MYB_OK);
+  MT_CHECK(myb_timesys_convert(s, there, tdb, tt, &back) == MYB_OK);
+  const double shift = seconds_between(there, start);
+  MT_CHECK(fabs(shift - (1.5e-3 + 1.0e-12 * myb_time_seconds(there))) < 1e-15);
+  MT_CHECK(fabs(seconds_between(back, start)) < 1e-15 && r.calls >= 3);
+  /* scales beyond TDB go through it */
+  myb_time on_tcb;
+  MT_CHECK(myb_timesys_convert(s, start, tt, tcb, &on_tcb) == MYB_OK);
+  MT_CHECK(myb_timesys_convert(s, on_tcb, tcb, tt, &back) == MYB_OK);
+  MT_CHECK(fabs(seconds_between(back, start)) < 1e-15);
+  /* its table follows the function, not the series */
+  MT_CHECK(myb_timesys_tabulate(s, tdb, start, myb_time_add(start, span), 600.0) == MYB_OK);
+  const int calls = r.calls;
+  MT_CHECK(myb_timesys_convert(s, myb_time_add(start, 1000.0), tt, tdb, &there) == MYB_OK);
+  MT_CHECK(r.calls == calls);
+  MT_CHECK(fabs(seconds_between(there, myb_time_add(start, 1000.0)) -
+                (1.5e-3 + 1.0e-12 * myb_time_seconds(there))) < 1e-15);
+  /* the status of the function comes back, from a conversion and from the making of a table */
+  MT_CHECK(myb_timesys_set_difference(s, tdb, ramp_difference, &r) == MYB_OK);
+  r.fail = 1;
+  MT_CHECK(myb_timesys_convert(s, start, tt, tdb, &there) == MYB_E_RANGE);
+  MT_CHECK(myb_timesys_convert(s, start, tdb, tt, &there) == MYB_E_RANGE);
+  MT_CHECK(myb_timesys_tabulate(s, tdb, start, myb_time_add(start, span), 600.0) == MYB_E_RANGE);
+  MT_CHECK(myb_timesys_convert(s, start, tt, tt, &there) == MYB_OK);
+  MT_CHECK(myb_timesys_set_difference(s, tdb, NULL, NULL) == MYB_OK);
+  MT_CHECK(myb_timesys_convert(s, asked[5], tt, tdb, &there) == MYB_OK);
+  MT_CHECK(myb_time_compare(there, by_series[5]) == 0);
+  /* refused: a scale that is not given by a series; a span or a step that is not one */
+  MT_CHECK(myb_timesys_set_difference(s, tt, ramp_difference, &r) == MYB_E_DOMAIN);
+  MT_CHECK(myb_timesys_tabulate(s, tt, start, myb_time_add(start, span), 0.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_timesys_tabulate(s, tdb, start, start, 0.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_timesys_tabulate(s, tdb, start, myb_time_add(start, span), -1.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_timesys_tabulate(s, tdb, start, myb_time_add(start, 1e9), 1.0) == MYB_E_DOMAIN);
+}
+
 int main(void) {
+  setvbuf(stdout, NULL, _IONBF, 0);
   test_instants();
   test_calendar();
   myb_timesys* system = load_system();
   if (system != NULL) {
     test_scales(system);
     test_utc(system);
+    test_differences(system);
   }
   myb_timesys_destroy(system);
   test_bad_definitions();

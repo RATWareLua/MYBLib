@@ -761,7 +761,11 @@ static void test_offset(scenario* s) {
          worst, worst_v, 2.0 * rate);
   MT_CHECK(worst < 1e-8);
   MT_CHECK(worst_v < 1e-3 * 2.0 * rate);
-  MT_CHECK(partials[0] == 1.0 && partials[7] == 1.0 && partials[1] == 0.0);
+  /* the derivatives: the centre of mass and, a part in the offset over the distance, the
+   * offset as the axes follow the orbit (checked against differences in
+   * test_light_measure) */
+  MT_CHECK(fabs(partials[0] - 1.0) < 1e-6 && fabs(partials[7] - 1.0) < 1e-6 &&
+           fabs(partials[1]) < 1e-6 && partials[1] != 0.0);
   /* the range of a station to that point is the range to where it is */
   myb_offset_measure ranged = reflector;
   ranged.measure = myb_measure_range;

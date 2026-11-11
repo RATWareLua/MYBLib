@@ -9,6 +9,7 @@
  *   dleap = step of TAI - UTC at the end of D (row of D+1 minus row of D at 0h of D+1)
  * the day has 86400 + dleap label seconds (the last minute 60 + dleap), and the label u
  * seconds after 0h is the instant  TAI = 0h(D) + dat0 + u * (1 + dlod / 86400). */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -25,7 +26,8 @@ enum {
   VAR_NAME_SIZE = 64,
   SERIES_ITERATIONS = 1, /* |dS/dX| < 1e-9, |S| < 2e-3 s: the first value is within 2e-12 s,
                             one fixed-point step within 2e-21 s (resolution of myb_time 1e-16 s) */
-  MJD_J2000_DAY = 51544  /* J2000.0 = MJD 51544.5 */
+  MJD_J2000_DAY = 51544, /* J2000.0 = MJD 51544.5 */
+  MAX_NODES = 1 << 26    /* of a tabulated relation */
 };
 
 typedef enum relation { REL_ROOT, REL_OFFSET, REL_RATE, REL_RATE_INVERSE, REL_SERIES } relation;
@@ -42,6 +44,15 @@ typedef struct scale_def {
   double series_unit;
   myb_internal_series series;
   double* owned_terms;
+  /* a SERIES relation given by a function in place of the series, and its values at equal
+   * steps (myb_timesys_set_difference, myb_timesys_tabulate): nodes -1 .. count of the
+   * table, table[0] the node before the start */
+  myb_scale_difference function;
+  void* function_context;
+  double* table;
+  size_t intervals;
+  myb_time table_start;
+  double table_step;
 } scale_def;
 
 typedef struct utc_row {
@@ -379,6 +390,7 @@ void myb_timesys_destroy(myb_timesys* system) {
   const myb_allocator a = system->allocator;
   for (int i = 0; i < MAX_SCALES; ++i) {
     myb_internal_release(&a, system->scale[i].owned_terms);
+    myb_internal_release(&a, system->scale[i].table);
   }
   myb_internal_release(&a, system->utc);
   myb_internal_release(&a, system);
@@ -417,25 +429,63 @@ static myb_time solve_rate(const scale_def* d, myb_time x) {
   return myb_time_add_dd(d->t0, myb_dd_div(delta, d->one_minus_rate));
 }
 
-static double series_at(const scale_def* d, myb_time x) {
-  return myb_internal_series_eval(&d->series, myb_time_seconds(x) / d->series_unit);
+/* The difference scale - parent of a SERIES relation at the instant x of the scale, from
+ * what defines it: the function if one was set, the series otherwise. */
+static myb_status defined_difference(const scale_def* d, myb_time x, double* value) {
+  if (d->function != NULL) {
+    const myb_status status = d->function(d->function_context, x, value);
+    if (status == MYB_OK && !isfinite(*value)) {
+      return MYB_E_DOMAIN;
+    }
+    return status;
+  }
+  *value = myb_internal_series_eval(&d->series, myb_time_seconds(x) / d->series_unit);
+  return MYB_OK;
+}
+
+/* The same through the table where it covers x: the cubic through the four nodes around. */
+static myb_status difference_at(const scale_def* d, myb_time x, double* value) {
+  if (d->table != NULL) {
+    const double h = d->table_step;
+    const double since = myb_dd_to_double(myb_time_diff(x, d->table_start));
+    if (since >= 0.0 && since <= h * (double)d->intervals) {
+      double k = floor(since / h);
+      if (k > (double)(d->intervals - 1)) {
+        k = (double)(d->intervals - 1);
+      }
+      const double* f = d->table + (size_t)k; /* the nodes k - 1 .. k + 2 */
+      const double s = since / h - k;
+      *value = -s * (s - 1.0) * (s - 2.0) / 6.0 * f[0] +
+               (s + 1.0) * (s - 1.0) * (s - 2.0) / 2.0 * f[1] -
+               (s + 1.0) * s * (s - 2.0) / 2.0 * f[2] + (s + 1.0) * s * (s - 1.0) / 6.0 * f[3];
+      return MYB_OK;
+    }
+  }
+  return defined_difference(d, x, value);
 }
 
 /* Instant on scale d from the instant on its parent. */
-static myb_time down(const scale_def* d, myb_time parent_time) {
+static myb_status down(const scale_def* d, myb_time parent_time, myb_time* out) {
   switch (d->kind) {
     case REL_OFFSET:
-      return myb_time_add(parent_time, d->offset);
+      *out = myb_time_add(parent_time, d->offset);
+      return MYB_OK;
     case REL_RATE:
-      return apply_rate(d, parent_time);
+      *out = apply_rate(d, parent_time);
+      return MYB_OK;
     case REL_RATE_INVERSE:
-      return solve_rate(d, parent_time);
+      *out = solve_rate(d, parent_time);
+      return MYB_OK;
     case REL_SERIES: {
-      myb_time x = myb_time_add(parent_time, series_at(d, parent_time));
-      for (int i = 0; i < SERIES_ITERATIONS; ++i) {
-        x = myb_time_add(parent_time, series_at(d, x));
+      double difference = 0.0;
+      myb_status status = difference_at(d, parent_time, &difference);
+      myb_time x = myb_time_add(parent_time, difference);
+      for (int i = 0; i < SERIES_ITERATIONS && status == MYB_OK; ++i) {
+        status = difference_at(d, x, &difference);
+        x = myb_time_add(parent_time, difference);
       }
-      return x;
+      *out = x;
+      return status;
     }
     case REL_ROOT:
       break;
@@ -444,20 +494,76 @@ static myb_time down(const scale_def* d, myb_time parent_time) {
 }
 
 /* Instant on the parent of d from the instant on d. */
-static myb_time up(const scale_def* d, myb_time t) {
+static myb_status up(const scale_def* d, myb_time t, myb_time* out) {
   switch (d->kind) {
     case REL_OFFSET:
-      return myb_time_add(t, -d->offset);
+      *out = myb_time_add(t, -d->offset);
+      return MYB_OK;
     case REL_RATE:
-      return solve_rate(d, t);
+      *out = solve_rate(d, t);
+      return MYB_OK;
     case REL_RATE_INVERSE:
-      return apply_rate(d, t);
-    case REL_SERIES:
-      return myb_time_add(t, -series_at(d, t));
+      *out = apply_rate(d, t);
+      return MYB_OK;
+    case REL_SERIES: {
+      double difference = 0.0;
+      const myb_status status = difference_at(d, t, &difference);
+      *out = myb_time_add(t, -difference);
+      return status;
+    }
     case REL_ROOT:
       break;
   }
   MYB_UNREACHABLE();
+}
+
+myb_status myb_timesys_set_difference(myb_timesys* system, myb_scale scale,
+                                      myb_scale_difference function, void* context) {
+  check_scale(system, scale);
+  scale_def* d = &system->scale[scale.index];
+  if (d->kind != REL_SERIES) {
+    return MYB_E_DOMAIN;
+  }
+  /* a table holds the values of what defined the relation when it was made */
+  myb_internal_release(&system->allocator, d->table);
+  d->table = NULL;
+  d->intervals = 0;
+  d->function = function;
+  d->function_context = context;
+  return MYB_OK;
+}
+
+myb_status myb_timesys_tabulate(myb_timesys* system, myb_scale scale, myb_time t0, myb_time t1,
+                                double step) {
+  check_scale(system, scale);
+  scale_def* d = &system->scale[scale.index];
+  const double h = step > 0.0 ? step : 3600.0;
+  const double span = myb_dd_to_double(myb_time_diff(t1, t0));
+  if (d->kind != REL_SERIES || !(step >= 0.0) || !isfinite(step) || !(span > 0.0) ||
+      !(span / h < (double)MAX_NODES - 4.0)) {
+    return MYB_E_DOMAIN;
+  }
+  const size_t intervals = (size_t)ceil(span / h);
+  void* block = NULL;
+  myb_status status =
+      myb_internal_alloc_array(&system->allocator, intervals + 3, sizeof(double), &block);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* table = block;
+  for (size_t k = 0; k < intervals + 3 && status == MYB_OK; ++k) {
+    status = defined_difference(d, myb_time_add(t0, h * ((double)k - 1.0)), &table[k]);
+  }
+  if (status != MYB_OK) {
+    myb_internal_release(&system->allocator, table);
+    return status;
+  }
+  myb_internal_release(&system->allocator, d->table);
+  d->table = table;
+  d->intervals = intervals;
+  d->table_start = t0;
+  d->table_step = h;
+  return MYB_OK;
 }
 
 myb_status myb_timesys_convert(const myb_timesys* system, myb_time t, myb_scale from, myb_scale to,
@@ -474,7 +580,10 @@ myb_status myb_timesys_convert(const myb_timesys* system, myb_time t, myb_scale 
   /* bound: every step moves one level towards the root; depth < MAX_SCALES */
   for (int step = 0; step < 2 * MAX_SCALES && a != b; ++step) {
     if (sc[a].depth >= sc[b].depth) {
-      x = up(&sc[a], x);
+      const myb_status status = up(&sc[a], x, &x);
+      if (status != MYB_OK) {
+        return status;
+      }
       a = sc[a].parent;
     } else {
       path[path_length++] = b;
@@ -483,7 +592,10 @@ myb_status myb_timesys_convert(const myb_timesys* system, myb_time t, myb_scale 
   }
   MYB_CHECK(a == b);
   for (int i = path_length - 1; i >= 0; --i) {
-    x = down(&sc[path[i]], x);
+    const myb_status status = down(&sc[path[i]], x, &x);
+    if (status != MYB_OK) {
+      return status;
+    }
   }
   *out = x;
   return MYB_OK;

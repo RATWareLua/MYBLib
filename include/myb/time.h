@@ -87,9 +87,33 @@ MYB_API const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale 
 
 /* The same instant on another scale. Exact relations (offsets) add no error beyond the final
  * rounding of the fraction; rate relations are evaluated in double-word arithmetic; series
- * relations are iterated to below 10^-15 s. */
+ * relations are iterated to below 10^-15 s. Errors: the statuses of a function set by
+ * myb_timesys_set_difference. */
 MYB_API MYB_NODISCARD myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
                                                      myb_scale from, myb_scale to, myb_time* out);
+
+/* A relation of the kind SERIES given by a function in place of its series: the difference
+ * scale - parent (s) at an instant of the scale — TDB - TT from the time ephemeris of a
+ * planetary ephemeris (myb_spk_time_difference of myb/kin.h) in place of the analytic
+ * series. function = NULL returns to the series. A table made before is dropped. The
+ * context must outlive the system. Not to be called while another thread converts. Errors:
+ * MYB_E_DOMAIN (a scale whose relation is not a series). */
+typedef myb_status (*myb_scale_difference)(void* context, myb_time t, double* difference);
+
+MYB_API MYB_NODISCARD myb_status myb_timesys_set_difference(myb_timesys* system, myb_scale scale,
+                                                            myb_scale_difference function,
+                                                            void* context);
+
+/* The relation of the kind SERIES of a scale tabulated every `step` seconds (0: an hour)
+ * between the instants t0 and t1 of the scale: conversions through it then take the cubic
+ * through the four nodes around the instant in place of the series (787 sines for TDB - TT)
+ * or of the function, and outside the table what defines the relation as before. With a
+ * step of an hour the table of TDB - TT is within 4e-16 s of the series; its values depend
+ * on the nodes only, not on what was asked before. A second call replaces the table.
+ * Errors: MYB_E_DOMAIN (another kind of relation, t1 not after t0, a step that is negative
+ * or not finite, more than 2^26 nodes), MYB_E_NOMEM, the statuses of the function. */
+MYB_API MYB_NODISCARD myb_status myb_timesys_tabulate(myb_timesys* system, myb_scale scale,
+                                                      myb_time t0, myb_time t1, double step);
 
 /* UTC calendar label -> instant on scale `to`. MYB_E_DOMAIN for an invalid label (e.g.
  * 23:59:60 on a day without a leap second), MYB_E_RANGE before the first table row or from

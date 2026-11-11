@@ -18,7 +18,13 @@
  *   PN pair    two bodies close enough for the orders beyond 1PN (myb_system_add_pn_pair);
  *   action     anything else that pushes a body or turns it, given as a function
  *              (myb_system_add_action); ready-made: light on the mesh of a body, with the
- *              torque it gives at the moment (myb_system_light_action).
+ *              torque it gives at the moment (myb_system_light_action);
+ *   dragging   the spin of a body drags the frame about it, and with it a body that passes
+ *              (Lense and Thirring; myb_system_add_frame_dragging);
+ *   guided     a body whose motion is given from outside — an ephemeris — pulls the bodies
+ *              of the system as a point mass and is not moved by them
+ *              (myb_system_add_guided): the hundreds of small bodies of a planetary
+ *              ephemeris, whose motion the planets hardly depend on being integrated with.
  *
  * The body-fixed frame of a body is either given from outside (myb_system_set_orientation: any
  * provider of myb/frames.h) or integrated (myb_system_set_rotation): a mantle that may hold a
@@ -51,6 +57,7 @@
 #include "myb/frames.h"
 #include "myb/grav.h"
 #include "myb/integ.h"
+#include "myb/kin.h"
 #include "myb/surface.h"
 
 #ifdef __cplusplus
@@ -66,7 +73,8 @@ enum {
   MYB_SYSTEM_MAX_TIDES = 64,     /* triples (body, raiser, point) */
   MYB_SYSTEM_MAX_DISTORTIONS = 32,
   MYB_SYSTEM_MAX_PN_PAIRS = 16,
-  MYB_SYSTEM_MAX_ACTIONS = 64
+  MYB_SYSTEM_MAX_ACTIONS = 64,
+  MYB_SYSTEM_MAX_DRAGS = 64      /* pairs (spinning body, point) */
 };
 
 /* `bodies` >= 1 massive bodies with gm[0 .. bodies-1] (finite, >= 0). Errors: MYB_E_DOMAIN,
@@ -208,6 +216,44 @@ typedef myb_status (*myb_system_action)(void* context, double t, const myb_syste
 /* Errors: MYB_E_DOMAIN (the body), MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_ACTIONS). */
 MYB_API MYB_NODISCARD myb_status myb_system_add_action(myb_system* system, size_t body,
                                                        myb_system_action action, void* context);
+
+/* The spin of `body` drags `point` (J. Lense, H. Thirring, 1918): the acceleration
+ *   (1 + gamma) gm / (c^2 r^3) [(3 / r^2) (r x v) (r . j) + v x j]
+ * of myb_rel_lense_thirring, r and v of the point relative to the body, j the angular
+ * momentum of the body per unit of its mass (m^2/s) in the axes of the system (copied: a
+ * pole that stays where it is), gamma and c those of the relativity of the point masses
+ * (myb_nbody_set_relativity, which must have been called); the body is pushed back by the
+ * ratio of the masses, so that the momentum is kept. For the Sun of the ephemerides
+ * j = 0.06884 R^2 w along its pole: 2e-12 of the attraction at Mercury. Errors:
+ * MYB_E_DOMAIN (the bodies, the same body twice, a spin that is not finite, no
+ * relativity), MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_DRAGS). */
+MYB_API MYB_NODISCARD myb_status myb_system_add_frame_dragging(myb_system* system, size_t body,
+                                                               size_t point,
+                                                               const double spin[3]);
+
+/* A mass that changes with the time, by radiation and wind: the gravitational parameter of
+ * the body is gm (1 + rate (t - epoch)), gm the one it was given, rate in 1/s, t the time of
+ * the integration — the Sun of the planetary ephemerides, -9e-14 a year. Every level takes
+ * the mass of the moment; what leaves carries its own momentum away, so the body is not
+ * pushed. A rate of 0 keeps the mass as it stands. Errors: MYB_E_DOMAIN (the body, values
+ * not finite); from myb_system_acceleration MYB_E_DOMAIN once the mass would be negative. */
+MYB_API MYB_NODISCARD myb_status myb_system_set_mass_rate(myb_system* system, size_t body,
+                                                          double rate, double epoch);
+
+/* A body with a given motion: state(context, t, y) gives its position (and velocity, which
+ * is not used) in the frame and from the origin of the system at the time t of the
+ * integration (seconds, as myb_time_from_seconds; a body of an SPK set: myb_spk_body_state
+ * of myb/kin.h). It attracts every body of the system with gm / r^2 and feels nothing: the
+ * momentum of the system is no longer kept, by as much as the bodies would have moved it.
+ * The places of all such bodies are kept for the last instants asked, so that the provider
+ * is called once for each instant of a step. *index (may be NULL): its number among the
+ * guided bodies. The provider must outlive the system. Errors: MYB_E_DOMAIN (gm negative or
+ * not finite), MYB_E_NOMEM, MYB_E_OVERFLOW; from myb_system_acceleration then the statuses
+ * of the provider, MYB_E_DOMAIN for a place that is not finite or that of a body. */
+MYB_API MYB_NODISCARD myb_status myb_system_add_guided(myb_system* system, double gm,
+                                                       myb_state_function state, void* context,
+                                                       size_t* index);
+MYB_API size_t myb_system_guided(const myb_system* system);
 
 /* Light of the body `source` on the mesh of a body (myb_force_radiation_mesh of
  * myb/surface.h): the force on its centre and the torque about it as they are at the moment,

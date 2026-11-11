@@ -182,6 +182,11 @@ typedef struct constants {
   double k2m, taum, lbet, lgam, ifac, coblat, kvc, j2m;
   double phi, tht, psi, omega[3], omega_core[3];
   double jdepoc;
+  double unit;   /* m^3 s^-2 in an au^3 day^-2 */
+  double au;     /* m */
+  double gmsdot; /* the relative rate of the mass of the Sun, 1/year */
+  double moisun; /* C / (M R^2) of the Sun */
+  double omgsun; /* its rotation rate, rad/day */
 } constants;
 
 static int read_constants(const char* header, constants* k) {
@@ -189,7 +194,10 @@ static int read_constants(const char* header, constants* k) {
   const char* gm_names[10] = {"GMS", "GM1", "GM2", "GMB", "GM4", "GM5", "GM6", "GM7", "GM8", "GM9"};
   double g[10];
   int ok = read_constant(header, "AU", &au) && read_constant(header, "EMRAT", &emrat) &&
-           read_constant(header, "CLIGHT", &k->clight);
+           read_constant(header, "CLIGHT", &k->clight) &&
+           read_constant(header, "GMSDOT", &k->gmsdot) &&
+           read_constant(header, "MOISUN", &k->moisun) &&
+           read_constant(header, "OMGSUN", &k->omgsun);
   for (int i = 0; i < 10; ++i) {
     ok = ok && read_constant(header, gm_names[i], &g[i]);
   }
@@ -216,6 +224,8 @@ static int read_constants(const char* header, constants* k) {
   }
   gmb = g[3];
   const double unit = (au * 1e3) * (au * 1e3) * (au * 1e3) / (DAY * DAY);
+  k->unit = unit;
+  k->au = au * 1e3;
   k->gm[0] = g[0] * unit;
   k->gm[1] = g[1] * unit;
   k->gm[2] = g[2] * unit;
@@ -295,11 +305,19 @@ static int build(model* m, const constants* k, const char* header, int tides) {
   myb_system* s = m->system;
   const myb_ppn ppn = {k->clight * 1e3, 1.0, 1.0};
   ok = myb_nbody_set_relativity(myb_system_nbody(s), &ppn) == MYB_OK;
-  /* the Sun */
+  /* the Sun: its mass is that of J2000 (t = 0) and falls by GMSDOT a year */
   ok = ok && myb_system_set_orientation(s, SUN, sun_frame, NULL) == MYB_OK &&
-       myb_system_set_field(s, SUN, m->sun, 0) == MYB_OK;
+       myb_system_set_field(s, SUN, m->sun, 0) == MYB_OK &&
+       myb_system_set_mass_rate(s, SUN, k->gmsdot / (365.25 * DAY), 0.0) == MYB_OK;
+  /* its spin drags the planets: j = (C / M R^2) R^2 w along the pole of right ascension
+   * 286.13 and declination 63.87 degrees (Park et al. 2021, section 3.4) */
+  const double ra = 286.13 * 3.141592653589793 / 180.0;
+  const double dec = 63.87 * 3.141592653589793 / 180.0;
+  const double j = k->moisun * (k->asun * 1e3) * (k->asun * 1e3) * k->omgsun / DAY;
+  const double spin[3] = {j * cos(dec) * cos(ra), j * cos(dec) * sin(ra), j * sin(dec)};
   for (size_t b = 1; b < BODIES && ok; ++b) {
-    ok = myb_system_add_field(s, SUN, b) == MYB_OK;
+    ok = myb_system_add_field(s, SUN, b) == MYB_OK &&
+         myb_system_add_frame_dragging(s, SUN, b, spin) == MYB_OK;
   }
   /* the Earth */
   static const size_t near[5] = {0, 1, 2, 5, 6}; /* Sun, Mercury, Venus, Mars, Jupiter */
@@ -346,6 +364,79 @@ static int build(model* m, const constants* k, const char* header, int tides) {
   return ok;
 }
 
+/* ---- The small bodies of DE440 ------------------------------------------------------------------
+ * 343 asteroids and 30 bodies of the Kuiper belt, whose motion is that of the file of
+ * perturbers that goes with the ephemeris (sb441-n373s.bsp: D. Farnocchia, JPL IOM
+ * 392R-21-005, 2021), and the rest of the belt as a ring of 36 equal masses at 44 au in the
+ * ecliptic (R. S. Park et al., Astron. J. 161, 105, 2021, section 2.2). The masses are the
+ * constants MA0001 .. of the header: by the number of the asteroid, 8001 .. 8030 for the
+ * bodies of the belt in the order below (matched by their masses with table 1 of the
+ * memorandum), 8201 .. 8236 for the ring. */
+
+enum { ASTEROIDS = 343, BELT = 30, RING = 36, PERTURBERS = ASTEROIDS + BELT };
+
+static const int32_t belt_bodies[BELT] = {
+    2136199, 2136108, 2090377, 2136472, 2050000, 2084522, 2090482, 2020000, 2055637, 2028978,
+    2307261, 2174567, 3361580, 3308265, 2055565, 2145452, 2090568, 2208996, 2225088, 2019521,
+    2120347, 2278361, 3525142, 2230965, 2042301, 2455502, 3545742, 2523639, 2528381, 3515022};
+
+static myb_spk_body perturber[PERTURBERS];
+static double ring_place[RING][6];
+
+static myb_status fixed_place(void* context, myb_time t, double state[6]) {
+  (void)t;
+  memcpy(state, context, 6 * sizeof *state);
+  return MYB_OK;
+}
+
+/* Adds the small bodies to the system as bodies with a given motion. */
+static int add_small_bodies(myb_system* system, const constants* k, const char* header,
+                            const myb_spk* spk) {
+  size_t count = 0;
+  int ok = 1;
+  for (int number = 1; number < 8000 && ok; ++number) {
+    char name[8];
+    double gm = 0.0;
+    snprintf(name, sizeof name, "MA%04d", number);
+    if (!read_constant(header, name, &gm)) {
+      continue;
+    }
+    ok = count < ASTEROIDS;
+    if (ok) {
+      perturber[count] = (myb_spk_body){.spk = spk, .target = 2000000 + number, .frame = 1};
+      ok = myb_system_add_guided(system, gm * k->unit, myb_spk_body_state, &perturber[count],
+                                 NULL) == MYB_OK;
+      ++count;
+    }
+  }
+  ok = ok && count == ASTEROIDS;
+  for (int i = 0; i < BELT && ok; ++i) {
+    char name[8];
+    double gm = 0.0;
+    snprintf(name, sizeof name, "MA%04d", 8001 + i);
+    ok = read_constant(header, name, &gm);
+    perturber[count] = (myb_spk_body){.spk = spk, .target = belt_bodies[i], .frame = 1};
+    ok = ok && myb_system_add_guided(system, gm * k->unit, myb_spk_body_state,
+                                     &perturber[count], NULL) == MYB_OK;
+    ++count;
+  }
+  const double obliquity = 84381.448 * ARCSEC;
+  for (int i = 0; i < RING && ok; ++i) {
+    char name[8];
+    double gm = 0.0;
+    snprintf(name, sizeof name, "MA%04d", 8201 + i);
+    ok = read_constant(header, name, &gm);
+    const double longitude = 2.0 * 3.141592653589793 * (double)i / (double)RING;
+    memset(ring_place[i], 0, sizeof ring_place[i]);
+    ring_place[i][0] = 44.0 * k->au * cos(longitude);
+    ring_place[i][1] = 44.0 * k->au * sin(longitude) * cos(obliquity);
+    ring_place[i][2] = 44.0 * k->au * sin(longitude) * sin(obliquity);
+    ok = ok && myb_system_add_guided(system, gm * k->unit, fixed_place, ring_place[i], NULL) ==
+                   MYB_OK;
+  }
+  return ok && myb_system_guided(system) == PERTURBERS + RING;
+}
+
 typedef struct outcome {
   double position[3][BODIES]; /* m, at 30 days, 1 year and the last epoch */
   double attitude[3];         /* rad: the worst up to each epoch */
@@ -355,10 +446,11 @@ typedef struct outcome {
 } outcome;
 
 static int run(const constants* k, const char* header, const myb_spk* spk, const myb_pck* pck,
-               int tides, double years, outcome* out) {
+               int tides, int small_bodies, double years, outcome* out) {
   memset(out, 0, sizeof *out);
   model m;
-  if (!build(&m, k, header, tides)) {
+  if (!build(&m, k, header, tides) ||
+      (small_bodies && !add_small_bodies(m.system, k, header, spk))) {
     release(&m);
     return 0;
   }
@@ -465,8 +557,14 @@ int main(void) {
   const double years = 5.0;
   static outcome full;
   static outcome no_tides;
-  MT_CHECK(run(&k, header, spk, pck, 1, years, &full));
-  MT_CHECK(run(&k, header, spk, pck, 0, years, &no_tides));
+  static outcome whole;
+  MT_CHECK(run(&k, header, spk, pck, 1, 0, years, &full));
+  MT_CHECK(run(&k, header, spk, pck, 0, 0, years, &no_tides));
+  /* with the small bodies of the ephemeris, if their file is there */
+  const int small = myb_spk_load_file(spk, DOWNLOAD "sb441-n373s.bsp", NULL) == MYB_OK;
+  if (small) {
+    MT_CHECK(run(&k, header, spk, pck, 1, 1, years, &whole));
+  }
   myb_pck_destroy(pck);
   myb_spk_destroy(spk);
   printf("DE440 integrated again from JD %.1f by the system of the library (%lld steps, %lld "
@@ -498,5 +596,31 @@ int main(void) {
   MT_CHECK(full.position[1][1] < 30.0); /* Mercury, a year */
   MT_CHECK(full.position[1][2] < 30.0); /* Venus */
   MT_CHECK(full.position[1][EARTH] < 30.0);
+  if (small) {
+    printf("with the 343 asteroids, the 30 bodies and the ring of the Kuiper belt of DE440 as "
+           "bodies with a given motion (sb441-n373s.bsp; %lld steps)\n%-8s %12s %12s %12s\n",
+           whole.steps, "", "30 days", "1 year", "5 years");
+    for (int b = 0; b < BODIES; ++b) {
+      printf("%-8s %12.4f %12.4f %12.4f\n", names[b], whole.position[0][b],
+             whole.position[1][b], whole.position[2][b]);
+    }
+    printf("attitude of the Moon: %.4f, %.4f, %.4f arcsec\n", whole.attitude[0] / ARCSEC,
+           whole.attitude[1] / ARCSEC, whole.attitude[2] / ARCSEC);
+    /* measured after 5 years: Mercury 2 cm, Venus 1 cm, Mars 1.3 cm, the Earth 21 cm, the
+     * Moon 5 cm, the Sun 6 cm; Jupiter and Saturn half a metre, the planets beyond up to
+     * 6 m (there the ring of the Kuiper belt is near, and its phase is not published) */
+    MT_CHECK(whole.position[2][SUN] < 0.3);
+    MT_CHECK(whole.position[2][1] < 0.1 && whole.position[2][2] < 0.1 &&
+             whole.position[2][5] < 0.1);
+    MT_CHECK(whole.position[2][EARTH] < 1.0 && whole.position[2][MOON] < 0.2);
+    MT_CHECK(whole.position[1][1] < 0.02 && whole.position[1][2] < 0.02 &&
+             whole.position[1][5] < 0.02);
+    MT_CHECK(whole.position[2][6] < 3.0 && whole.position[2][7] < 3.0);
+    for (int b = 8; b < BODIES; ++b) {
+      MT_CHECK(whole.position[2][b] < 30.0);
+    }
+  } else {
+    printf("sb441-n373s.bsp not downloaded: the run with the small bodies is skipped\n");
+  }
   return mt_finish("test_de440_system");
 }

@@ -21,3 +21,14 @@ MYB_TROPOSPHERE_1.1 {
   local:
     *;
 };
+
+MYB_TROPOSPHERE_1.2 {
+  global:
+    myb_gpt3_at;
+    myb_gpt3_destroy;
+    myb_gpt3_load;
+    myb_gpt3_step;
+    myb_tropo_gradient_delay_parts;
+    myb_tropo_vmf3;
+    myb_tropo_zwd_askne;
+} MYB_TROPOSPHERE_1.1;

@@ -10,8 +10,9 @@
  *
  * Segment types read: 1 and 21 (modified difference arrays), 2 and 3 (Chebyshev, position or
  * position and velocity), 5 (discrete states with two-body propagation), 8 and 9 (Lagrange),
- * 12 and 13 (Hermite), 14 (Chebyshev, unequal steps), 17 (precessing equinoctial elements),
- * 18 and 19 (ESOC/DDID Hermite and Lagrange), 20 (Chebyshev velocity, integrated position).
+ * 12 and 13 (Hermite), 14 (Chebyshev, unequal steps), 15 (a conic with precessing node and
+ * periapsis), 17 (precessing equinoctial elements), 18 and 19 (ESOC/DDID Hermite and
+ * Lagrange), 20 (Chebyshev velocity, integrated position).
  * Other types load, and a query that needs one of their segments fails with MYB_E_FORMAT.
  *
  * Time is the ephemeris' argument, TDB for the JPL and IAA ephemerides (T_eph), as a myb_time
@@ -25,6 +26,7 @@
 #include <stdint.h>
 
 #include "myb/core.h"
+#include "myb/frames.h"
 #include "myb/time.h"
 
 #ifdef __cplusplus
@@ -81,10 +83,20 @@ MYB_API MYB_NODISCARD myb_status myb_spk_segment_data(const myb_spk* spk, size_t
  * all those segments must share. target == center gives zeros (frame 0 if no data).
  * Errors: MYB_E_RANGE (no chain of segments covering t joins the two bodies),
  * MYB_E_FORMAT (segments in different frames, an unsupported segment type, or data that turn
- * out invalid), MYB_E_DOMAIN (two-body propagation of type 5 failed). Thread-safe: queries do
- * not modify the set. */
+ * out invalid), MYB_E_DOMAIN (two-body propagation of types 5 and 15 failed). Thread-safe:
+ * queries do not modify the set. */
 MYB_API MYB_NODISCARD myb_status myb_spk_state(const myb_spk* spk, int32_t target, int32_t center,
                                                myb_time t, double state[6], int32_t* frame);
+
+/* The same with the segments in any frames that a graph of frames (myb/frames.h) joins to
+ * `frame`: the state of every segment is turned into `frame` at t — positions and
+ * velocities, the rotation of the frames included — before the sum. t is on the ephemeris'
+ * scale, which must be the one the graph was created with. Errors: as myb_spk_state, less
+ * the one of different frames; those of myb_frame_graph_rotation. */
+MYB_API MYB_NODISCARD myb_status myb_spk_state_in(const myb_spk* spk,
+                                                  const myb_frame_graph* graph, int32_t target,
+                                                  int32_t center, myb_time t, int32_t frame,
+                                                  double state[6]);
 
 /* ---- Providers -----------------------------------------------------------------------------
  * A provider gives the state (position m, velocity m/s) of a point as a function of time, in
@@ -95,16 +107,33 @@ typedef myb_status (*myb_state_function)(void* context, myb_time t, double state
 
 /* A body of an SPK set as a provider: target relative to center at t on the ephemeris' time
  * scale (myb_spk_state). frame != 0 requires the segments to be in that frame (NAIF code,
- * 1 = J2000/ICRF) and fails with MYB_E_FORMAT otherwise; 0 accepts any. */
+ * 1 = J2000/ICRF) and fails with MYB_E_FORMAT otherwise; 0 accepts any. With a graph the
+ * state is given in `frame` whatever frames the segments are in (myb_spk_state_in). */
 typedef struct myb_spk_body {
   const myb_spk* spk;
   int32_t target;
   int32_t center;
   int32_t frame;
+  const myb_frame_graph* graph; /* NULL: none */
 } myb_spk_body;
 
 /* myb_state_function; context: const myb_spk_body*. */
 MYB_API MYB_NODISCARD myb_status myb_spk_body_state(void* body, myb_time t, double state[6]);
+
+/* The time ephemeris of a planetary ephemeris: the JPL files with a "t" in their names
+ * (de440t.bsp) hold, as the first coordinate of the "body" 1000000001 relative to
+ * 1000000000, the difference TT - TDB at the geocentre in seconds, integrated with the
+ * ephemeris itself. As a function for myb_timesys_set_difference on the scale TDB
+ * (myb_scale_difference; context: const myb_spk_time*): TDB - TT at an instant of TDB.
+ * Errors: those of myb_spk_state (MYB_E_RANGE outside the file). */
+typedef struct myb_spk_time {
+  const myb_spk* spk;
+  int32_t target; /* 0: 1000000001 */
+  int32_t center; /* 0: 1000000000 */
+} myb_spk_time;
+
+MYB_API MYB_NODISCARD myb_status myb_spk_time_difference(void* context, myb_time tdb,
+                                                         double* difference);
 
 /* ---- Writing SPK files -----------------------------------------------------------------------
  * A writer collects segments in memory and lays them out as one little-endian SPK file, which

@@ -16,6 +16,18 @@
  *     81, 679, 2007) for stations without meteorological data;
  *   - the gradient mapping function of G. Chen, T. A. Herring (J. Geophys. Res. 102, 20489,
  *     1997) for horizontal gradients estimated elsewhere.
+ * And, after D. Landskron, J. Boehm, "VMF3/GPT3: refined discrete and empirical troposphere
+ * mapping functions", J. Geod. 92, 349, 2018:
+ *   - the mapping functions VMF3 from the coefficients a_h, a_w of the Vienna service or of
+ *     GPT3, with the coefficients b and c as expansions in spherical harmonics of degree 12
+ *     with annual and semi-annual terms;
+ *   - the empirical GPT3 on its grid (the file gpt3_5.grd or gpt3_1.grd of
+ *     https://vmf.geo.tuwien.ac.at/codes/): pressure, temperature and its lapse rate, the
+ *     mean temperature and the pressure of the water vapour and its decrease factor, the
+ *     coefficients a_h and a_w, the geoid undulation and the horizontal gradients of the
+ *     hydrostatic and wet delays;
+ *   - the zenith wet delay of J. Askne, H. Nordius (Radio Sci. 22, 379, 1987) from what GPT3
+ *     gives.
  * The slant delay is m_h(e) ZHD + m_w(e) ZWD + gradient term; it lengthens the light time of
  * myb/observe.h by delay / c. Angles in radians, heights in metres, pressures in hPa,
  * temperatures in kelvin unless stated, time as a modified Julian date (days, the seasonal
@@ -23,7 +35,10 @@
 #ifndef MYB_TROPOSPHERE_H_
 #define MYB_TROPOSPHERE_H_
 
+#include <stddef.h>
+
 #include "myb/core.h"
+#include "myb/io.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +92,65 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_gpt(double mjd, double latitude, 
  * (from north towards east): m_g(e) (gn cos a + ge sin a), m_g = 1 / (sin e tan e + 0.0032). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_gradient_delay(double gn, double ge, double elevation,
                                                           double azimuth, double* delay);
+
+/* The same for the hydrostatic and the wet gradients apart, each with its own constant of the
+ * mapping function (0.0031 and 0.0007 of Chen and Herring): the gradients of GPT3. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_gradient_delay_parts(double gn_h, double ge_h,
+                                                                double gn_w, double ge_w,
+                                                                double elevation,
+                                                                double azimuth, double* delay);
+
+/* The zenith wet delay (m) of Askne and Nordius for the water-vapour pressure (hPa), the mean
+ * temperature of the water vapour (K) and the decrease factor of the vapour (> -1):
+ * 1e-6 (k2' + k3 / Tm) Rd / ((lambda + 1) gm) e. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_zwd_askne(double vapour_pressure,
+                                                     double mean_temperature, double lambda,
+                                                     double* zwd);
+
+/* VMF3 hydrostatic and wet mapping functions for the coefficients ah, aw of the site at the
+ * epoch (of the Vienna service or of GPT3), the modified Julian date, geodetic latitude,
+ * longitude, ellipsoidal height (0: without the height correction) and zenith distance. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_vmf3(double ah, double aw, double mjd,
+                                                double latitude, double longitude,
+                                                double height, double zenith_distance,
+                                                double* mh, double* mw);
+
+/* ---- GPT3 ------------------------------------------------------------------------------------ */
+
+typedef struct myb_gpt3 myb_gpt3;
+
+/* Reads a grid of GPT3 (the text of gpt3_5.grd or gpt3_1.grd: a heading line beginning with
+ * %, then one line of 64 numbers per node, from the north, each row eastwards from the first
+ * meridian). Errors: MYB_E_FORMAT (with the line in diag), MYB_E_NOMEM. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_gpt3_load(const char* text, size_t size,
+                                               const myb_allocator* allocator, myb_gpt3** grid,
+                                               myb_diag* diag);
+MYB_EXT_API void myb_gpt3_destroy(myb_gpt3* grid); /* NULL is allowed */
+MYB_EXT_API double myb_gpt3_step(const myb_gpt3* grid); /* rad */
+
+typedef struct myb_gpt3_values {
+  double pressure;         /* hPa */
+  double temperature;      /* degrees Celsius */
+  double lapse_rate;       /* K/km */
+  double mean_temperature; /* of the water vapour, K */
+  double vapour_pressure;  /* hPa */
+  double ah;               /* of VMF3 */
+  double aw;
+  double lambda;           /* the decrease factor of the water vapour */
+  double undulation;       /* of the geoid, m */
+  double gn_h;             /* the gradients north and east, hydrostatic and wet, m */
+  double ge_h;
+  double gn_w;
+  double ge_w;
+} myb_gpt3_values;
+
+/* GPT3 at the modified Julian date, geodetic latitude, longitude and ellipsoidal height: the
+ * values of the four nodes around the point, each brought to the height of the point, linear
+ * between them (within half a step of a pole: the node itself); constant != 0 gives the
+ * means without the seasons. Errors: MYB_E_DOMAIN. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_gpt3_at(const myb_gpt3* grid, double mjd, double latitude,
+                                             double longitude, double height, int constant,
+                                             myb_gpt3_values* values);
 
 #ifdef __cplusplus
 }

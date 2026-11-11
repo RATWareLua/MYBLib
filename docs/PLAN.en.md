@@ -148,7 +148,11 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 | NRLMSISE-00 (C port) | public domain | in `ext/` |
 | fdlibm (FreeBSD msun) | SunPro (permissive, retain the notice) | ported: erf, erfc (`src/num/erf.c`) |
 | IERS Conventions software | custom, not BSD | do not port; equations — from the papers, tables — as data, examples — for cross-checking |
-| NRLMSIS 2.1, JB2008, DTM2020, HWM14 | various | check before porting |
+| NRLMSIS 2.1 | Open Source Academic Research License (NRL): derived works are returned to NRL, commercial use is separate | not ported; the user's own copy through `myb_thermosphere_point_at` |
+| JB2008 | the SET licence: the code may not be modified or translated | not ported; a clean implementation from the papers — phase 22 |
+| DTM2020 | CNES: academic non-commercial use only, no redistribution | not ported; the user's own copy |
+| HWM14 | no licence | not ported; the user's own copy as a `myb_wind_function` |
+| VMF3, GPT3 (TU Wien) | an open-access paper; the routines are © TU Wien with no licence terms | written from the paper; the tables and the grid are data; the routines serve for comparison |
 | Orekit, GMAT | Apache-2.0 | do not copy; algorithms — from the papers, the projects — for cross-checking |
 | REBOUND | GPL-3 | cross-checking only |
 | SOFA, CSPICE | custom | ERFA instead of SOFA; own SPK reader |
@@ -194,9 +198,9 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 | 17 | forces of §4: Poynting–Robertson, Yarkovsky and YORP, thermal recoil and antenna, comets and outgassing, lift and gas–surface interaction, winds, plates with attitude and self-shadowing, refraction in the shadow, tidal dissipation, variable mass, impulsive manoeuvres | own references from the papers | Windows and Gentoo: done (Poynting–Robertson: the fall of a and e over 20 revolutions as in the averaged theory, 7 digits; Yarkovsky A2 — 5·10⁻⁷ from the formula; a comet — 5·10⁻⁶ from Gauss's equation averaged; the lagging tide — 2·10⁻⁷, 3.79 cm a year for the Moon; Sentman's plates over a sphere — 5·10⁻¹⁵ from the closed form; self-shadowing: lit area 9.000000000000 m²; YORP changes sign for the mirror body; impulses: Φ across them 2·10⁻⁹). Refraction in the shadow, the Yarkovsky effect of a conducting body and YORP with conduction were not done in the phase itself: they were closed in "Debts of phases 12–17" |
 | 18 | N bodies and the body model: levels of the graph (harmonics, figure–figure, tides — the lagged tides of the Earth and the Moon among them), coupled translation and rotation (with the derivative of the rotational deformation), close encounters, collisions and mergers, PN binaries among N bodies | re-integration of DE440 by the library's own means (the Moon with its librations) | Windows and Gentoo: done (DE440 again with the librations of the Moon, from JD 2440400.5: the Moon 1.1 cm after 30 days, 8.8 cm after a year, **19 cm after 5 years** (54 m without the tides of the Earth); the attitude of the Moon 0.003″, 0.041″ and 0.16″; Mercury 0.77 m and Venus 0.56 m after a year; the rest is the small bodies of DE440 that are missing; a free top 3·10⁻¹³; the contact of two spheres 10⁻¹² of the closed form) |
 | 19 | applications: initial orbit determination, relative motion, the approach of two objects and the probability of collision, mean elements and TLE fitting, multiple shooting, pseudo-arclength continuation of families and quasi-periodic orbits, variational equations with DOP853 in `myb_orbit`, optimal low thrust | Vallado, the JPL catalogue | Windows and Gentoo: done (orbit determination — the examples 7-3 and 7-4 of Vallado to six digits, Gauss — the orbit to 10⁻¹⁴; relative motion; closest approaches and the probability of collision, the covariances carried by the orbits themselves — 2.5·10⁻⁹ of the closed transition matrix; mean elements and TLE fitting — elements to 10⁻¹⁵; multiple shooting and families — a member closes to 4·10⁻¹³; **quasi-periodic orbits** — the circle of a torus returns onto itself over 20 turns to 3.7·10⁻¹¹; the variational equations with DOP853; low thrust: the Q-law — 1234.3 m/s against Edelbaum's 1232.6, the **indirect method** — the Hamiltonian constant to 10⁻¹², at high thrust 486.84 m/s against Hohmann's 486.82, **Sims–Flanagan** — 0.11 % of the propellant from the indirect method with 30 segments) |
-| 20 | files and frames: CK and SCLK (read and written), a graph of frames (SPK across frames), SPK type 15, nutation grid, TDB−TT from the ephemeris, space weather; bodies of a system whose motion is given (a provider) and the small bodies of DE440 from their SPK; the ground station: station displacements (IERS ch. 7), the admittance of the secondary waves of the ocean tide and the atmospheric S1/S2, VMF3/GPT3 and the APG gradients, three-dimensional ionosphere maps and the higher orders of the ionosphere, light time in the measurements; `ext/`: NRLMSISE-00 adapter, JB2008, DTM2020, NRLMSIS 2.1, HWM14 (after the licence checks) | CSPICE; references of the models | — |
+| 20 | files and frames: CK and SCLK (read and written), a graph of frames (SPK across frames), SPK type 15, nutation grid, TDB−TT from the ephemeris, space weather; bodies of a system whose motion is given (a provider) and the small bodies of DE440 from their SPK; the ground station: station displacements (IERS ch. 7), the admittance of the secondary waves of the ocean tide and the atmospheric S1/S2, VMF3/GPT3 and the APG gradients, three-dimensional ionosphere maps and the higher orders of the ionosphere, light time in the measurements; `ext/`: NRLMSISE-00 adapter, JB2008, DTM2020, NRLMSIS 2.1, HWM14 (after the licence checks) | CSPICE; references of the models | Windows and Gentoo: done (SPK type 15 — 9·10⁻¹⁶ of its rule in 60 digits; the graph of frames against CSPICE 1.3·10⁻¹⁵; CK — 1302 requests equal to CSPICE, the matrix 7·10⁻¹⁶, CSPICE reads the file written; the nutation table 4·10⁻¹⁶ rad; TDB−TT of DE440t to 1.4·10⁻¹⁶ of its rate; DE440 with the 373 small bodies after 5 years — Mercury 2.1 cm, Venus 1.0 cm, Mars 1.3 cm, the Moon 4.9 cm; site displacements — 1.1·10⁻⁷ m from the arithmetic of the IERS routine, ocean loading 5·10⁻⁷ m from HARDISP; secondary waves: LAGEOS 2.05 → 1.57 cm; light time in the measurements ≤ 1.4·10⁻⁸ m; GPT3 6·10⁻¹³ and VMF3 1.3·10⁻¹⁵ from the routines of TU Wien; the ionosphere integrals 1.3·10⁻⁹). The licences of JB2008, DTM2020, NRLMSIS 2.1 and HWM14 do not allow porting — a common input for the user's own copies of the models is there; the evaluation of CK types 4–6, three-dimensional IONEX maps from files and JB2008 from the papers are in phase 22 |
 | 21 | engineering: fuzzing of the parsers, benchmarks, coverage, model passports `docs/models/`, ARM64 and macOS in CI, consumers built with MSVC; bindings: the upper layers for the rest of the interface, array forms of the calls in C, Go and Haskell, tests under the sanitizers; the edge of a shadow without withdrawing the step (a speed-up, judged by measurement); vcpkg, Conan, PyPI and crates.io packages (they need a tagged release) | CI green on every target; the orbit of the example from every binding bit for bit with the C calls | — |
-| 22 | the tails of the models and what §4 and §5 kept outside the first version: optimal low thrust beyond the rendezvous — insertion into an orbit with a free phase and the field of a model in Sims–Flanagan, chains of legs with flybys; the stability and the manifolds of tori; 4PN with the hereditary tail, higher-order spin-orbit terms and the radiation reaction of spins; secondary emission and the limit a ≫ λ_D in charging; compositions with smaller error constants (7 and 15 stages) and a dense output of RKN12(10) for `myb_orbit`; orbit determination by the double-r iteration and the methods of Laplace and Gooding; the probability of a long encounter; atmospheric entry — continuum hypersonic aerodynamics and ablation; contact and landing; random impacts of micrometeoroids; FMM as an approximate level of the graph and a neighbour search for the encounters of many bodies; in the system of bodies — mergers of rotating bodies, derivatives with respect to the state and the parameters, the Lense–Thirring effect and the loss of mass of the Sun; thermal inertia in the torque of light at the moment | own references from the papers | — |
+| 22 | the tails of the models and what §4 and §5 kept outside the first version: optimal low thrust beyond the rendezvous — insertion into an orbit with a free phase and the field of a model in Sims–Flanagan, chains of legs with flybys; the stability and the manifolds of tori; 4PN with the hereditary tail, higher-order spin-orbit terms and the radiation reaction of spins; secondary emission and the limit a ≫ λ_D in charging; compositions with smaller error constants (7 and 15 stages) and a dense output of RKN12(10) for `myb_orbit`; orbit determination by the double-r iteration and the methods of Laplace and Gooding; the probability of a long encounter; atmospheric entry — continuum hypersonic aerodynamics and ablation; contact and landing; random impacts of micrometeoroids; FMM as an approximate level of the graph and a neighbour search for the encounters of many bodies; in the system of bodies — mergers of rotating bodies, derivatives with respect to the state and the parameters; thermal inertia in the torque of light at the moment; from phase 20 — the evaluation of CK types 4, 5, 6, reading three-dimensional IONEX maps, a clean implementation of JB2008 from the papers with readers of its indices, a reader of the S1/S2 loading grids, the turning of the body in the velocity of an offset point for attitude laws that follow the velocity | own references from the papers | — |
 
 ### Completion after 1.1 (phases 12–22)
 
@@ -216,6 +220,253 @@ closed at once; what is harder now gets the phase where it will cost least or gi
 the final phase 22); an item is dropped only by the user's decision. The leftovers of phases
 3–11 that belonged to no phase were sorted by this rule too: the section "Old debts (phases
 3–11) and the bindings" below.
+
+### Phase 20 decisions
+
+The phase is closed: done and checked on Windows and Gentoo. Windows — 106/106 (-O2), the
+affected tests at -O0 (with the stack budget and the ban on libm) and under UBSan; Gentoo —
+linux-release 106/106 with the same golden value of the reproducibility test, linux-asan on
+the 20 affected tests (LAGEOS and DE440 with the small bodies among them). What did not go
+in, and where it went, is at the end of the section.
+
+- **SPK type 15** (a conic with the precession of the node and the periapsis by J₂): the rule
+  of the type is two-body motion from the periapsis, then turns by angles proportional to the
+  true anomaly passed (as in SPICE; the flag values 1, 2, 3 are checked). Against CSPICE
+  (`spkw15_c`, `spkgeo_c`, 440 states: a circle, ellipses, a parabola, a hyperbola) —
+  10⁻¹³…1.6·10⁻¹¹: that is the error of CSPICE itself, whose two-body propagation loses
+  accuracy with the number of revolutions. Against the same rule in 60 digits (mpmath) the
+  library is at **9·10⁻¹⁶** (position), 1.5·10⁻¹⁵ (velocity); on arcs of 3400 revolutions and
+  at the periapsis of an orbit with e = 0.85 — 1.3·10⁻¹⁴ (CSPICE is at 1.6·10⁻¹¹ there). For
+  that the mean anomaly on an ellipse is computed and reduced to one turn in double-double
+  arithmetic: otherwise, after thousands of revolutions, the position is bounded by the last
+  bit of the mean motion.
+- **A graph of frames** (`myb_frame_graph_*` in `myb/frames.h`): a frame is given in another
+  one — its base — by an orientation provider or by a constant rotation; the rotation between
+  any two is composed through their first common ancestor, with derivatives. Time scales work
+  as in an environment: a graph is created on one scale, a provider registered with another
+  gets the same instant on its own (TT for the rotation of the Earth among providers on TDB).
+  Fixed frames come from kernels (`myb_frame_graph_add_tkframe`). **SPK across frames**
+  (`myb_spk_state_in`, the field `graph` of `myb_spk_body`): the state of every segment is
+  turned into the frame asked for — velocities included — before the sum. Against CSPICE
+  (`spkgeo_c`, `sxform_c`; segments in ECLIPJ2000, B1950, GALACTIC, FK4, J2000 and in the
+  rotating frame of a binary PCK): 336 states — **1.3·10⁻¹⁵** (velocities 3·10⁻¹⁴ — Hermite
+  segments, the difference is CSPICE's), 126 rotations between seven frames — 2·10⁻¹⁶, the
+  derivative — 4·10⁻¹⁶.
+- **The clock of a spacecraft and CK** (the new `myb/ck.h`). SCLK of type 1: fields with
+  moduli and offsets, partitions, the table (ticks, time, rate); ticks ↔ time on the scale of
+  the clock (TDB or TT), strings ↔ ticks. Against CSPICE (`sct2e_c`, `sce2c_c`, `scdecd_c`,
+  `scencd_c`; two clocks, 519 conversions): the time — 6·10⁻⁸ s (the resolution of a double of
+  seconds from J2000), strings and ticks — exact. A reader of CK types 1, 2, 3 with the rule
+  of `ckgpav_c`: inside an interval — at the instant asked, outside — the nearest instant
+  within the tolerance. Against CSPICE on 1302 requests: which are found and which refused —
+  equal in all, the matrix — **7·10⁻¹⁶**, the angular velocity — 9·10⁻¹⁹ rad/s. Found on the
+  way: at equal distances to two neighbouring records CSPICE takes the later one (in all
+  three types) — so does the library. The frame of an instrument enters the graph
+  (`myb_orientation_ck`): against `sxform_c` — 1.3·10⁻¹⁵. **Writing CK** of types 1, 2, 3
+  (`myb_ck_writer_*`, the DAF layout module shared with SPK and PCK): CSPICE reads the file —
+  648 requests, the same answers, the matrix 3·10⁻¹⁶. Types 4, 5, 6 are loaded but not
+  evaluated.
+- **A table of the nutation** (`myb_cip_tabulate`): the series X, Y, s with derivatives at
+  nodes of an equal step, cubic Hermite between them. A step of an hour: **4·10⁻¹⁶ rad** from
+  the series themselves (derivatives — 4·10⁻¹⁹ rad/s), six hours — 5·10⁻¹³ rad; 0.05 µs a
+  call against 37–39 µs for the series (700 times). The value depends on the nodes only, not
+  on what was asked before.
+- **TDB − TT**. A relation of the kind SERIES can be given by a function
+  (`myb_timesys_set_difference`) and put into a table (`myb_timesys_tabulate`, four nodes, a
+  step of an hour): the table of the series is **4·10⁻¹⁶ s** from the series, a conversion
+  takes a fraction of a microsecond in place of 92 µs. From the ephemeris
+  (`myb_spk_time_difference`): the file de440t.bsp keeps TT − TDB at the geocentre as the
+  first coordinate of the "body" 1000000001. What exactly the file holds was checked by the
+  motion itself: its rate must be L_C − (v²/2 + U)/c² — from the positions and velocities of
+  the bodies of the same ephemeris it agrees to **1.4·10⁻¹⁶** of a quantity of 3.4·10⁻¹⁰
+  (400 dates, 1952–2048). Against the series of Fairhead and Bretagnon the file is within
+  39 ns (15 ns on average).
+- **Bodies with a given motion** (`myb_system_add_guided`): a body whose motion a provider
+  gives (an ephemeris) attracts the bodies of the system as a point and is not integrated
+  itself; the places of such bodies are kept for the last instants of a step, so the provider
+  is called once per instant (8 times a step in place of 20–40). **The small bodies of
+  DE440**: 343 asteroids and 30 bodies of the Kuiper belt from the file of perturbers
+  sb441-n373s.bsp (the masses are the constants MA… of the header; the order of the belt
+  bodies was recovered by matching masses with the table of the memorandum IOM 392R-21-005)
+  and a ring of 36 equal masses at 44 au in the ecliptic. Two effects that the centimetres
+  needed turned up on the way, and both were added to the system (they had been assigned to
+  phase 22): **the loss of mass of the Sun** (`myb_system_set_mass_rate`; GMSDOT = −9·10⁻¹⁴ a
+  year — at the epoch of the integration, 1969, the mass is larger by 2.75·10⁻¹²) and **the
+  Lense–Thirring effect** of the rotation of the Sun (`myb_system_add_frame_dragging`;
+  1.7·10⁻¹² of the attraction at Mercury). They were identified by the residual: a common
+  linear drift along the orbit of −4 m a year at Venus, the Earth and Mars gave a relative
+  error of the attraction of 2·10⁻¹², and after the loss of mass the remainder by planet
+  (2.2·10⁻¹², 6.8·10⁻¹³, 4.5·10⁻¹³, 2.6·10⁻¹³) matched the ratio of the Lense–Thirring
+  acceleration to the attraction. The re-integration of DE440 from JD 2440400.5, the
+  difference after 5 years:
+
+  | | without the small bodies | with the small bodies, the loss of mass and Lense–Thirring |
+  |---|---|---|
+  | the Sun (from the barycentre) | 1160 m | **5.7 cm** |
+  | Mercury | 22 m | **2.1 cm** |
+  | Venus | 82 m | **1.0 cm** |
+  | the Earth | 43 m | 21 cm |
+  | the Moon (from the Earth) | 15 cm | **4.9 cm** |
+  | Mars | 4022 m | **1.3 cm** |
+  | Jupiter, Saturn | 2440 m | 0.46 and 0.64 m |
+  | Uranus, Neptune, Pluto | 1626–2789 m | 1.2; 6.1; 4.2 m |
+
+  At the outer planets the remainder is set by the ring of the Kuiper belt: it is near, and
+  the phase of its points is not published. At the Earth — by the pressure of light on the
+  Earth–Moon system and Vondrák's precession, which DE440 has and this model does not.
+- **Space weather** (the new `myb/weather.h`): a table of days with F10.7 (observed and
+  adjusted to 1 au, the means over 81 days), the eight Kp and ap, the daily Ap, the mark
+  "observed / interpolated / predicted". It is read by the names of its columns (the layout of
+  the CelesTrak files `SW-*.csv`); the order and extra columns do not matter.
+  `myb_space_weather_inputs_at` gives what the models of the MSIS family take at an instant:
+  F10.7 of the day before, the mean centred on the day, ap of the three-hour span and the
+  seven values of its history over 57 hours (across the days; where the history is missing —
+  the daily Ap and a mark). The file itself could not be fetched from this machine (CelesTrak
+  is unreachable); the test runs on an excerpt made in the same form.
+- **NRLMSISE-00 as the atmosphere of a force model** (`myb_nrlmsise00_density` in
+  `ext/nrlmsise00`): an instant and a place in the axes of the body → the day of the year and
+  the UTC time, the geodetic height and latitude, the local solar time, the indices of the
+  weather table (with the history of ap where it is there) or three given numbers. Against a
+  direct call of the model with the same inputs — 10⁻⁹.
+- **The licences of the other atmosphere models** (checked on 2026-11-11, see §6): none can
+  be ported. NRLMSIS 2.1 — the "Open Source Academic Research License" of NRL: derived works
+  are returned to NRL, commercial use is separate; the model is its parameter file under the
+  same licence. JB2008 — the SET licence forbids modifying and translating the code. DTM2020 —
+  CNES, academic non-commercial use only, no redistribution. HWM14 — no licence at all. What
+  does not depend on the licences is done: the input of these models (time, place, indices)
+  is assembled by `myb_thermosphere_point_at`, the same path the NRLMSISE-00 adapter takes,
+  and a model itself is plugged in as the user's own copy, a `myb_density_function`. A clean
+  implementation of JB2008 from the papers (Bowman et al., 2008) is possible and assigned to
+  phase 22; DTM2020 and NRLMSIS 2.1 cannot be reproduced without their coefficient files.
+- **The displacement of a site** (the new `myb/site.h`, the kernel
+  `data/frames/iers2010-site.tk`), IERS 2010 chapter 7, from the equations of the chapter,
+  the numbers from the kernel:
+  - the tide of the solid Earth: degrees 2 and 3 with Love numbers that depend on the
+    latitude, the l⁽¹⁾ terms, the imaginary parts (step 1, for any number of raising bodies)
+    and the frequency dependence in the diurnal and the long-period bands as Poisson series
+    (step 2: the 29 and 5 rows of the tables of the reference routine); the permanent part is
+    taken out for a place given as "mean tide". Against the arithmetic of the reference
+    routine DEHANTTIDEINEL on its four cases — **1.1·10⁻⁷ m** (up to 18 m in the fourth,
+    whose Sun stands at 0.1 au). Found on the way: the routine adds the precession since
+    J2000 to the mean longitude of the Moon after it has taken the lunar time from it, and
+    every diurnal wave is turned by its multiple of 1.4° a century — for K1, whose argument
+    is the sidereal angle itself, that is 0.03 mm of its 12 mm. The chapter defines the
+    arguments by χ = GMST + π and the Delaunay arguments (Table 7.3a prints both sets of
+    multipliers), and the library follows the chapter; from the numbers printed in the header
+    of the routine the difference is 1.7–2.8·10⁻⁵ m. The fourth case of the header repeats
+    the numbers of the third;
+  - the pole tide about the secular pole (eq. 21, 26) — to 10⁻¹⁸ m of the equations;
+  - ocean loading: the amplitudes and phases of the 11 main waves of the site (a BLQ table,
+    with a reader) are carried to the 342 waves of the potential by the admittance,
+    interpolated in frequency within each band by a cubic spline. Against the program HARDISP
+    (Onsala and Reykjavik, 24 hours, up to 38 mm) — **5·10⁻⁷ m**, the rounding of its six
+    decimals. Found on the way: the program takes the lunar time as 360° UT − D, that is, in
+    place of the χ of the chapter the mean longitude of the Sun, without the aberration
+    (20.5″) and on TT: in 2009 its angle is 23.6″ ahead, 1.57 s of rotation; with the
+    argument of the chapter the difference from its numbers is 8·10⁻⁶ m;
+  - the arguments of the Moon and the Sun are taken on TT, the angle of rotation on UT1
+    (`dynamical` in the input): without that the phase of the lunar waves lags by 4·10⁻⁴ rad;
+  - the load of the atmospheric tides S1 and S2 from the 12 coefficients of the site
+    (eq. 19) and the load of the ocean pole tide from 6 coefficients (eq. 29) with a reader
+    of the grid of coefficients (`myb_site_grid`, the file opoleloadcoefcmcor.txt): against
+    the test file of the Conventions — 5·10⁻⁷ of the value (seven printed digits). The S1/S2
+    grids sit on a third-party server and could not be fetched — the coefficients of a site
+    are given as numbers;
+  - a station (`myb_station.motion`): the displacement is added to the place of the station
+    in the measurements; the raising bodies, UT1, the pole and TT − UT1 come from the
+    environment; by a flag — the velocity of the displacement too (up to 0.02 mm/s), checked
+    by the difference of places to 4·10⁻¹⁰ m/s.
+- **Secondary waves of the ocean tide in the field** (`MYB_TIDES_ADMITTANCE`): the 63 waves
+  of Table 6.7 take their coefficients from two pivot waves of the model by a linear
+  admittance (eq. 6.16); they cost no new coefficients — the phasors of its secondary waves
+  are added to the phasor of a pivot. Two pivot numbers in the table of the chapter are
+  misprints (135.455 for 135.655 and 237.755 for 235.755), corrected in the kernel with a
+  note. The check: a wave carried by its pivots against the same wave given in the file with
+  the coefficients of eq. 6.16 — 2·10⁻¹⁰. On LAGEOS (a week, FES2004): the residual of the
+  fit **2.05 → 1.57 cm** (along the orbit 1.87 → 1.34 cm). Waves can be added to those loaded
+  (`myb_tides_add_waves`): the mean S1, the atmospheric S1 and S2 given as coefficients of
+  the geopotential in the same form.
+- **Light time in the measurements** (`myb_light_measure` in `myb/estim.h`: range, range
+  rate, RA/Dec, azimuth and elevation). What a station receives at t left the object a light
+  time earlier and, two-way, left the station earlier still. Where the object was follows
+  from its state at the time of the observation by its motion about a point mass over the
+  light time, to the third order (the remainder is 10⁻¹⁴ m on a low orbit, 10⁻⁸ m at the
+  distance of the Moon); the station is taken at t and, two-way, once more two light times
+  earlier. Every quantity carries its derivatives in the state (the dual numbers of
+  `num/dual.h`), and the light-time equation is solved by fixed point on such numbers — the
+  derivatives of the implicit function come by themselves. Against the equation solved apart
+  (`myb_light_time`, `myb_round_trip` on the exact Kepler motion; orbits of 800 km, 36 000 km
+  and 380 000 km, one-way and two-way): the range — **≤ 1.4·10⁻⁸ m**, the range rate —
+  4·10⁻⁷ m/s (the limit of the difference used as the reference), the direction — 9·10⁻¹⁶
+  rad, with the aberration of the station — against `myb_aberration`. An orbit is recovered
+  from 90 two-way ranges to 2·10⁻⁹ m; the same ranges read as geometric ones move it by
+  122 m.
+- **The derivative of a measurement of an offset point through the attitude**
+  (`myb_measure_offset`): the derivatives of the measurement at the point are multiplied by
+  those of the point itself in the state — the offset turning after the orbit. The attitude
+  laws of the library are differentiated as they are written, a law of the caller by
+  differences of the law (`myb_internal_attitude_dual`, shared with the surface forces). For
+  an arm of 37 m the attitude adds up to 2·10⁻³ to the derivatives; against differences —
+  within what a difference allows (the state, the two-way range, azimuth and elevation). The
+  velocity of the point takes the turning of the body from the attitudes half a second before
+  and after at the same velocity: the turning of a law that follows the place (the orbital
+  axes, the nadir) is there, that of a law that follows the direction of the velocity alone
+  is not; the header says so.
+- **VMF3 and GPT3** (`ext/troposphere`): the mapping functions VMF3 (the coefficients b and c
+  are expansions in spherical harmonics of degree 12 with annual and semi-annual terms, the
+  tables are data from `vmf3_ht.f90`), the empirical GPT3 on its grid (pressure, temperature
+  and its lapse rate, the pressure and the mean temperature of the water vapour, a_h and a_w,
+  the geoid undulation, horizontal gradients), the wet delay of Askne and Nordius. The
+  gradients of GPT3 — with their own constants of the mapping function (0.0031 and 0.0007) —
+  replace APG. The reference is the routines of TU Wien built with gfortran on Gentoo: 20
+  sites and dates (between nodes, at a node, across the first meridian and the date line, by
+  the poles, Everest, a leap year) — GPT3 **6·10⁻¹³** of the values, VMF3 1.3·10⁻¹⁵, the wet
+  delay 9·10⁻¹⁶. The grid `gpt3_5.grd` (1.1 MB) is in `cmake/FetchData.cmake`; without it
+  the test is skipped.
+- **The ionosphere: the higher orders** (`ext/ionosphere`, IERS 2010 section 9.4): the
+  integrals along a ray ∫N dl, ∫N B cos θ dl, ∫N² dl, ∫N B²(1 + cos² θ) dl
+  (`myb_iono_ray_integrals`: the parts of the line between the radii of the ionosphere, the
+  four-point Gauss rule; the field is the IGRF of `myb/force.h`) and from them the
+  coefficients s₁, s₂, s₃ and the delays of the phase and the code; the constants 40.308,
+  1.1283·10¹², 812.38 and 1.5792·10²² follow from e, mₑ, ε₀. The density is a function of the
+  place: a Chapman layer over the two-dimensional IONEX maps, normalised to their vertical
+  content (its ∫N² dl / (N_max S) = √(e/2π) = 0.6577 — the very shape factor 0.66 of the
+  Conventions), or a grid of densities (three-dimensional maps in arrays of the caller). The
+  checks: a vertical ray gives the content of the map to 10⁻⁷; the four integrals against
+  direct sums on 200 000 steps — 1.3·10⁻⁹; the slant content differs from the single-layer
+  approximation by 2.3 %, ∫N B cos θ dl by 4.7 % (the difference the integrals are computed
+  for). An example: 33 TECU, an elevation of 30°, 1575.42 MHz — the first order 9.12 m, the
+  second +6.1 mm, the third +0.17 mm. The bending of the ray is the formula of Jakowski
+  (9.37): 0.59 mm at 100 TECU and 10°. In passing: a value of a map missing at the
+  neighbouring epoch no longer hinders a request exactly at the epoch of a map.
+- **The input of the models of the upper atmosphere** (`myb_thermosphere_point_at` in
+  `myb/weather.h`): the day of the year and the UTC time, the geodetic place, the local solar
+  time and the indices at an instant and a place — shared by the NRLMSISE-00 adapter and by
+  the user's own copy of any other model.
+- **Data**: `cmake/FetchData.cmake` got the GPT3 grid and a second list of large files
+  (`-DLARGE=ON` or `-DONLY=<name>`): de440t.bsp, sb441-n373s.bsp, SW-Last5Years.csv.
+- **Reproducibility**: the workload of phase 20 in `tests/repro` (SPK type 15, the graph of
+  frames, the clock and CK, the table of TDB−TT, the thermosphere point, a system with a
+  guided body and a decreasing mass, the displacement of a site and a moving station, the
+  measurements with the light time, the secondary waves, VMF3, the ionosphere integrals); the
+  golden value `0x8a11e2afe9e666fa` is the same on Windows at -O0, -O2 and under UBSan and
+  on Gentoo;
+  `MYB_REPRO_PREFIX=19` gives the former `0xb22481187ba3923a`. The workload of phase 7
+  computes the ocean tides as before, without the secondary waves.
+- **What did not go in and where it went** (every item — to phase 22):
+  - the evaluation of CK types 4, 5, 6 (the files are loaded, segments of these types are
+    not evaluated): type 5 can be checked against CSPICE (`ckw05_c`), types 4 and 6 need
+    mission files — there is no reference writer for them;
+  - reading IONEX files with `MAP DIMENSION 3`: the description of the format is available
+    only as a PDF without a text layer, the meaning and the units of the values of
+    three-dimensional maps could not be established from it, and there are no public
+    three-dimensional products to check against; densities are taken as a grid in arrays;
+  - a clean implementation of JB2008 from the papers and readers of its indices (S10, M10,
+    Y10, Dst);
+  - a reader of the S1/S2 loading grids (the server with the grids is unreachable; the
+    coefficients of a site are given as numbers);
+  - the turning of the body in the velocity of an offset point for attitude laws that
+    follow the velocity alone.
 
 ### Phase 19 decisions
 

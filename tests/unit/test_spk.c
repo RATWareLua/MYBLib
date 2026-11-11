@@ -72,6 +72,70 @@ static myb_spk* open_set(const char* files) {
   return spk;
 }
 
+/* Type 15 against its rule evaluated in 60 digits (tests/data/spk/t15_exact.txt, at the
+ * epochs of the CSPICE reference): the conic from the periapsis, the node and the periapsis
+ * turned in proportion to the true anomaly gone through. */
+static void test_type15_exact(void) {
+  myb_spk* spk = open_set("t15.bsp");
+  FILE* f = fopen(SPK_DIR "t15_exact.txt", "r");
+  MT_CHECK(f != NULL);
+  if (f == NULL) {
+    myb_spk_destroy(spk);
+    return;
+  }
+  char line[1024];
+  int rows = 0;
+  double worst_r = 0.0;
+  double worst_v = 0.0;
+  double worst_long = 0.0;
+  /* bound: one iteration per line of the file */
+  while (fgets(line, sizeof line, f) != NULL) {
+    char files[64];
+    int target = 0;
+    int center = 0;
+    int consumed = 0;
+    if (line[0] == '#' || sscanf(line, "%63s %d %d%n", files, &target, &center, &consumed) != 3) {
+      continue;
+    }
+    const char* p = line + consumed;
+    double et = 0.0;
+    double expected[6];
+    int ok = next_number(&p, &et);
+    for (int i = 0; i < 6; ++i) {
+      ok = ok && next_number(&p, &expected[i]);
+    }
+    MT_CHECK(ok);
+    double state[6];
+    MT_CHECK(myb_spk_state(spk, target, center, myb_time_from_seconds(et), state, NULL) ==
+             MYB_OK);
+    double dr[3];
+    double dv[3];
+    for (int i = 0; i < 3; ++i) {
+      dr[i] = state[i] / 1000.0 - expected[i];
+      dv[i] = state[i + 3] / 1000.0 - expected[i + 3];
+    }
+    const double er = norm3(dr) / norm3(expected);
+    const double ev = norm3(dv) / norm3(expected + 3);
+    /* 1506 passes the periapsis of an orbit of e = 0.85, where the place answers the mean
+     * anomaly 23 times over; 1511 runs over 3400 revolutions */
+    if (target == 1506 || target == 1511) {
+      worst_long = fmax(worst_long, fmax(er, ev));
+    } else {
+      worst_r = fmax(worst_r, er);
+      worst_v = fmax(worst_v, ev);
+    }
+    ++rows;
+  }
+  fclose(f);
+  myb_spk_destroy(spk);
+  printf("type 15 against its rule in 60 digits: %d states, r %.2e, v %.2e; the two long "
+         "arcs %.2e\n",
+         rows, worst_r, worst_v, worst_long);
+  MT_CHECK(rows == 440);
+  /* measured 9.3e-16 and 1.5e-15; 1.3e-14 on the long arcs, where CSPICE is at 1.6e-11 */
+  MT_CHECK(worst_r < 3e-15 && worst_v < 4e-15 && worst_long < 4e-14);
+}
+
 /* Type of the segment that serves (target, center) in a file set, for the statistics. */
 static int type_of(const myb_spk* spk, int target) {
   int type = 0;
@@ -162,6 +226,12 @@ static void test_reference(void) {
      * Type 17 differentiates an equivalent expression of its own; type 5 solves Kepler's
      * equation with an independent solver. */
     const double limit = (s->type == 5 || s->type == 17) ? 5e-14 : 3e-14;
+    if (s->type == 15) {
+      /* the two-body propagation of CSPICE over thousands of revolutions: see
+       * test_type15_exact, where the rule of the type is evaluated in 60 digits */
+      MT_CHECK(s->position < 5e-11 && s->velocity < 5e-11);
+      continue;
+    }
     MT_CHECK(s->position < (s->type == 17 ? 2e-14 : 2e-15) && s->velocity < limit);
   }
 }
@@ -282,6 +352,7 @@ static void test_horizons(void) {
 
 int main(void) {
   test_reference();
+  test_type15_exact();
   test_horizons();
   test_errors();
   return mt_finish("test_spk");

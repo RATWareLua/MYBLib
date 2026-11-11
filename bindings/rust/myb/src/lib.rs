@@ -535,7 +535,13 @@ impl Environment {
         center: i32,
         frame: i32,
     ) -> Result<usize> {
-        let context = self.kept.keep(sys::myb_spk_body { spk: ephemeris.as_ptr(), target, center, frame });
+        let context = self.kept.keep(sys::myb_spk_body {
+            spk: ephemeris.as_ptr(),
+            target,
+            center,
+            frame,
+            graph: std::ptr::null(),
+        });
         self.kept.keep(Rc::clone(ephemeris));
         self.add(body, Some(sys::myb_spk_body_state), context.cast())
     }

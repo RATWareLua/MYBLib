@@ -12,6 +12,7 @@
 
 #define DEG (3.14159265358979323846 / 180.0)
 #define TECU 1e16
+#define TWO_PI 6.283185307179586476925287
 
 struct myb_ionex {
   myb_allocator allocator;
@@ -422,10 +423,282 @@ myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd, double latitude, do
     const double e0 = map_value(x, i, lat, lon + (mjd - t0) * 360.0);
     const double e1 = map_value(x, i + 1, lat, lon + (mjd - t1) * 360.0);
     value = ((t1 - mjd) * e0 + (mjd - t0) * e1) / (t1 - t0);
+    /* at the epoch of a map the other one has no part: a value missing there is not needed */
+    if (!isfinite(value)) {
+      if (mjd == t0 && isfinite(e0)) {
+        value = e0;
+      } else if (mjd == t1 && isfinite(e1)) {
+        value = e1;
+      }
+    }
   }
   if (!isfinite(value)) {
     return MYB_E_RANGE;
   }
   *vtec = value;
   return MYB_OK;
+}
+
+/* ---- The density of electrons in space -------------------------------------------------------- */
+
+/* The geocentric latitude and longitude (rad) and the distance of a place. */
+static int spherical(const double r[3], double* latitude, double* longitude, double* distance) {
+  const double h = sqrt(r[0] * r[0] + r[1] * r[1]);
+  const double d = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+  if (!(d > 0.0) || !isfinite(d)) {
+    return 0;
+  }
+  *latitude = myb_atan2(r[2], h);
+  *longitude = h > 0.0 ? myb_atan2(r[1], r[0]) : 0.0;
+  *distance = d;
+  return 1;
+}
+
+myb_status myb_iono_layer_density(void* layer, double mjd, const double r[3], double* density) {
+  const myb_iono_layer* l = layer;
+  MYB_CHECK(l != NULL && l->maps != NULL && r != NULL && density != NULL);
+  double latitude = 0.0;
+  double longitude = 0.0;
+  double distance = 0.0;
+  if (!(l->scale > 0.0) || !isfinite(l->scale) || !isfinite(l->peak) ||
+      !spherical(r, &latitude, &longitude, &distance)) {
+    return MYB_E_DOMAIN;
+  }
+  double vtec = 0.0;
+  const myb_status status = myb_ionex_vtec(l->maps, mjd, latitude, longitude, &vtec);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const double z = (distance - l->maps->radius - l->peak) / l->scale;
+  /* sqrt(2 pi e): the integral of the layer over z */
+  *density = vtec / (l->scale * 4.132731354122493) * myb_exp(0.5 * (1.0 - z - myb_exp(-z)));
+  return MYB_OK;
+}
+
+/* The value of the map m of a grid at a height and a place, in steps of the grid. */
+static myb_status grid_value(const myb_iono_grid* g, int m, double h, double q, double p,
+                             double* value) {
+  if (!(q >= -1e-9 && q <= g->latitudes - 1 + 1e-9)) {
+    return MYB_E_RANGE;
+  }
+  const double turn = (double)g->longitudes;
+  const int round = fabs((double)g->longitudes * g->longitude_step - TWO_PI) <
+                    1e-9 * g->longitude_step;
+  if (round) {
+    p -= turn * floor(p / turn);
+  } else if (!(p >= -1e-9 && p <= turn - 1.0 + 1e-9)) {
+    return MYB_E_RANGE;
+  }
+  int k = (int)floor(h);
+  int j = (int)floor(q);
+  int i = (int)floor(p);
+  k = k < 0 ? 0 : k > g->heights - 2 ? g->heights - 2 : k;
+  j = j < 0 ? 0 : j > g->latitudes - 2 ? g->latitudes - 2 : j;
+  i = i < 0 ? 0 : i > g->longitudes - (round ? 1 : 2) ? g->longitudes - (round ? 1 : 2) : i;
+  const int i1 = i + 1 == g->longitudes ? 0 : i + 1;
+  const double fh = h - k;
+  const double fq = q - j;
+  const double fp = p - i;
+  const size_t row = (size_t)g->longitudes;
+  const size_t level = row * (size_t)g->latitudes;
+  const double* d = g->density + (size_t)m * level * (size_t)g->heights;
+  double sum = 0.0;
+  for (int a = 0; a < 2; ++a) {
+    for (int b = 0; b < 2; ++b) {
+      const double* line = d + (size_t)(k + a) * level + (size_t)(j + b) * row;
+      const double along = (1.0 - fp) * line[i] + fp * line[i1];
+      sum += (a ? fh : 1.0 - fh) * (b ? fq : 1.0 - fq) * along;
+    }
+  }
+  *value = sum;
+  return MYB_OK;
+}
+
+myb_status myb_iono_grid_density(void* grid, double mjd, const double r[3], double* density) {
+  const myb_iono_grid* g = grid;
+  MYB_CHECK(g != NULL && r != NULL && density != NULL);
+  double latitude = 0.0;
+  double longitude = 0.0;
+  double distance = 0.0;
+  if (g->epochs == NULL || g->density == NULL || g->maps < 1 || g->latitudes < 2 ||
+      g->longitudes < 2 || g->heights < 2 || !(g->longitude_step > 0.0) ||
+      !(g->height_step > 0.0) || g->latitude_step == 0.0 || !isfinite(mjd) ||
+      !spherical(r, &latitude, &longitude, &distance)) {
+    return MYB_E_DOMAIN;
+  }
+  if (!(mjd >= g->epochs[0] && mjd <= g->epochs[g->maps - 1])) {
+    return MYB_E_RANGE;
+  }
+  const double h = (distance - g->radius - g->height) / g->height_step;
+  if (h < 0.0 || h > (double)(g->heights - 1)) {
+    *density = 0.0;
+    return MYB_OK;
+  }
+  const double q = (latitude - g->latitude) / g->latitude_step;
+  const double p = (longitude - g->longitude) / g->longitude_step;
+  int i = 0;
+  for (; i + 2 < g->maps && mjd > g->epochs[i + 1]; ++i) { /* bound: the maps */
+  }
+  if (g->maps == 1) {
+    return grid_value(g, 0, h, q, p, density);
+  }
+  /* each map rotated with the Sun to the date, as the maps of the vertical content */
+  const double t0 = g->epochs[i];
+  const double t1 = g->epochs[i + 1];
+  const double turn = TWO_PI / g->longitude_step; /* steps of longitude in a day */
+  double first = 0.0;
+  double second = 0.0;
+  myb_status status = grid_value(g, i, h, q, p + (mjd - t0) * turn, &first);
+  if (status == MYB_OK) {
+    status = grid_value(g, i + 1, h, q, p + (mjd - t1) * turn, &second);
+  }
+  if (status != MYB_OK) {
+    return status;
+  }
+  *density = ((t1 - mjd) * first + (mjd - t0) * second) / (t1 - t0);
+  return MYB_OK;
+}
+
+/* ---- The integrals along a ray --------------------------------------------------------------- */
+
+myb_status myb_iono_ray_integrals(myb_electron_density density, void* context,
+                                  const myb_magnetic_field* field, myb_gravity_work* work,
+                                  double mjd, const double receiver[3],
+                                  const double transmitter[3], double bottom, double top,
+                                  int panels, myb_iono_ray* ray) {
+  MYB_CHECK(density != NULL && receiver != NULL && transmitter != NULL && ray != NULL &&
+            (field == NULL || work != NULL));
+  double u[3];
+  double length2 = 0.0;
+  double along = 0.0; /* receiver . u */
+  double reach2 = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    u[i] = transmitter[i] - receiver[i];
+    length2 += u[i] * u[i];
+    reach2 += receiver[i] * receiver[i];
+  }
+  const double length = sqrt(length2);
+  if (!(length > 0.0) || !isfinite(length) || !isfinite(reach2) || !isfinite(mjd) ||
+      !(bottom > 0.0) || !(top > bottom) || !isfinite(top) || panels < 1 || panels > 4096) {
+    return MYB_E_DOMAIN;
+  }
+  for (int i = 0; i < 3; ++i) {
+    u[i] /= length;
+    along += receiver[i] * u[i];
+  }
+  /* |receiver + s u|^2 = reach2 + 2 along s + s^2: inside the sphere of radius rho for s
+   * between -along -+ sqrt(along^2 - reach2 + rho^2) */
+  const double outer = along * along - reach2 + top * top;
+  *ray = (myb_iono_ray){0.0, 0.0, 0.0, 0.0};
+  if (!(outer > 0.0)) {
+    return MYB_OK; /* the line passes above the ionosphere */
+  }
+  const double far = sqrt(outer);
+  double part[2][2] = {{fmax(0.0, -along - far), fmin(length, -along + far)}, {0.0, 0.0}};
+  int parts = part[0][1] > part[0][0] ? 1 : 0;
+  const double inner = along * along - reach2 + bottom * bottom;
+  if (parts == 1 && inner > 0.0) {
+    /* what is below the ionosphere is taken out: one part may become two */
+    const double near = sqrt(inner);
+    const double in = -along - near;
+    const double out = -along + near;
+    const double begin = part[0][0];
+    const double end = part[0][1];
+    parts = 0;
+    if (in > begin) {
+      part[parts][0] = begin;
+      part[parts][1] = fmin(end, in);
+      ++parts;
+    }
+    if (out < end) {
+      part[parts][0] = fmax(begin, out);
+      part[parts][1] = end;
+      ++parts;
+    }
+  }
+  /* the nodes and the weights of the four-point Gauss rule on (-1, 1) */
+  static const double node[4] = {-0.8611363115940526, -0.3399810435848563, 0.3399810435848563,
+                                 0.8611363115940526};
+  static const double weight[4] = {0.3478548451374538, 0.6521451548625461, 0.6521451548625461,
+                                   0.3478548451374538};
+  double sum[4] = {0.0, 0.0, 0.0, 0.0};
+  for (int k = 0; k < parts; ++k) {
+    const double half = 0.5 * (part[k][1] - part[k][0]) / (double)panels;
+    for (int panel = 0; panel < panels; ++panel) {
+      const double middle = part[k][0] + (2.0 * (double)panel + 1.0) * half;
+      for (int q = 0; q < 4; ++q) {
+        const double s = middle + half * node[q];
+        const double r[3] = {receiver[0] + s * u[0], receiver[1] + s * u[1],
+                             receiver[2] + s * u[2]};
+        double n = 0.0;
+        myb_status status = density(context, mjd, r, &n);
+        if (status != MYB_OK) {
+          return status;
+        }
+        if (!isfinite(n)) {
+          return MYB_E_DOMAIN;
+        }
+        const double w = weight[q] * half;
+        sum[0] += w * n;
+        sum[2] += w * n * n;
+        if (field != NULL && n != 0.0) {
+          double b[3];
+          status = myb_magnetic_field_eval(field, work, r, b);
+          if (status != MYB_OK) {
+            return status;
+          }
+          /* the direction of propagation is -u: transmitter -> receiver */
+          const double cosine = -(b[0] * u[0] + b[1] * u[1] + b[2] * u[2]);
+          const double b2 = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+          sum[1] += w * n * cosine;          /* B cos(theta) = B . k */
+          sum[3] += w * n * (b2 + cosine * cosine);
+        }
+      }
+    }
+  }
+  ray->content = sum[0];
+  ray->field = sum[1];
+  ray->square = sum[2];
+  ray->field_square = sum[3];
+  return MYB_OK;
+}
+
+void myb_iono_orders_of(const myb_iono_ray* ray, double e, double m_e, double eps0,
+                        myb_iono_orders* orders) {
+  MYB_CHECK(ray != NULL && orders != NULL);
+  const double pi = 0.5 * TWO_PI;
+  const double pi2 = pi * pi;
+  const double e2 = e * e;
+  orders->s1 = e2 / (8.0 * pi2 * m_e * eps0) * ray->content;
+  orders->s2 = e2 * e / (16.0 * pi2 * pi * m_e * m_e * eps0) * ray->field;
+  orders->s3 = e2 * e2 / (128.0 * pi2 * pi2 * m_e * m_e * eps0 * eps0) * ray->square +
+               e2 * e2 / (64.0 * pi2 * pi2 * m_e * m_e * m_e * eps0) * ray->field_square;
+}
+
+double myb_iono_phase_delay(const myb_iono_orders* orders, double frequency) {
+  MYB_CHECK(orders != NULL);
+  if (!(frequency > 0.0) || !isfinite(frequency)) {
+    return (double)NAN;
+  }
+  const double f2 = frequency * frequency;
+  return -orders->s1 / f2 - orders->s2 / (f2 * frequency) - orders->s3 / (f2 * f2);
+}
+
+double myb_iono_code_delay(const myb_iono_orders* orders, double frequency) {
+  MYB_CHECK(orders != NULL);
+  if (!(frequency > 0.0) || !isfinite(frequency)) {
+    return (double)NAN;
+  }
+  const double f2 = frequency * frequency;
+  return orders->s1 / f2 + 2.0 * orders->s2 / (f2 * frequency) + 3.0 * orders->s3 / (f2 * f2);
+}
+
+double myb_iono_bending(double content, double elevation) {
+  if (!(content >= 0.0) || !isfinite(content) ||
+      !(elevation >= 0.0 && elevation <= 1.5707963267948966)) {
+    return (double)NAN;
+  }
+  const double c = myb_cos(elevation);
+  /* mm MHz^4 with the content in TECU: 1e-3 m 1e24 Hz^4 (1e-16)^2 */
+  return 2.495e8 * 1e-11 * (1.0 / sqrt(1.0 - 0.8592 * c * c) - 1.0) * content * content;
 }

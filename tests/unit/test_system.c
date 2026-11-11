@@ -21,6 +21,7 @@
 #include "myb/attitude.h"
 #include "myb/force.h"
 #include "myb/kepler.h"
+#include "myb/rel.h"
 #include "myb/system.h"
 
 static const double PI = 3.141592653589793;
@@ -840,6 +841,150 @@ static void test_actions(void) {
   myb_polyhedron_destroy(shape);
 }
 
+/* A body on a circle about the origin, as a provider: the context is its radius, its angular
+ * rate and how many times it was asked. */
+typedef struct circling {
+  double radius;
+  double rate;
+  int calls;
+  int fail;
+} circling;
+
+static myb_status circling_state(void* context, myb_time t, double state[6]) {
+  circling* c = context;
+  ++c->calls;
+  if (c->fail) {
+    return MYB_E_RANGE;
+  }
+  const double angle = c->rate * myb_time_seconds(t);
+  state[0] = c->radius * cos(angle);
+  state[1] = c->radius * sin(angle);
+  state[2] = 0.0;
+  state[3] = -c->radius * c->rate * sin(angle);
+  state[4] = c->radius * c->rate * cos(angle);
+  state[5] = 0.0;
+  return MYB_OK;
+}
+
+/* Bodies with a given motion, a mass that changes, the dragging of the frame by a spin. */
+static void test_guided_and_drags(void) {
+  const double gm_sun = 1.32712440018e20;
+  const double au = 1.495978707e11;
+  /* a body of no mass about a guided centre at rest: Kepler's circle */
+  {
+    const double gm[1] = {0.0};
+    myb_system* s = NULL;
+    MT_CHECK(myb_system_create(1, gm, NULL, &s) == MYB_OK);
+    circling centre = {0.0, 0.0, 0, 0};
+    size_t index = 99;
+    MT_CHECK(myb_system_add_guided(s, gm_sun, circling_state, &centre, &index) == MYB_OK);
+    MT_CHECK(index == 0 && myb_system_guided(s) == 1);
+    const double speed = sqrt(gm_sun / au);
+    const double period = 2.0 * PI * au / speed;
+    double y[6] = {au, 0.0, 0.0, 0.0, speed, 0.0};
+    myb_ias15* in = NULL;
+    MT_CHECK(myb_system_integrator(s, NULL, NULL, &in) == MYB_OK);
+    MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y) == MYB_OK);
+    MT_CHECK(myb_ias15_integrate(in, period) == MYB_OK);
+    const double* z = myb_ias15_state(in);
+    const long long steps = (long long)myb_ias15_statistics(in).accepted;
+    const long long evaluations = (long long)myb_ias15_statistics(in).evaluations;
+    printf("a body about a centre with a given motion: back after a period to %.1e of the "
+           "radius; the provider asked %d times for %lld evaluations of %lld steps\n",
+           sqrt((z[0] - au) * (z[0] - au) + z[1] * z[1]) / au, centre.calls, evaluations, steps);
+    MT_CHECK(sqrt((z[0] - au) * (z[0] - au) + z[1] * z[1]) / au < 1e-11);
+    /* the places are kept for the instants of a step: far fewer calls than evaluations */
+    MT_CHECK(centre.calls < evaluations / 2 && centre.calls >= 7 * steps);
+    /* the status of the provider comes back; a place on a body is refused */
+    centre.fail = 1;
+    double a[3];
+    MT_CHECK(myb_system_acceleration(s, 12345.0, y, y + 3, a) == MYB_E_RANGE);
+    centre.fail = 0;
+    const double at_centre[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    MT_CHECK(myb_system_acceleration(s, 23456.0, at_centre, at_centre + 3, a) == MYB_E_DOMAIN);
+    MT_CHECK(myb_system_add_guided(s, -1.0, circling_state, &centre, NULL) == MYB_E_DOMAIN);
+    myb_ias15_destroy(in);
+    myb_system_destroy(s);
+  }
+  /* a guided body pulls as an integrated one would: a planet among the bodies against the
+   * same planet given its circle */
+  {
+    const double gm_planet = 1.26686534e17;
+    const double far = 5.2 * au;
+    const double rate = sqrt(gm_sun / (far * far * far));
+    const double gm[3] = {gm_sun, 0.0, gm_planet};
+    const double gm_alone[2] = {gm_sun, 0.0};
+    myb_system* whole = NULL;
+    myb_system* led = NULL;
+    MT_CHECK(myb_system_create(3, gm, NULL, &whole) == MYB_OK);
+    MT_CHECK(myb_system_create(2, gm_alone, NULL, &led) == MYB_OK);
+    circling planet = {far, rate, 0, 0};
+    MT_CHECK(myb_system_add_guided(led, gm_planet, circling_state, &planet, NULL) == MYB_OK);
+    const double y[18] = {0.0, 0.0, 0.0, 0.7 * au, 0.3 * au, 0.1 * au, far, 0.0, 0.0,
+                          0.0, 0.0, 0.0, -1.0e4, 2.0e4, 0.0,      0.0, far * rate, 0.0};
+    const double y_led[12] = {0.0, 0.0, 0.0, 0.7 * au, 0.3 * au, 0.1 * au,
+                              0.0, 0.0, 0.0, -1.0e4, 2.0e4,      0.0};
+    double a[9];
+    double b[6];
+    MT_CHECK(myb_system_acceleration(whole, 0.0, y, y + 9, a) == MYB_OK);
+    MT_CHECK(myb_system_acceleration(led, 0.0, y_led, y_led + 6, b) == MYB_OK);
+    double worst = 0.0;
+    for (int i = 0; i < 6; ++i) {
+      worst = fmax(worst, fabs(a[i] - b[i]));
+    }
+    MT_CHECK(worst < 1e-18); /* of accelerations of 6e-3 and 2e-7 m/s^2 */
+    myb_system_destroy(whole);
+    myb_system_destroy(led);
+  }
+  /* a mass that changes, and the spin of the Sun */
+  {
+    const double gm[2] = {gm_sun, 2.2032e13};
+    myb_system* s = NULL;
+    MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+    const double y[12] = {0.0, 0.0, 0.0, 0.31 * au, 0.2 * au, 0.05 * au,
+                          0.0, 0.0, 0.0, -3.0e4,    4.0e4,    5.0e3};
+    double before[6];
+    double after[6];
+    MT_CHECK(myb_system_acceleration(s, 0.0, y, y + 6, before) == MYB_OK);
+    const double year = 365.25 * 86400.0;
+    MT_CHECK(myb_system_set_mass_rate(s, 0, -9.0e-14 / year, 1000.0) == MYB_OK);
+    MT_CHECK(myb_system_acceleration(s, 1000.0, y, y + 6, after) == MYB_OK);
+    MT_CHECK(memcmp(before, after, sizeof before) == 0); /* at the epoch: the mass given */
+    MT_CHECK(myb_system_acceleration(s, 1000.0 + 1.0e6 * year, y, y + 6, after) == MYB_OK);
+    /* the planet is pulled by 9e-8 less after a million years; the Sun as before */
+    MT_CHECK(fabs(after[3] / before[3] - (1.0 - 9.0e-8)) < 1e-15);
+    MT_CHECK(fabs(after[0] / before[0] - 1.0) < 1e-15);
+    MT_CHECK(myb_system_acceleration(s, 1000.0 + 2.0e13 * year, y, y + 6, after) == MYB_E_DOMAIN);
+    MT_CHECK(myb_system_set_mass_rate(s, 0, 0.0, 0.0) == MYB_OK);
+    MT_CHECK(myb_system_set_mass_rate(s, 5, 1.0, 0.0) == MYB_E_DOMAIN);
+    /* the dragging of the frame needs the relativity of the point masses */
+    const double spin[3] = {2.9e10, -8.2e10, 8.6e10};
+    MT_CHECK(myb_system_add_frame_dragging(s, 0, 1, spin) == MYB_E_DOMAIN);
+    const myb_ppn ppn = {299792458.0, 1.0, 1.0};
+    MT_CHECK(myb_nbody_set_relativity(myb_system_nbody(s), &ppn) == MYB_OK);
+    MT_CHECK(myb_system_acceleration(s, 0.0, y, y + 6, before) == MYB_OK);
+    MT_CHECK(myb_system_add_frame_dragging(s, 0, 0, spin) == MYB_E_DOMAIN);
+    MT_CHECK(myb_system_add_frame_dragging(s, 0, 1, spin) == MYB_OK);
+    MT_CHECK(myb_system_acceleration(s, 0.0, y, y + 6, after) == MYB_OK);
+    double expected[3];
+    MT_CHECK(myb_rel_lense_thirring(&ppn, gm[0], spin, y + 3, y + 9, expected) == MYB_OK);
+    double worst = 0.0;
+    double size = 0.0;
+    for (int i = 0; i < 3; ++i) {
+      worst = fmax(worst, fabs(after[3 + i] - before[3 + i] - expected[i]));
+      /* the momentum is kept: gm_sun a_sun + gm_planet a_planet does not change */
+      worst = fmax(worst, fabs((after[i] - before[i]) * gm[0] / gm[1] + expected[i]));
+      size = fmax(size, fabs(expected[i]));
+    }
+    printf("the spin of the Sun on a body at 0.37 au: %.2e m/s^2, %.1e of its attraction; in "
+           "the system to %.1e m/s^2\n",
+           size, size / (gm_sun / (0.1386 * au * au)), worst);
+    /* the difference of two accelerations of 6e-3 m/s^2 resolves 1e-18 */
+    MT_CHECK(size > 1e-14 && size < 1e-12 && worst < 1e-17);
+    myb_system_destroy(s);
+  }
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_field();
@@ -848,5 +993,6 @@ int main(void) {
   test_pn_pair();
   test_encounters();
   test_actions();
+  test_guided_and_drags();
   return mt_finish("test_system");
 }

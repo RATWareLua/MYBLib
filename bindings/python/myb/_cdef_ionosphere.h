@@ -14,3 +14,53 @@ typedef struct myb_ionex myb_ionex;
             void myb_ionex_shell(const myb_ionex* maps, double* radius, double* height);
                           myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
                                                 double latitude, double longitude, double* vtec);
+typedef myb_status (*myb_electron_density)(void* context, double mjd, const double r[3],
+                                           double* density);
+typedef struct myb_iono_layer {
+  const myb_ionex* maps;
+  double peak;
+  double scale;
+} myb_iono_layer;
+                          myb_status myb_iono_layer_density(void* layer, double mjd,
+                                                        const double r[3], double* density);
+typedef struct myb_iono_grid {
+  double radius;
+  double latitude;
+  double latitude_step;
+  int latitudes;
+  double longitude;
+  double longitude_step;
+  int longitudes;
+  double height;
+  double height_step;
+  int heights;
+  const double* epochs;
+  int maps;
+  const double* density;
+} myb_iono_grid;
+                          myb_status myb_iono_grid_density(void* grid, double mjd,
+                                                       const double r[3], double* density);
+typedef struct myb_iono_ray {
+  double content;
+  double field;
+  double square;
+  double field_square;
+} myb_iono_ray;
+                          myb_status myb_iono_ray_integrals(myb_electron_density density,
+                                                        void* context,
+                                                        const myb_magnetic_field* field,
+                                                        myb_gravity_work* work, double mjd,
+                                                        const double receiver[3],
+                                                        const double transmitter[3],
+                                                        double bottom, double top, int panels,
+                                                        myb_iono_ray* ray);
+typedef struct myb_iono_orders {
+  double s1;
+  double s2;
+  double s3;
+} myb_iono_orders;
+            void myb_iono_orders_of(const myb_iono_ray* ray, double e, double m_e, double eps0,
+                                    myb_iono_orders* orders);
+            double myb_iono_phase_delay(const myb_iono_orders* orders, double frequency);
+            double myb_iono_code_delay(const myb_iono_orders* orders, double frequency);
+            double myb_iono_bending(double content, double elevation);

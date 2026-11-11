@@ -9,6 +9,9 @@
 #define MYB_NRLMSISE00_H_
 
 #include "myb/core.h"
+#include "myb/frames.h"
+#include "myb/time.h"
+#include "myb/weather.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +48,29 @@ typedef struct myb_nrlmsise00_output {
 MYB_EXT_API MYB_NODISCARD myb_status myb_nrlmsise00(const myb_nrlmsise00_input* input,
                                                 const int* switches, int anomalous_oxygen,
                                                 myb_nrlmsise00_output* output);
+
+/* The model as the atmosphere of a force model (myb_density_function of myb/force.h; the
+ * context is this structure): the density at the body-fixed position r (m) and the instant
+ * t. The date and the time of day are those of UTC (the time system gives them from t on
+ * `scale`), the height and the latitude geodetic on the ellipsoid, the local solar time the
+ * model's own (the time of day plus the longitude); the indices come from a table of space
+ * weather (myb/weather.h) — with the history of ap of the last 57 hours where the table has
+ * it — or, without a table, are the three numbers given here at all times. Errors: those of
+ * myb_timesys_to_utc, myb_geodetic_from_cartesian, myb_space_weather_inputs_at (MYB_E_RANGE
+ * outside the table) and myb_nrlmsise00. */
+typedef struct myb_nrlmsise00_atmosphere {
+  const myb_space_weather* weather; /* NULL: the three indices below */
+  double f107;                      /* daily F10.7 of the day before */
+  double f107_average;              /* its mean over 81 days */
+  double ap;                        /* daily Ap */
+  const myb_timesys* timesys;
+  myb_scale scale;                  /* of t */
+  myb_ellipsoid ellipsoid;          /* of the Earth */
+  int anomalous_oxygen;             /* as in myb_nrlmsise00 */
+} myb_nrlmsise00_atmosphere;
+
+MYB_EXT_API MYB_NODISCARD myb_status myb_nrlmsise00_density(void* atmosphere, myb_time t,
+                                                        const double r[3], double* density);
 
 #ifdef __cplusplus
 }

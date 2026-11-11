@@ -21,3 +21,38 @@
                                                double* temperature, double* undulation);
                           myb_status myb_tropo_gradient_delay(double gn, double ge, double elevation,
                                                           double azimuth, double* delay);
+                          myb_status myb_tropo_gradient_delay_parts(double gn_h, double ge_h,
+                                                                double gn_w, double ge_w,
+                                                                double elevation,
+                                                                double azimuth, double* delay);
+                          myb_status myb_tropo_zwd_askne(double vapour_pressure,
+                                                     double mean_temperature, double lambda,
+                                                     double* zwd);
+                          myb_status myb_tropo_vmf3(double ah, double aw, double mjd,
+                                                double latitude, double longitude,
+                                                double height, double zenith_distance,
+                                                double* mh, double* mw);
+typedef struct myb_gpt3 myb_gpt3;
+                          myb_status myb_gpt3_load(const char* text, size_t size,
+                                               const myb_allocator* allocator, myb_gpt3** grid,
+                                               myb_diag* diag);
+            void myb_gpt3_destroy(myb_gpt3* grid);
+            double myb_gpt3_step(const myb_gpt3* grid);
+typedef struct myb_gpt3_values {
+  double pressure;
+  double temperature;
+  double lapse_rate;
+  double mean_temperature;
+  double vapour_pressure;
+  double ah;
+  double aw;
+  double lambda;
+  double undulation;
+  double gn_h;
+  double ge_h;
+  double gn_w;
+  double ge_w;
+} myb_gpt3_values;
+                          myb_status myb_gpt3_at(const myb_gpt3* grid, double mjd, double latitude,
+                                             double longitude, double height, int constant,
+                                             myb_gpt3_values* values);

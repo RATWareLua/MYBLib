@@ -20,3 +20,15 @@ typedef struct myb_nrlmsise00_output {
                           myb_status myb_nrlmsise00(const myb_nrlmsise00_input* input,
                                                 const int* switches, int anomalous_oxygen,
                                                 myb_nrlmsise00_output* output);
+typedef struct myb_nrlmsise00_atmosphere {
+  const myb_space_weather* weather;
+  double f107;
+  double f107_average;
+  double ap;
+  const myb_timesys* timesys;
+  myb_scale scale;
+  myb_ellipsoid ellipsoid;
+  int anomalous_oxygen;
+} myb_nrlmsise00_atmosphere;
+                          myb_status myb_nrlmsise00_density(void* atmosphere, myb_time t,
+                                                        const double r[3], double* density);

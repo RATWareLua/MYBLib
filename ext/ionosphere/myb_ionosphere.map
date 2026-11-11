@@ -18,3 +18,14 @@ MYB_IONOSPHERE_1.1 {
   local:
     *;
 };
+
+MYB_IONOSPHERE_1.2 {
+  global:
+    myb_iono_bending;
+    myb_iono_code_delay;
+    myb_iono_grid_density;
+    myb_iono_layer_density;
+    myb_iono_orders_of;
+    myb_iono_phase_delay;
+    myb_iono_ray_integrals;
+} MYB_IONOSPHERE_1.1;

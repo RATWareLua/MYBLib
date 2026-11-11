@@ -78,6 +78,20 @@ MYB_API void myb_cip_destroy(myb_cip* cip); /* accepts NULL */
  * NULL). Thread-safe. */
 MYB_API void myb_cip_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]);
 
+/* The series tabulated every `step` seconds of TT (0: an hour) from tt0 to tt1: between
+ * them myb_cip_xys — and all that uses it, myb_cip_terrestrial and the orientation provider
+ * among them — then takes the cubic through the values and the rates of the two nodes
+ * around the instant in place of the thousands of terms of the series, and outside them the
+ * series as before. With a step of an hour the two agree to the rounding of X and Y (the
+ * fastest terms of the nutation have periods of days: measured 4e-16 rad, the rates
+ * 4e-19 rad/s, at a 700th of the cost; six hours give 5e-13 rad); the values depend on the
+ * nodes only, not on what was asked before. A second
+ * call replaces the table. Not to be called while another thread uses the model. Errors:
+ * MYB_E_DOMAIN (tt1 not after tt0, a step that is negative or not finite, more than 2^26
+ * nodes), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_cip_tabulate(myb_cip* cip, myb_time tt0, myb_time tt1,
+                                                  double step);
+
 /* Rotation angle (rad, in [0, 2 pi)) at the UT1 instant ut1, and its rate (rad per UT1 second;
  * may be NULL). The fraction of the day is kept apart, so the angle is exact to ~1e-16 rad. */
 MYB_API double myb_cip_era(const myb_cip* cip, myb_time ut1, double* rate);
@@ -428,6 +442,77 @@ MYB_API MYB_NODISCARD myb_status myb_orientation_wgccre(void* context, myb_time 
 
 /* A constant orientation. myb_orientation_function; context: const myb_rotation*. */
 MYB_API MYB_NODISCARD myb_status myb_orientation_fixed(void* rotation, myb_time t,
+                                                       myb_orientation* orientation);
+
+/* ---- The graph of frames -----------------------------------------------------------------------
+ * Frames named by codes (those of the files that refer to them: the library attaches no
+ * meaning to a code), each given in another — its base — by a provider of its orientation or
+ * by a constant rotation. A frame that is the base of others and has no definition of its
+ * own is a root (J2000, code 1, for the NAIF kernels). The rotation between any two frames
+ * of one tree is composed through their first common ancestor, with the derivatives, so that
+ * states are carried between frames that turn.
+ *
+ * Time. The instants asked for are on one scale, named when the graph is created; a
+ * provider registered with another scale is called with the same instant on its own (TT for
+ * the rotation of the Earth among providers on TDB), converted by the time system. */
+
+enum { MYB_FRAME_GRAPH_MAX_DEPTH = 32 }; /* frames between a frame and its root */
+
+typedef struct myb_frame_graph myb_frame_graph;
+
+typedef struct myb_frame_graph_options {
+  const myb_timesys* timesys; /* NULL: one time scale, every provider gets the instant asked */
+  const char* scale;          /* the scale of the instants asked for (needed with timesys) */
+} myb_frame_graph_options;
+
+/* options may be NULL. The time system must outlive the graph. Errors: MYB_E_DOMAIN (a time
+ * system without a scale name), MYB_E_NOT_FOUND (the scale), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_frame_graph_create(const myb_frame_graph_options* options,
+                                                        const myb_allocator* allocator,
+                                                        myb_frame_graph** graph);
+MYB_API void myb_frame_graph_destroy(myb_frame_graph* graph); /* accepts NULL */
+
+/* Frame `id` given in frame `base`: the member `rotation` of what the provider returns is
+ * the rotation base -> id. scale: that of the provider's argument (NULL: the graph's). The
+ * context must outlive the graph; a frame is defined once. Errors: MYB_E_DOMAIN (a code of 0,
+ * id == base, a frame defined already, a scale name without a time system),
+ * MYB_E_NOT_FOUND (the scale), MYB_E_NOMEM. */
+MYB_API MYB_NODISCARD myb_status myb_frame_graph_add(myb_frame_graph* graph, int32_t id,
+                                                     int32_t base,
+                                                     myb_orientation_function orientation,
+                                                     void* context, const char* scale);
+
+/* A frame at a constant rotation base -> id (copied). Errors as above. */
+MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_fixed(myb_frame_graph* graph, int32_t id,
+                                                           int32_t base,
+                                                           const myb_rotation* rotation);
+
+/* The fixed frame `id` of a frames kernel (myb_tkframe): its base is the frame that
+ * TKFRAME_<id>_RELATIVE names, whose code the pool gives as FRAME_<name>
+ * (data/frames/naif-inertial.tk does for the inertial frames built into SPICE). Errors:
+ * those of myb_tkframe and of myb_frame_graph_add_fixed; MYB_E_NOT_FOUND or MYB_E_FORMAT
+ * (the code of the base). */
+MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_tkframe(myb_frame_graph* graph,
+                                                             const myb_kpool* pool, int32_t id,
+                                                             myb_diag* diag);
+
+/* The rotation from frame `from` to frame `to` at t. Errors: MYB_E_NOT_FOUND (the two are
+ * not in one tree), MYB_E_FORMAT (a chain of more than MYB_FRAME_GRAPH_MAX_DEPTH frames: a
+ * cycle), the statuses of the providers and of the time system. Queries do not modify the
+ * graph: it serves several threads if its providers do. */
+MYB_API MYB_NODISCARD myb_status myb_frame_graph_rotation(const myb_frame_graph* graph,
+                                                          int32_t from, int32_t to, myb_time t,
+                                                          myb_rotation* rotation);
+
+/* Two frames of a graph as an orientation provider: the rotation from -> to.
+ * myb_orientation_function; context: const myb_graph_orientation*. */
+typedef struct myb_graph_orientation {
+  const myb_frame_graph* graph;
+  int32_t from;
+  int32_t to;
+} myb_graph_orientation;
+
+MYB_API MYB_NODISCARD myb_status myb_orientation_graph(void* context, myb_time t,
                                                        myb_orientation* orientation);
 
 #ifdef __cplusplus

@@ -9,8 +9,10 @@
 #include "myb/cmath.h"
 #include "myb/kepler.h"
 #include "myb/num.h"
+#include "num/vec3.h"
 
 static const double pi = 0x1.921fb54442d18p+1;
+static const double two_pi = 0x1.921fb54442d18p+2;
 
 /* ---- Reading ----------------------------------------------------------------------------- */
 
@@ -925,6 +927,138 @@ static myb_status state_type17(const myb_internal_spk_segment* s, myb_time t, do
   return MYB_OK;
 }
 
+/* ---- Type 15: a conic with precessing node and periapsis ----------------------------------- */
+
+enum { TYPE15_WORDS = 16 };
+
+static myb_status parse_type15(myb_internal_spk_segment* s, myb_diag* diag) {
+  if (s->end - s->begin + 1 != TYPE15_WORDS) {
+    return format_error(diag, s, "length is not 16");
+  }
+  double w[TYPE15_WORDS];
+  for (uint64_t i = 0; i < TYPE15_WORDS; ++i) {
+    w[i] = word(s, s->begin + i);
+    if (!isfinite(w[i])) {
+      return format_error(diag, s, "non-finite element");
+    }
+  }
+  if (!epoch_ok(w[0]) || !positive(w[7]) || !(w[8] >= 0.0) || !positive(w[13]) ||
+      !positive(myb_vec3_norm(w + 1)) || !positive(myb_vec3_norm(w + 4)) ||
+      !positive(myb_vec3_norm(w + 10))) {
+    return format_error(diag, s, "elements outside the model (p > 0, e >= 0, GM > 0, poles)");
+  }
+  return MYB_OK;
+}
+
+/* v turned about the unit axis by the angle. */
+static void turn_about(const double axis[3], double angle, double v[3]) {
+  const double c = myb_cos(angle);
+  const double sn = myb_sin(angle);
+  const double along = myb_vec3_dot(axis, v);
+  double across[3];
+  myb_vec3_cross(axis, v, across);
+  for (int i = 0; i < 3; ++i) {
+    v[i] = c * v[i] + sn * across[i] + (1.0 - c) * along * axis[i];
+  }
+}
+
+/* The conic through the periapsis at the epoch, then the first-order secular effect of the
+ * oblateness of the centre: the periapsis turned about the pole of the orbit and the node
+ * about the pole of the centre, by angles that grow with the true anomaly gone through (as
+ * SPICE does it; with the time they would not follow the motion round an eccentric orbit).
+ * The velocity is turned with the position: the rates of the two angles are left out, as in
+ * SPICE.
+ *
+ * On an ellipse the mean anomaly is formed and reduced to one revolution in double-word
+ * arithmetic: after thousands of revolutions the last bit of the mean motion is otherwise
+ * what the position resolves (CSPICE is 2e-11 off the rule after 3400 revolutions, 1e-13
+ * after 50; this evaluation stays at the rounding of one). */
+static myb_status state_type15(const myb_internal_spk_segment* s, myb_time t, double state[6]) {
+  double w[TYPE15_WORDS];
+  for (int i = 0; i < TYPE15_WORDS; ++i) {
+    w[i] = word(s, s->begin + (uint64_t)i);
+  }
+  double orbit_pole[3];
+  double periapsis[3];
+  double centre_pole[3];
+  const double n1 = myb_vec3_norm(w + 1);
+  const double n4 = myb_vec3_norm(w + 4);
+  const double n10 = myb_vec3_norm(w + 10);
+  for (int i = 0; i < 3; ++i) {
+    orbit_pole[i] = w[1 + i] / n1;
+    periapsis[i] = w[4 + i] / n4;
+    centre_pole[i] = w[10 + i] / n10;
+  }
+  const double p = w[7];
+  const double ecc = w[8];
+  const double flag = w[9];
+  const double gm = w[13];
+  const double j2 = w[14];
+  const double radius = w[15];
+  const double dt = since(t, w[0]);
+  double along[3];
+  myb_vec3_cross(orbit_pole, periapsis, along);
+  myb_pv now;
+  double anomaly = 0.0; /* the true anomaly gone through since the periapsis */
+  if (ecc < 1.0) {
+    /* n = sqrt(gm (1 - e^2)^3 / p^3), M = n dt, both to twice the precision */
+    const myb_dd one_me2 = myb_dd_mul(myb_dd_add_d(myb_dd_from_double(-ecc), 1.0),
+                                      myb_dd_add_d(myb_dd_from_double(ecc), 1.0));
+    const myb_dd ratio = myb_dd_div_d(one_me2, p);
+    const myb_dd motion = myb_dd_mul(ratio, myb_dd_sqrt(myb_dd_mul_d(ratio, gm)));
+    const myb_dd mean = myb_dd_mul_d(motion, dt);
+    const double turns = floor(myb_dd_to_double(mean) / two_pi + 0.5);
+    const myb_dd circle = {two_pi, 0x1.1a62633145c07p-52};
+    const double part = myb_dd_to_double(myb_dd_sub(mean, myb_dd_mul_d(circle, turns)));
+    double e_anomaly = 0.0;
+    if (myb_kepler_elliptic(part, ecc, &e_anomaly) != MYB_OK) {
+      return MYB_E_FORMAT;
+    }
+    const double a = p / myb_dd_to_double(one_me2);
+    const double b = p / sqrt(myb_dd_to_double(one_me2));
+    const double n = myb_dd_to_double(motion);
+    const double ce = myb_cos(e_anomaly);
+    const double se = myb_sin(e_anomaly);
+    const double x = a * (ce - ecc);
+    const double y = b * se;
+    const double rate = n / (1.0 - ecc * ce);
+    const double vx = -a * rate * se;
+    const double vy = b * rate * ce;
+    for (int i = 0; i < 3; ++i) {
+      now.r[i] = x * periapsis[i] + y * along[i];
+      now.v[i] = vx * periapsis[i] + vy * along[i];
+    }
+    anomaly = myb_atan2(y, x) + two_pi * turns;
+  } else {
+    const double rp = p / (1.0 + ecc);
+    const double speed = sqrt(gm / rp) * sqrt(1.0 + ecc);
+    myb_pv start;
+    for (int i = 0; i < 3; ++i) {
+      start.r[i] = rp * periapsis[i];
+      start.v[i] = speed * along[i];
+    }
+    const myb_status status = myb_kepler_propagate(gm, &start, dt, &now);
+    if (status != MYB_OK) {
+      return status;
+    }
+  }
+  if (flag != 3.0 && j2 != 0.0 && ecc < 1.0) {
+    const double cos_inc = myb_vec3_dot(centre_pole, orbit_pole);
+    const double z = anomaly * 1.5 * j2 * (radius / p) * (radius / p);
+    if (flag != 1.0) {
+      turn_about(orbit_pole, z * (2.5 * cos_inc * cos_inc - 0.5), now.r);
+      turn_about(orbit_pole, z * (2.5 * cos_inc * cos_inc - 0.5), now.v);
+    }
+    if (flag != 2.0) {
+      turn_about(centre_pole, -z * cos_inc, now.r);
+      turn_about(centre_pole, -z * cos_inc, now.v);
+    }
+  }
+  memcpy(state, now.r, sizeof now.r);
+  memcpy(state + 3, now.v, sizeof now.v);
+  return MYB_OK;
+}
+
 /* ---- Dispatch ------------------------------------------------------------------------------ */
 
 myb_status myb_internal_spk_segment_parse(myb_internal_spk_segment* s, myb_diag* diag) {
@@ -948,6 +1082,8 @@ myb_status myb_internal_spk_segment_parse(myb_internal_spk_segment* s, myb_diag*
       return parse_discrete(s, diag);
     case 14:
       return parse_type14(s, diag);
+    case 15:
+      return parse_type15(s, diag);
     case 17:
       return parse_type17(s, diag);
     case 18:
@@ -986,6 +1122,9 @@ myb_status myb_internal_spk_segment_state(const myb_internal_spk_segment* s, myb
       break;
     case 14:
       status = state_type14(s, t, state);
+      break;
+    case 15:
+      status = state_type15(s, t, state);
       break;
     case 17:
       status = state_type17(s, t, state);

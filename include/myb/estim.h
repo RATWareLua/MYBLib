@@ -7,8 +7,10 @@
  * (myb_force_model_add_parameter), in that order: 6 + np numbers. A measurement is a function
  * of the state of the object at the time of the observation, with its derivatives; the
  * derivatives with respect to the unknowns follow from the state transition matrix and the
- * sensitivities. Measurements here are geometric (the state at the instant of the
- * observation): the light time between the object and the observer is not part of them. */
+ * sensitivities. The measurements from a station come in two kinds: geometric (the state at
+ * the instant of the observation) and with the light time (myb_light_measure: what the
+ * station receives at that instant left the object, and before it the station, a light time
+ * earlier). */
 #ifndef MYB_ESTIM_H_
 #define MYB_ESTIM_H_
 
@@ -19,6 +21,7 @@
 #include "myb/env.h"
 #include "myb/frames.h"
 #include "myb/model.h"
+#include "myb/site.h"
 #include "myb/surface.h"
 
 #ifdef __cplusplus
@@ -58,24 +61,43 @@ MYB_API MYB_NODISCARD myb_status myb_measure_position(void* context, double t, c
 MYB_API MYB_NODISCARD myb_status myb_measure_state(void* context, double t, const double y[6],
                                                    double* values, double* partials);
 
-/* An observer fixed on a body of an environment: its body-fixed position and the axes east,
- * north, up there (rows of enu, in the body-fixed frame). */
+/* What moves a station on its body (myb/site.h): the tides of the body raised by bodies of
+ * the environment, the pole tide and the loads of the point. The rotation time, the pole and
+ * the instant of the arguments are those of the body's orientation provider (UT1, polar
+ * motion and TT for the Earth), its GM that of the body. */
+typedef struct myb_station_motion {
+  const myb_site_tides* tides;
+  const myb_site_loads* loads; /* may be NULL */
+  size_t raisers[MYB_ENV_MAX_RAISERS];
+  size_t raiser_count;
+  int flags; /* MYB_SITE_* */
+  int rate;  /* non-zero: the velocity of the displacement too (up to 0.02 mm/s for the tide
+                of the solid Earth), from the displacements 30 s before and after: two more
+                evaluations of the bodies and of the orientation */
+} myb_station_motion;
+
+/* An observer on a body of an environment: its body-fixed position and the axes east,
+ * north, up there (rows of enu, in the body-fixed frame); with `motion`, the position is the
+ * place the point has without its tides (the place of a terrestrial frame) and what moves
+ * it is added at every instant. */
 typedef struct myb_station {
   myb_env* env;
   size_t body;
   double position[3];
   double enu[9];
+  const myb_station_motion* motion; /* NULL: fixed on the body */
 } myb_station;
 
-/* A station at geodetic longitude, latitude (rad) and height (m) on an ellipsoid of the body.
- * Errors: those of myb_geodetic_to_cartesian. */
+/* A station at geodetic longitude, latitude (rad) and height (m) on an ellipsoid of the body,
+ * fixed on it (motion = NULL). Errors: those of myb_geodetic_to_cartesian. */
 MYB_API MYB_NODISCARD myb_status myb_station_init(myb_station* station, myb_env* env, size_t body,
                                                   const myb_ellipsoid* ellipsoid,
                                                   double longitude, double latitude,
                                                   double height);
 
 /* State of the station at the model time t relative to the origin of the environment, in its
- * inertial axes (the body's state and orientation). Errors: those of the environment. */
+ * inertial axes (the body's state and orientation). Errors: those of the environment and,
+ * with a motion, of myb_site_displacement. */
 MYB_API MYB_NODISCARD myb_status myb_station_state(const myb_station* station, double t,
                                                    double state[6]);
 
@@ -102,9 +124,15 @@ MYB_API MYB_NODISCARD myb_status myb_measure_azel(void* station, double t, const
 /* A measurement of a point of the object that is not its centre of mass — a retroreflector,
  * the phase centre of an antenna: the measurement `measure` (with its context) is taken at
  * the state of that point, offset (m, in the body frame) from the centre of mass and turned
- * by the attitude of the object; its velocity includes the turning of the body (the attitude
- * a second apart). The derivatives are those of the measurement at the point: how the
- * attitude follows the orbit — a part in |offset| / |x| — is left out. */
+ * by the attitude of the object; its velocity includes the turning of the body: the
+ * attitude half a second before and after, at the places the velocity leads to and with the
+ * velocity kept — the turning of a law that follows the place (the orbital axes, the nadir),
+ * not of one that follows the direction of the velocity alone. The derivatives are those of
+ * the measurement at the point times those of
+ * the point in the state: the centre of mass and the offset as the attitude follows the
+ * orbit (the laws of myb/surface.h differentiated as they are written, any other law by
+ * central differences of the law) — a part in |offset| / |x|. The measurement must write
+ * every row of its derivatives. */
 typedef struct myb_offset_measure {
   myb_measure_function measure;
   void* context;
@@ -115,6 +143,50 @@ typedef struct myb_offset_measure {
 
 MYB_API MYB_NODISCARD myb_status myb_measure_offset(void* offset, double t, const double y[6],
                                                     double* values, double* partials);
+
+/* ---- Measurements with the light time --------------------------------------------------------
+ * What the station receives at the model time t left the object the light time tau before:
+ * c tau = |x(t - tau) - s(t)|, s the place of the station. Two-way, the station sent it
+ * tau_up before that: c tau_up = |x(t - tau) - s(t - tau - tau_up)|. Where the object was
+ * follows from its state y at t by its motion about a point mass gm at the origin of the
+ * environment over the light time, to the third order in tau (what is left out is 1e-14 m
+ * for a low orbit of the Earth, 1e-8 m at the distance of the Moon); the station is taken at
+ * t and, two-way, once more two light times earlier.
+ *   range       one-way c tau; two-way c (tau + tau_up) / 2 (m), 1 value;
+ *   range rate  its rate in the time of reception (m/s), 1 value: one-way
+ *               c u.(v_e - v_s) / (c + u.v_e), u the direction station -> object and v_e the
+ *               velocity of the object when the light left it;
+ *   radec, azel the direction the light comes from, as myb_measure_radec and
+ *               myb_measure_azel; with `aberration` as the moving station sees it (the
+ *               velocity of the station relative to the origin: the diurnal aberration for a
+ *               station on the body at the origin), 2 values (periodic = 1).
+ * The derivatives are exact: those of the implicit tau included. Delays of the media
+ * (troposphere, ionosphere: ext/) and the relativistic delay (myb/observe.h) are not part of
+ * these and are added to what is computed as corrections of the observed value. Errors:
+ * MYB_E_DOMAIN (c not positive, gm negative, the object at the station or at the origin, the
+ * angles at the pole of their axes), MYB_E_NOCONV (no light time: an end faster than light),
+ * the statuses of the environment. */
+typedef struct myb_light_measure {
+  const myb_station* station;
+  double c;       /* the speed of light, m/s */
+  double gm;      /* of the body at the origin, m^3 s^-2; 0: the object moves in a straight
+                     line over the light time */
+  int two_way;    /* 0: the object emits; 1: the station emits and the object returns it */
+  int aberration; /* the angles: 0: where the object was; 1: where the station sees it */
+} myb_light_measure;
+
+MYB_API MYB_NODISCARD myb_status myb_measure_light_range(void* light, double t,
+                                                         const double y[6], double* values,
+                                                         double* partials);
+MYB_API MYB_NODISCARD myb_status myb_measure_light_range_rate(void* light, double t,
+                                                              const double y[6],
+                                                              double* values, double* partials);
+MYB_API MYB_NODISCARD myb_status myb_measure_light_radec(void* light, double t,
+                                                         const double y[6], double* values,
+                                                         double* partials);
+MYB_API MYB_NODISCARD myb_status myb_measure_light_azel(void* light, double t,
+                                                        const double y[6], double* values,
+                                                        double* partials);
 
 /* ---- Least squares over an arc ---------------------------------------------------------------
  * Gauss-Newton on the weighted residuals (observed - computed) / sigma: every iteration

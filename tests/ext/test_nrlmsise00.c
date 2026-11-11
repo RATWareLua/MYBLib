@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "mtest.h"
+#include "myb/io.h"
 #include "myb_nrlmsise00.h"
 
 static const double reference[17][11] = {
@@ -28,8 +29,75 @@ static const double reference[17][11] = {
     {4.260860E+07, 1.241342E+11, 4.929562E+12, 1.048407E+12, 4.993465E+10, 2.914304E-10, 8.831229E+06, 2.252516E+05, 2.415246E-42, 1.027318E+03, 1.934071E+02},
 };
 
+/* The model as an atmosphere: the density at a place and an instant against the model
+ * called with the day, the time, the geodetic place and the indices worked out here. */
+static void test_atmosphere(void) {
+  myb_kpool* pool = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/time/time-scales.tk", &diag) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/time/tdb-tt-fb1990.tk", &diag) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/time/utc-tai.tk", &diag) == MYB_OK);
+  myb_timesys* sys = NULL;
+  MT_CHECK(myb_timesys_create(pool, NULL, &sys, &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  myb_scale tt;
+  MT_CHECK(myb_timesys_scale(sys, "TT", &tt) == MYB_OK);
+  myb_space_weather* weather = NULL;
+  MT_CHECK(myb_space_weather_load_file(MYB_TEST_DATA_DIR "/weather/sw-excerpt.csv", NULL,
+                                       &weather, &diag) == MYB_OK);
+  const myb_ellipsoid wgs84 = {6378137.0, 1.0 / 298.257223563};
+  /* 2026-03-05 13:00:00 UTC, 420 km above 51.6 N, 30 E */
+  const myb_calendar utc = {.year = 2026, .month = 3, .day = 5, .hour = 13};
+  myb_time t;
+  MT_CHECK(myb_timesys_from_utc(sys, &utc, tt, &t) == MYB_OK);
+  const double degree = 3.141592653589793 / 180.0;
+  double r[3];
+  MT_CHECK(myb_geodetic_to_cartesian(&wgs84, 30.0 * degree, 51.6 * degree, 420.0e3, r) ==
+           MYB_OK);
+  myb_nrlmsise00_atmosphere air = {.weather = weather, .timesys = sys, .scale = tt,
+                                   .ellipsoid = wgs84};
+  double density = 0.0;
+  MT_CHECK(myb_nrlmsise00_density(&air, t, r, &density) == MYB_OK);
+  /* the 64th day of the year; the indices of the table at that hour (test_weather) */
+  const double history[7] = {6.0, 4.0, 5.0, 6.0, 7.0, 19.375, 3.5};
+  const myb_nrlmsise00_input direct = {.day_of_year = 64, .seconds = 46800.0, .altitude = 420.0,
+                                       .latitude = 51.6, .longitude = 30.0,
+                                       .local_solar_time = 15.0, .f107_average = 150.0,
+                                       .f107 = 161.4, .ap = 6.0, .ap_history = history};
+  int switches[24];
+  for (int i = 0; i < 24; ++i) {
+    switches[i] = i == 9 ? -1 : 1;
+  }
+  myb_nrlmsise00_output out;
+  MT_CHECK(myb_nrlmsise00(&direct, switches, 0, &out) == MYB_OK);
+  printf("the model as an atmosphere, 420 km above 51.6 N on 2026-03-05 13:00 UTC with the "
+         "indices of a table: %.4e kg/m^3 (the model called by hand: %.4e)\n",
+         density, out.density[5]);
+  MT_CHECK(fabs(density / out.density[5] - 1.0) < 1e-9);
+  MT_CHECK(density > 1e-13 && density < 1e-10);
+  /* without a table: the three numbers given, no history */
+  myb_nrlmsise00_atmosphere fixed = {.f107 = 161.4, .f107_average = 150.0, .ap = 6.0,
+                                     .timesys = sys, .scale = tt, .ellipsoid = wgs84,
+                                     .anomalous_oxygen = 1};
+  myb_nrlmsise00_input plain = direct;
+  plain.ap_history = NULL;
+  double steady = 0.0;
+  MT_CHECK(myb_nrlmsise00_density(&fixed, t, r, &steady) == MYB_OK);
+  MT_CHECK(myb_nrlmsise00(&plain, NULL, 1, &out) == MYB_OK);
+  MT_CHECK(fabs(steady / out.density[5] - 1.0) < 1e-9 && steady != density);
+  /* an instant outside the table; a place inside the ellipsoid */
+  MT_CHECK(myb_nrlmsise00_density(&air, myb_time_add(t, 40.0 * 86400.0), r, &density) ==
+           MYB_E_RANGE);
+  const double below[3] = {6.0e6, 0.0, 0.0};
+  MT_CHECK(myb_nrlmsise00_density(&fixed, t, below, &density) == MYB_E_DOMAIN);
+  myb_space_weather_destroy(weather);
+  myb_timesys_destroy(sys);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
+  test_atmosphere();
   myb_nrlmsise00_input in[17];
   const double aph[7] = {100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0};
   for (int i = 0; i < 17; ++i) {

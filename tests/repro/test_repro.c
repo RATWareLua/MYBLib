@@ -15,6 +15,7 @@
 #include "mtest.h"
 #include "myb/attitude.h"
 #include "myb/budget.h"
+#include "myb/ck.h"
 #include "myb/ccsds.h"
 #include "myb/cmath.h"
 #include "myb/conjunction.h"
@@ -42,15 +43,19 @@
 #include "myb/regular.h"
 #include "myb/rel.h"
 #include "myb/relative.h"
+#include "myb/site.h"
 #include "myb/surface.h"
 #include "myb/system.h"
 #include "myb/thrust.h"
 #include "myb/time.h"
 #include "myb/transfer.h"
 #include "myb/uncert.h"
+#include "myb/weather.h"
+#include "myb_ionosphere.h"
 #include "myb_sgp4.h"
+#include "myb_troposphere.h"
 
-static const uint64_t golden_hash = UINT64_C(0xb22481187ba3923a);
+static const uint64_t golden_hash = UINT64_C(0x8a11e2afe9e666fa);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -784,7 +789,8 @@ static void workload_grav(hasher* h, mt_rng* rng) {
     const myb_tide_raiser raisers[2] = {{4.9028e12, {3.0e8, -2.2e8, 1.1e8 * k}},
                                         {1.32712440018e20, {1.4e11, 4.0e10, -2.0e10}}};
     const myb_tides_input in = {.raisers = raisers, .count = 2, .t = t, .xp = 7e-7,
-                                .yp = 1.6e-6, .flags = MYB_TIDES_ALL};
+                                .yp = 1.6e-6,
+                                .flags = MYB_TIDES_ALL & ~MYB_TIDES_ADMITTANCE};
     MT_CHECK(myb_tides_apply(tides, tv, &in) == MYB_OK);
     for (int n = 0; n <= 3; ++n) {
       for (int m = 0; m <= n; ++m) {
@@ -3846,6 +3852,366 @@ static void workload_phase19(hasher* h) {
   }
 }
 
+/* ---- Phase 20: files, frames, the ground station -------------------------------------------- */
+
+static myb_status p20_orientation(void* context, myb_time t, myb_orientation* o) {
+  (void)context;
+  const double angles[3] = {0.3, 0.2, 1.0 + 7.292115e-5 * myb_time_seconds(t)};
+  const double rates[3] = {0.0, 0.0, 7.292115e-5};
+  myb_rotation_euler313(angles, rates, &o->rotation);
+  o->ut = myb_time_add(t, -69.184);
+  o->xp = 4.0e-7;
+  o->yp = 1.6e-6;
+  return MYB_OK;
+}
+
+typedef struct p20_circle {
+  double radius;
+  double rate;
+  double tilt;
+} p20_circle;
+
+static myb_status p20_circling(void* context, myb_time t, double state[6]) {
+  const p20_circle* c = context;
+  const double angle = 0.7 + c->rate * myb_time_seconds(t);
+  const double x = c->radius * myb_cos(angle);
+  const double y = c->radius * myb_sin(angle);
+  const double ct = myb_cos(c->tilt);
+  const double st = myb_sin(c->tilt);
+  state[0] = x;
+  state[1] = y * ct;
+  state[2] = y * st;
+  state[3] = -c->rate * y;
+  state[4] = c->rate * x * ct;
+  state[5] = c->rate * x * st;
+  return MYB_OK;
+}
+
+static char* p20_read(const char* path, size_t* size) {
+  FILE* f = fopen(path, "rb");
+  MT_CHECK(f != NULL);
+  if (f == NULL) {
+    *size = 0;
+    return NULL;
+  }
+  enum { CAPACITY = 1 << 20 };
+  char* text = malloc(CAPACITY);
+  *size = text != NULL ? fread(text, 1, CAPACITY - 1, f) : 0;
+  fclose(f);
+  return text;
+}
+
+static void workload_phase20(hasher* h) {
+  myb_diag diag = {0};
+  /* a conic with the precession of its node and periapsis (SPK type 15) */
+  {
+    myb_spk* spk = NULL;
+    MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+    MT_CHECK(myb_spk_load_file(spk, MYB_TEST_DATA_DIR "/spk/t15.bsp", &diag) == MYB_OK);
+    for (int k = 0; k < 5; ++k) {
+      double state[6];
+      MT_CHECK(myb_spk_state(spk, 1501, 399, myb_time_from_seconds(1.0e8 + 31234.5 * k), state,
+                             NULL) == MYB_OK);
+      hash3(h, state);
+      hash3(h, state + 3);
+    }
+    myb_spk_destroy(spk);
+  }
+  /* a graph of frames: across two branches */
+  {
+    myb_frame_graph* graph = NULL;
+    MT_CHECK(myb_frame_graph_create(NULL, NULL, &graph) == MYB_OK);
+    static const double angles[3][3] = {{0.3, 0.4, 0.5}, {-1.1, 0.2, 2.2}, {0.9, 1.3, -0.4}};
+    static const double still[3] = {0.0, 0.0, 0.0};
+    myb_rotation r[3];
+    for (int k = 0; k < 3; ++k) {
+      myb_rotation_euler313(angles[k], still, &r[k]);
+    }
+    MT_CHECK(myb_frame_graph_add_fixed(graph, 1001, 1, &r[0]) == MYB_OK);
+    MT_CHECK(myb_frame_graph_add_fixed(graph, 1002, 1001, &r[1]) == MYB_OK);
+    MT_CHECK(myb_frame_graph_add_fixed(graph, 1003, 1, &r[2]) == MYB_OK);
+    myb_rotation across;
+    MT_CHECK(myb_frame_graph_rotation(graph, 1002, 1003, myb_time_from_seconds(5.0), &across) ==
+             MYB_OK);
+    for (int i = 0; i < 9; ++i) {
+      hash_double(h, across.m[i]);
+    }
+    myb_frame_graph_destroy(graph);
+  }
+  /* the clock of a spacecraft and its pointing */
+  {
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_TEST_DATA_DIR "/ck/test.tsc", &diag) == MYB_OK);
+    myb_sclk* clock = NULL;
+    MT_CHECK(myb_sclk_create(pool, 9099, NULL, &clock, &diag) == MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
+    MT_CHECK(myb_ck_load_file(ck, MYB_TEST_DATA_DIR "/ck/test.bc", &diag) == MYB_OK);
+    const size_t segments = myb_ck_segment_count(ck);
+    hash_double(h, (double)segments);
+    for (size_t k = 0; k < segments; ++k) {
+      myb_ck_segment_info info;
+      myb_ck_segment(ck, k, &info);
+      const double ticks = info.start + 0.37 * (info.stop - info.start);
+      myb_ck_pointing pointing;
+      const myb_status status =
+          myb_ck_pointing_at(ck, info.instrument, ticks, 1e9, info.has_rates, &pointing);
+      hash_double(h, (double)status);
+      if (status == MYB_OK) {
+        for (int i = 0; i < 4; ++i) {
+          hash_double(h, pointing.q[i]);
+        }
+        if (pointing.has_rate) {
+          hash3(h, pointing.rate);
+        }
+        hash_double(h, pointing.ticks);
+      }
+      myb_time at;
+      if (myb_sclk_to_time(clock, ticks, &at) == MYB_OK) {
+        hash_time(h, at);
+      }
+    }
+    myb_ck_destroy(ck);
+    myb_sclk_destroy(clock);
+    myb_kpool_destroy(pool);
+  }
+  /* a time scale from a table of its difference; space weather at an instant and a place */
+  {
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/time/time-scales.tk", &diag) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/time/tdb-tt-fb1990.tk", &diag) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/time/utc-tai.tk", &diag) == MYB_OK);
+    myb_timesys* sys = NULL;
+    MT_CHECK(myb_timesys_create(pool, NULL, &sys, &diag) == MYB_OK);
+    myb_kpool_destroy(pool);
+    myb_scale tt;
+    myb_scale tdb;
+    MT_CHECK(myb_timesys_scale(sys, "TT", &tt) == MYB_OK);
+    MT_CHECK(myb_timesys_scale(sys, "TDB", &tdb) == MYB_OK);
+    const myb_calendar utc = {.year = 2026, .month = 3, .day = 5, .hour = 13};
+    myb_time t;
+    MT_CHECK(myb_timesys_from_utc(sys, &utc, tt, &t) == MYB_OK);
+    MT_CHECK(myb_timesys_tabulate(sys, tdb, myb_time_add(t, -7200.0), myb_time_add(t, 86400.0),
+                                  3600.0) == MYB_OK);
+    for (int k = 0; k < 4; ++k) {
+      myb_time out;
+      MT_CHECK(myb_timesys_convert(sys, myb_time_add(t, 12345.678 * k), tt, tdb, &out) ==
+               MYB_OK);
+      hash_time(h, out);
+    }
+    myb_space_weather* weather = NULL;
+    MT_CHECK(myb_space_weather_load_file(MYB_TEST_DATA_DIR "/weather/sw-excerpt.csv", NULL,
+                                         &weather, &diag) == MYB_OK);
+    const myb_ellipsoid wgs84 = {6378137.0, 1.0 / 298.257223563};
+    double r[3];
+    MT_CHECK(myb_geodetic_to_cartesian(&wgs84, 0.5, 0.9, 420.0e3, r) == MYB_OK);
+    const myb_thermosphere_setting setting = {.weather = weather, .timesys = sys, .scale = tt,
+                                              .ellipsoid = wgs84};
+    myb_thermosphere_point point;
+    MT_CHECK(myb_thermosphere_point_at(&setting, t, r, &point) == MYB_OK);
+    hash_double(h, (double)point.day_of_year);
+    hash_double(h, point.seconds);
+    hash_double(h, point.height);
+    hash_double(h, point.latitude);
+    hash_double(h, point.local_solar_time);
+    hash_double(h, point.indices.f107);
+    for (int i = 0; i < 7; ++i) {
+      hash_double(h, point.indices.ap_history[i]);
+    }
+    myb_space_weather_destroy(weather);
+    myb_timesys_destroy(sys);
+  }
+  /* a system with a guided body and a mass that changes */
+  {
+    const double gm[2] = {1.32712440018e20, 3.986004418e14};
+    myb_system* s = NULL;
+    MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+    p20_circle giant = {7.78e11, 1.68e-8, 0.02};
+    MT_CHECK(myb_system_add_guided(s, 1.26686534e17, p20_circling, &giant, NULL) == MYB_OK);
+    MT_CHECK(myb_system_set_mass_rate(s, 0, -2.85e-21, 0.0) == MYB_OK);
+    const double y[12] = {0.0, 0.0, 0.0, 1.496e11, 2.0e9, -3.0e8,
+                          0.0, 0.0, 0.0, -400.0, 29780.0, 15.0};
+    double a[6];
+    MT_CHECK(myb_system_acceleration(s, 4.0e8, y, y + 6, a) == MYB_OK);
+    hash3(h, a);
+    hash3(h, a + 3);
+    myb_system_destroy(s);
+  }
+  /* the motion of a point of the crust, and a station that moves with it */
+  myb_site_tides* tides = NULL;
+  myb_ocean_loading* loading = NULL;
+  myb_env* env = NULL;
+  myb_station station;
+  myb_site_loads loads = {.atmosphere = {1e-3, 2e-4, -5e-4, 3e-4, 1e-4, 2e-4, -3e-4, 4e-4, -5e-5,
+                                         6e-5, 7e-5, -8e-5},
+                          .ocean_pole = {0.216192, 0.285652, 0.012697, 0.024930, 0.000868,
+                                         0.010389}};
+  myb_station_motion motion = {.flags = MYB_SITE_ALL, .rate = 1};
+  p20_circle moon = {3.844e8, 2.6617e-6, 0.4};
+  p20_circle sun = {1.496e11, 1.991e-7, 0.41};
+  {
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/frames/iers2010-site.tk", &diag) == MYB_OK);
+    MT_CHECK(myb_site_tides_create(pool, "IERS10_SITE", NULL, &tides, &diag) == MYB_OK);
+    myb_kpool_destroy(pool);
+    MT_CHECK(myb_ocean_loading_load_file(tides, MYB_TEST_DATA_DIR "/site/loading.blq",
+                                         "REYKJAVIK", NULL, &loading, &diag) == MYB_OK);
+    loads.ocean = loading;
+    const myb_time t = myb_time_from_seconds(8.1e8 + 4321.5);
+    double uws[3];
+    myb_ocean_loading_at(tides, loading, t, 69.184, uws);
+    hash3(h, uws);
+    myb_site_grid* grid = NULL;
+    MT_CHECK(myb_site_grid_load_file(MYB_TEST_DATA_DIR "/site/opole-excerpt.txt", NULL, &grid,
+                                     &diag) == MYB_OK);
+    double coefficients[MYB_SITE_GRID_MAX_VALUES];
+    MT_CHECK(myb_site_grid_at(grid, 4.052, -0.766, coefficients) == MYB_OK);
+    for (int i = 0; i < 6; ++i) {
+      hash_double(h, coefficients[i]);
+    }
+    myb_site_grid_destroy(grid);
+    const myb_env_options options = {.epoch = myb_time_from_seconds(5.7e8)};
+    MT_CHECK(myb_env_create(&options, NULL, &env) == MYB_OK);
+    size_t planet = 0;
+    const myb_env_body earth = {.gm = 3.986004418e14, .orientation = p20_orientation};
+    const myb_env_body second = {.gm = 4.9028e12, .state = p20_circling, .state_context = &moon};
+    const myb_env_body third = {.gm = 1.32712440018e20, .state = p20_circling,
+                                .state_context = &sun};
+    MT_CHECK(myb_env_add_body(env, &earth, &planet) == MYB_OK);
+    MT_CHECK(myb_env_add_body(env, &second, &motion.raisers[0]) == MYB_OK);
+    MT_CHECK(myb_env_add_body(env, &third, &motion.raisers[1]) == MYB_OK);
+    motion.raiser_count = 2;
+    motion.tides = tides;
+    motion.loads = &loads;
+    const myb_ellipsoid grs80 = {6378137.0, 1.0 / 298.257222101};
+    MT_CHECK(myb_station_init(&station, env, planet, &grs80, 0.4, 0.8, 250.0) == MYB_OK);
+    station.motion = &motion;
+    double state[6];
+    MT_CHECK(myb_station_state(&station, 12345.0, state) == MYB_OK);
+    hash3(h, state);
+    hash3(h, state + 3);
+  }
+  /* measurements with the light time, and of a point off the centre of mass */
+  {
+    const double y[6] = {4.3e6, 3.6e6, 4.4e6, -5.1e3, 5.3e3, 0.7e3};
+    for (int two_way = 0; two_way < 2; ++two_way) {
+      myb_light_measure light = {.station = &station, .c = 299792458.0, .gm = 3.986004418e14,
+                                 .two_way = two_way, .aberration = two_way};
+      double values[2];
+      double partials[12];
+      MT_CHECK(myb_measure_light_range(&light, 700.0, y, values, partials) == MYB_OK);
+      hash_double(h, values[0]);
+      hash3(h, partials);
+      hash3(h, partials + 3);
+      MT_CHECK(myb_measure_light_range_rate(&light, 700.0, y, values, partials) == MYB_OK);
+      hash_double(h, values[0]);
+      hash3(h, partials);
+      hash3(h, partials + 3);
+      MT_CHECK(myb_measure_light_azel(&light, 700.0, y, values, partials) == MYB_OK);
+      hash_double(h, values[0]);
+      hash_double(h, values[1]);
+      for (int i = 0; i < 12; ++i) {
+        hash_double(h, partials[i]);
+      }
+      MT_CHECK(myb_measure_light_radec(&light, 700.0, y, values, NULL) == MYB_OK);
+      hash_double(h, values[0]);
+      hash_double(h, values[1]);
+    }
+    myb_orbital_attitude orbital = {.env = env, .body = 0};
+    myb_offset_measure arm = {.measure = myb_measure_range, .context = &station,
+                              .attitude = myb_attitude_orbital, .attitude_context = &orbital,
+                              .offset = {3.0, -2.0, 1.0}};
+    double range = 0.0;
+    double partials[6];
+    MT_CHECK(myb_measure_offset(&arm, 700.0, y, &range, partials) == MYB_OK);
+    hash_double(h, range);
+    hash3(h, partials);
+    hash3(h, partials + 3);
+  }
+  myb_env_destroy(env);
+  myb_ocean_loading_destroy(loading);
+  myb_site_tides_destroy(tides);
+  /* secondary waves of the ocean tides in the field */
+  {
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/grav/iers2010-tides.tk", &diag) == MYB_OK);
+    myb_tides* waves = NULL;
+    MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &waves, &diag) == MYB_OK);
+    myb_kpool_destroy(pool);
+    static const char pivots[] = "255.555 M2 2 2 -39.36214 46.75729 9.57270 5.24459\n"
+                                 "275.555 K2 2 2 -3.32941 1.39263 0.83014 0.31502\n"
+                                 "165.555 K1 2 1 20.22034 18.62745 -9.55722 -10.28875\n"
+                                 "145.555 O1 2 1 12.52817 5.31712 -2.21334 -4.07261\n";
+    MT_CHECK(myb_tides_load_ocean(waves, pivots, sizeof pivots - 1, 4, &diag) == MYB_OK);
+    hash_double(h, (double)myb_tides_secondary_waves(waves));
+    double c[6] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    double s[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    myb_gravity_field* field = NULL;
+    MT_CHECK(myb_gravity_field_create(3.986004415e14, 6378136.3, 2, c, s, NULL, &field) ==
+             MYB_OK);
+    const myb_tides_input input = {.t = myb_time_from_seconds(8.0e8 + 1234.5),
+                                   .flags = MYB_TIDES_OCEAN | MYB_TIDES_ADMITTANCE,
+                                   .permanent = MYB_PERMANENT_TIDE_KEEP};
+    MT_CHECK(myb_tides_apply(waves, field, &input) == MYB_OK);
+    for (int m = 1; m <= 2; ++m) {
+      double cc = 0.0;
+      double ss = 0.0;
+      MT_CHECK(myb_gravity_field_coefficient(field, 2, m, &cc, &ss) == MYB_OK);
+      hash_double(h, cc);
+      hash_double(h, ss);
+    }
+    myb_gravity_field_destroy(field);
+    myb_tides_destroy(waves);
+  }
+  /* the troposphere: VMF3 and the wet delay; the ionosphere: the integrals along a ray */
+  {
+    double mh = 0.0;
+    double mw = 0.0;
+    MT_CHECK(myb_tropo_vmf3(0.00121, 0.00055, 59215.5, 0.84, 0.29, 156.0, 1.2, &mh, &mw) ==
+             MYB_OK);
+    hash_double(h, mh);
+    hash_double(h, mw);
+    double zwd = 0.0;
+    MT_CHECK(myb_tropo_zwd_askne(10.2, 273.0, 2.4, &zwd) == MYB_OK);
+    hash_double(h, zwd);
+    size_t size = 0;
+    char* text = p20_read(MYB_TEST_DATA_DIR "/ionosphere/synthetic.inx", &size);
+    myb_ionex* maps = NULL;
+    MT_CHECK(text != NULL && myb_ionex_load(text, size, NULL, &maps, &diag) == MYB_OK);
+    free(text);
+    if (maps != NULL) {
+      myb_iono_layer layer = {.maps = maps, .peak = 350e3, .scale = 70e3};
+      const double g[3] = {0.0, -29404.8e-9, -1450.9e-9};
+      const double hh[3] = {0.0, 0.0, 4652.5e-9};
+      myb_magnetic_field* field = NULL;
+      myb_gravity_work* work = NULL;
+      MT_CHECK(myb_magnetic_field_create(6371200.0, 1, g, hh, NULL, &field) == MYB_OK);
+      MT_CHECK(myb_gravity_work_create(1, NULL, &work) == MYB_OK);
+      const double receiver[3] = {5.0e6, 2.4e6, 3.1e6};
+      const double transmitter[3] = {1.9e7, 1.2e7, 1.3e7};
+      myb_iono_ray ray;
+      MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, field, work, 60310.03,
+                                      receiver, transmitter, 6421.0e3, 8371.0e3, 48, &ray) ==
+               MYB_OK);
+      hash_double(h, ray.content);
+      hash_double(h, ray.field);
+      hash_double(h, ray.square);
+      hash_double(h, ray.field_square);
+      myb_iono_orders orders;
+      myb_iono_orders_of(&ray, 1.602176634e-19, 9.1093837139e-31, 8.8541878188e-12, &orders);
+      hash_double(h, myb_iono_code_delay(&orders, 1575.42e6));
+      hash_double(h, myb_iono_phase_delay(&orders, 1227.60e6));
+      myb_gravity_work_destroy(work);
+      myb_magnetic_field_destroy(field);
+      myb_ionex_destroy(maps);
+    }
+  }
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -3916,8 +4282,13 @@ int main(void) {
   if (upto >= 19) {
     workload_phase19(&h);
   }
+  if (upto >= 20) {
+    workload_phase20(&h);
+  }
   uint64_t expected = golden_hash;
-  if (passes == 171) {
+  if (upto == 19) {
+    expected = UINT64_C(0xb22481187ba3923a);
+  } else if (passes == 171) {
     expected = UINT64_C(0xb76153a8dca45827);
   } else if (passes == 172) {
     expected = UINT64_C(0x1366eda4f7ba62af);

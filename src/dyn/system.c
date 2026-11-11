@@ -19,6 +19,7 @@
 #include "integ/ias15_internal.h"
 #include "myb/attitude.h"
 #include "myb/cmath.h"
+#include "myb/kin.h"
 #include "myb/num.h"
 #include "myb/rel.h"
 #include "myb/surface.h"
@@ -45,6 +46,10 @@ typedef struct body_model {
   myb_system_tide tide;
   double radius; /* of the sphere of encounters; 0: none */
   int present;
+  /* a mass that changes with the time: gm = gm_base (1 + gm_rate (t - gm_epoch)) */
+  double gm_rate;
+  double gm_epoch;
+  double gm_base;
   /* of the evaluation in hand */
   int framed;
   double m[9]; /* inertial -> body */
@@ -89,6 +94,22 @@ typedef struct action_entry {
   void* context;
 } action_entry;
 
+/* The spin of a body that drags a point. */
+typedef struct drag_entry {
+  size_t body;
+  size_t point;
+  double spin[3];
+} drag_entry;
+
+/* A body whose motion is given. */
+typedef struct guided_body {
+  double gm;
+  myb_state_function state;
+  void* context;
+} guided_body;
+
+enum { GUIDED_SLOTS = 8 }; /* instants whose places are kept: the nodes of a step and one */
+
 struct myb_system {
   myb_allocator allocator;
   size_t bodies;
@@ -114,6 +135,17 @@ struct myb_system {
   pn_state pn[MYB_SYSTEM_MAX_PN_PAIRS];
   size_t action_count;
   action_entry actions[MYB_SYSTEM_MAX_ACTIONS];
+  size_t drag_count;
+  drag_entry drags[MYB_SYSTEM_MAX_DRAGS];
+  /* the bodies with a given motion, and their places at the last instants asked for: an
+   * integrator comes back to the same instants several times within a step */
+  size_t guided_count;
+  size_t guided_capacity;
+  guided_body* guided;
+  double* guided_places; /* GUIDED_SLOTS x 3 guided_capacity */
+  double guided_time[GUIDED_SLOTS];
+  int guided_filled[GUIDED_SLOTS];
+  int guided_next;
   /* the closest approach reported last: not to be found again at the start of the next step */
   int reported;
   size_t reported_a;
@@ -130,6 +162,8 @@ void myb_system_destroy(myb_system* system) {
   const myb_allocator a = system->allocator;
   myb_gravity_work_destroy(system->work);
   myb_nbody_destroy(system->nbody);
+  myb_internal_release(&a, system->guided);
+  myb_internal_release(&a, system->guided_places);
   myb_internal_release(&a, system->scratch);
   myb_internal_release(&a, system->point);
   myb_internal_release(&a, system->gm);
@@ -1092,6 +1126,176 @@ static myb_status apply_actions(myb_system* s, double t, const double* x, const 
   return MYB_OK;
 }
 
+myb_status myb_system_add_frame_dragging(myb_system* system, size_t body, size_t point,
+                                         const double spin[3]) {
+  MYB_CHECK(system != NULL && spin != NULL);
+  myb_ppn ppn;
+  if (!usable(system, body) || !usable(system, point) || body == point ||
+      !myb_vec3_finite(spin) || !myb_internal_nbody_relativity(system->nbody, &ppn)) {
+    return MYB_E_DOMAIN;
+  }
+  if (system->drag_count >= MYB_SYSTEM_MAX_DRAGS) {
+    return MYB_E_OVERFLOW;
+  }
+  drag_entry* e = &system->drags[system->drag_count++];
+  e->body = body;
+  e->point = point;
+  memcpy(e->spin, spin, sizeof e->spin);
+  return MYB_OK;
+}
+
+/* The points dragged by the spins of bodies, and the bodies pushed back. */
+static myb_status apply_drags(myb_system* s, const double* x, const double* v, double* a) {
+  if (s->drag_count == 0) {
+    return MYB_OK;
+  }
+  myb_ppn ppn;
+  if (!myb_internal_nbody_relativity(s->nbody, &ppn)) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < s->drag_count; ++k) {
+    const drag_entry* e = &s->drags[k];
+    if (!s->models[e->body].present || !s->models[e->point].present) {
+      continue;
+    }
+    double r[3];
+    double w[3];
+    double pull[3];
+    relative(x, e->body, e->point, r);
+    relative(v, e->body, e->point, w);
+    const myb_status st = myb_rel_lense_thirring(&ppn, s->gm[e->body], e->spin, r, w, pull);
+    if (st != MYB_OK) {
+      return st;
+    }
+    const double ratio = s->gm[e->body] > 0.0 ? s->gm[e->point] / s->gm[e->body] : 0.0;
+    for (int i = 0; i < 3; ++i) {
+      a[3 * e->point + (size_t)i] += pull[i];
+      a[3 * e->body + (size_t)i] -= ratio * pull[i];
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status myb_system_set_mass_rate(myb_system* system, size_t body, double rate,
+                                    double epoch) {
+  MYB_CHECK(system != NULL);
+  if (body >= system->bodies || !system->models[body].present || !isfinite(rate) ||
+      !isfinite(epoch)) {
+    return MYB_E_DOMAIN;
+  }
+  body_model* m = &system->models[body];
+  if (m->gm_rate == 0.0) {
+    m->gm_base = system->gm[body]; /* what the body was given is its mass at the epoch */
+  }
+  m->gm_rate = rate;
+  m->gm_epoch = epoch;
+  return MYB_OK;
+}
+
+/* ---- Bodies with a given motion ----------------------------------------------------------------- */
+
+myb_status myb_system_add_guided(myb_system* system, double gm, myb_state_function state,
+                                 void* context, size_t* index) {
+  MYB_CHECK(system != NULL && state != NULL);
+  myb_system* s = system;
+  if (!(gm >= 0.0) || !isfinite(gm)) {
+    return MYB_E_DOMAIN;
+  }
+  if (s->guided_count == s->guided_capacity) {
+    const size_t capacity = s->guided_capacity == 0 ? 64 : 2 * s->guided_capacity;
+    size_t places;
+    if (ckd_mul(&places, capacity, (size_t)(3 * GUIDED_SLOTS))) {
+      return MYB_E_OVERFLOW;
+    }
+    void* bodies = NULL;
+    void* room = NULL;
+    myb_status st = myb_internal_alloc_array(&s->allocator, capacity, sizeof(guided_body), &bodies);
+    if (st == MYB_OK) {
+      st = myb_internal_alloc_array(&s->allocator, places, sizeof(double), &room);
+    }
+    if (st != MYB_OK) {
+      myb_internal_release(&s->allocator, bodies);
+      return st;
+    }
+    if (s->guided_count > 0) {
+      memcpy(bodies, s->guided, s->guided_count * sizeof(guided_body));
+    }
+    myb_internal_release(&s->allocator, s->guided);
+    myb_internal_release(&s->allocator, s->guided_places);
+    s->guided = bodies;
+    s->guided_places = room;
+    s->guided_capacity = capacity;
+  }
+  s->guided[s->guided_count] = (guided_body){gm, state, context};
+  if (index != NULL) {
+    *index = s->guided_count;
+  }
+  ++s->guided_count;
+  memset(s->guided_filled, 0, sizeof s->guided_filled); /* the places kept lack the new body */
+  return MYB_OK;
+}
+
+size_t myb_system_guided(const myb_system* system) {
+  MYB_CHECK(system != NULL);
+  return system->guided_count;
+}
+
+/* The pull of the bodies with a given motion on every body of the system. */
+static myb_status apply_guided(myb_system* s, double t, const double* x, double* a) {
+  if (s->guided_count == 0) {
+    return MYB_OK;
+  }
+  int slot = -1;
+  for (int i = 0; i < GUIDED_SLOTS; ++i) {
+    if (s->guided_filled[i] && s->guided_time[i] == t) {
+      slot = i;
+    }
+  }
+  if (slot < 0) {
+    slot = s->guided_next;
+    s->guided_next = (slot + 1) % GUIDED_SLOTS;
+    s->guided_filled[slot] = 0;
+    double* places = s->guided_places + (size_t)slot * 3 * s->guided_capacity;
+    for (size_t k = 0; k < s->guided_count; ++k) {
+      double state[6];
+      const myb_status st =
+          s->guided[k].state(s->guided[k].context, myb_time_from_seconds(t), state);
+      if (st != MYB_OK) {
+        return st;
+      }
+      if (!myb_vec3_finite(state)) {
+        return MYB_E_DOMAIN;
+      }
+      memcpy(places + 3 * k, state, 3 * sizeof *places);
+    }
+    s->guided_time[slot] = t;
+    s->guided_filled[slot] = 1;
+  }
+  const double* places = s->guided_places + (size_t)slot * 3 * s->guided_capacity;
+  for (size_t b = 0; b < s->bodies; ++b) {
+    if (!s->models[b].present) {
+      continue;
+    }
+    double pull[3] = {0.0, 0.0, 0.0};
+    for (size_t k = 0; k < s->guided_count; ++k) {
+      const double d[3] = {places[3 * k] - x[3 * b], places[3 * k + 1] - x[3 * b + 1],
+                           places[3 * k + 2] - x[3 * b + 2]};
+      const double r2 = myb_vec3_dot(d, d);
+      if (!(r2 > 0.0)) {
+        return MYB_E_DOMAIN;
+      }
+      const double f = s->guided[k].gm / (r2 * sqrt(r2));
+      for (int i = 0; i < 3; ++i) {
+        pull[i] += f * d[i];
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      a[3 * b + (size_t)i] += pull[i];
+    }
+  }
+  return MYB_OK;
+}
+
 /* ---- One evaluation: the equations of rotation ----------------------------------------------- */
 
 static myb_status rotate(const myb_system* s, const rotation_state* r, double* a) {
@@ -1158,6 +1362,17 @@ static myb_status rotate(const myb_system* s, const rotation_state* r, double* a
 /* The point masses, the frames and the inertia tensors: what every level needs. */
 static myb_status prepare(myb_system* s, double t, const double* x, const double* v,
                           double* point) {
+  for (size_t b = 0; b < s->bodies; ++b) {
+    const body_model* m = &s->models[b];
+    if (m->gm_rate != 0.0 && m->present) {
+      const double gm = m->gm_base * (1.0 + m->gm_rate * (t - m->gm_epoch));
+      if (!(gm >= 0.0) || !isfinite(gm)) {
+        return MYB_E_DOMAIN; /* the mass has run out */
+      }
+      s->gm[b] = gm;
+      myb_internal_nbody_set_gm(s->nbody, b, gm);
+    }
+  }
   myb_status st = myb_nbody_acceleration_xv(s->nbody, t, x, v, point);
   if (st != MYB_OK) {
     return st;
@@ -1194,6 +1409,12 @@ myb_status myb_system_acceleration(void* system, double t, const double* x, cons
   }
   if (st == MYB_OK) {
     st = apply_actions(s, t, x, v, a);
+  }
+  if (st == MYB_OK) {
+    st = apply_drags(s, x, v, a);
+  }
+  if (st == MYB_OK) {
+    st = apply_guided(s, t, x, a);
   }
   for (size_t k = 0; k < s->rotation_count && st == MYB_OK; ++k) {
     st = rotate(s, &s->rotations[k], a + rotation_offset(s, (int)k));
@@ -1491,6 +1712,12 @@ myb_status myb_system_merge(myb_system* system, myb_ias15* integrator, size_t a,
   s->models[a].radius = myb_cbrt(ra * ra * ra + rb * rb * rb);
   s->gm[a] = total;
   s->gm[b] = 0.0;
+  /* a mass that changes goes on changing at its relative rate from what it is now */
+  s->models[b].gm_rate = 0.0;
+  if (s->models[a].gm_rate != 0.0) {
+    s->models[a].gm_base = total;
+    s->models[a].gm_epoch = myb_ias15_time(integrator);
+  }
   myb_internal_nbody_set_gm(s->nbody, a, total);
   myb_internal_nbody_set_gm(s->nbody, b, 0.0);
   s->models[b].present = 0;
@@ -1518,6 +1745,13 @@ myb_status myb_system_merge(myb_system* system, myb_ias15* integrator, size_t a,
     }
   }
   s->tide_count = kept;
+  kept = 0;
+  for (size_t k = 0; k < s->drag_count; ++k) {
+    if (s->drags[k].body != b && s->drags[k].point != b) {
+      s->drags[kept++] = s->drags[k];
+    }
+  }
+  s->drag_count = kept;
   s->reported = 0;
   return restart(s, integrator);
 }

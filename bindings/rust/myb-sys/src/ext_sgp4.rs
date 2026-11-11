@@ -25,8 +25,8 @@ pub struct myb_tle {
     pub mean_motion: f64,
     pub revolution: ::std::os::raw::c_long,
 }
-pub const MYB_TLE_NO_CHECKSUM: _bindgen_ty_4 = 1;
-pub type _bindgen_ty_4 = ::std::os::raw::c_uint;
+pub const MYB_TLE_NO_CHECKSUM: _bindgen_ty_5 = 1;
+pub type _bindgen_ty_5 = ::std::os::raw::c_uint;
 unsafe extern "C" {
     pub fn myb_tle_parse(
         line1: *const ::std::os::raw::c_char,

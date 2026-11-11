@@ -398,6 +398,7 @@ static void test_ocean(void) {
     printf("FES2004: %zu waves\n", myb_tides_ocean_waves(full));
     MT_CHECK(myb_tides_ocean_waves(full) == 18);
   }
+  MT_CHECK(myb_tides_secondary_waves(full) == 0); /* this kernel has no table of admittance */
   myb_tides_destroy(full);
   myb_tides_destroy(tides);
   myb_kpool_destroy(pool);
@@ -434,11 +435,149 @@ static void test_iers_kernel(void) {
   myb_kpool_destroy(pool);
 }
 
+/* The coefficient (2, 2) of an empty field after the ocean tides of `tides`. */
+static void ocean_22(const myb_tides* tides, myb_time t, int flags, double* c, double* s) {
+  myb_gravity_field* f = empty_field(2, "tide_free");
+  const myb_tides_input in = {.t = t, .flags = flags};
+  MT_CHECK(myb_tides_apply(tides, f, &in) == MYB_OK);
+  MT_CHECK(myb_gravity_field_coefficient(f, 2, 2, c, s) == MYB_OK);
+  myb_gravity_field_destroy(f);
+}
+
+/* Secondary waves by the admittance of two pivot waves (eq. 6.16), and waves added to those
+ * loaded. */
+static void test_admittance(void) {
+  myb_kpool* pool = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/grav/iers2010-tides.tk", &diag) == MYB_OK);
+  myb_tides* table = NULL;
+  MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &table, &diag) == MYB_OK);
+  /* the pivots M2 and K2 carry the twelve waves the table hangs between them */
+  static const char pivots[] = "255.555 M2 2 2 -39.36214 46.75729 9.57270 5.24459\n"
+                               "275.555 K2 2 2 -3.32941 1.39263 0.83014 0.31502\n";
+  MT_CHECK(myb_tides_load_ocean(table, pivots, strlen(pivots), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_secondary_waves(table) == 12);
+  /* a wave between two that are not both loaded is left out: the excerpt has four mains */
+  MT_CHECK(myb_tides_load_ocean_file(table, MYB_TEST_DATA_DIR "/grav/fes2004_excerpt.dat", 4,
+                                     &diag) == MYB_OK);
+  MT_CHECK(myb_tides_secondary_waves(table) == 0);
+  myb_tides_destroy(table);
+
+  /* one secondary wave, L2 (265.455), against the same wave given in the file with the
+   * coefficients of eq. 6.16 worked out here: the rates of tau, s, p in degrees a day */
+  static const char one[] = "\\begindata\n"
+                            "IERS10_TIDE_ADMITTANCE = ( 265.455 -0.01786 255.555 0.63192 "
+                            "275.555 0.07996 )\n\\begintext\n";
+  MT_CHECK(myb_kpool_load_text(pool, one, strlen(one), &diag) == MYB_OK);
+  myb_tides* carried = NULL;
+  myb_tides* given = NULL;
+  MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &carried, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &given, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_load_ocean(carried, pivots, strlen(pivots), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_secondary_waves(carried) == 1);
+  const double tau = 347.80925061;
+  const double s = 13.17639648;
+  const double pm = 0.11140353;
+  const double m2 = 2.0 * tau;
+  const double k2 = 2.0 * tau + 2.0 * s;
+  const double l2 = 2.0 * tau + s - pm;
+  const double part_m2 = (k2 - l2) / (k2 - m2) * (-0.01786 / 0.63192);
+  const double part_k2 = (l2 - m2) / (k2 - m2) * (-0.01786 / 0.07996);
+  static const double cm2[4] = {-39.36214, 46.75729, 9.57270, 5.24459};
+  static const double ck2[4] = {-3.32941, 1.39263, 0.83014, 0.31502};
+  char text[512];
+  snprintf(text, sizeof text, "%s265.455 L2 2 2 %.12f %.12f %.12f %.12f\n", pivots,
+           part_m2 * cm2[0] + part_k2 * ck2[0], part_m2 * cm2[1] + part_k2 * ck2[1],
+           part_m2 * cm2[2] + part_k2 * ck2[2], part_m2 * cm2[3] + part_k2 * ck2[3]);
+  MT_CHECK(myb_tides_load_ocean(given, text, strlen(text), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_ocean_waves(given) == 3 && myb_tides_secondary_waves(given) == 0);
+  double worst = 0.0;
+  double largest = 0.0;
+  for (int k = 0; k < 200; ++k) {
+    const myb_time t = myb_time_add(utc_like(2025, 6, 1, 0, 0, 0.0), 5000.0 * k);
+    double c[3];
+    double sn[3];
+    ocean_22(carried, t, MYB_TIDES_OCEAN | MYB_TIDES_ADMITTANCE, &c[0], &sn[0]);
+    ocean_22(given, t, MYB_TIDES_OCEAN, &c[1], &sn[1]);
+    ocean_22(carried, t, MYB_TIDES_OCEAN, &c[2], &sn[2]); /* the pivots alone */
+    worst = fmax(worst, fmax(fabs(c[0] - c[1]), fabs(sn[0] - sn[1])));
+    largest = fmax(largest, hypot(c[0] - c[2], sn[0] - sn[2]));
+  }
+  printf("a secondary wave of the ocean tides (L2 between M2 and K2): it adds up to %.2e to "
+         "C22, S22; carried by the pivots against the wave given itself: %.1e\n",
+         largest, worst);
+  MT_CHECK(worst < 1e-8 * largest && largest > 1e-12);
+  /* a model that gives the wave itself does not get it a second time */
+  MT_CHECK(myb_tides_load_ocean(carried, text, strlen(text), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_secondary_waves(carried) == 0);
+
+  /* waves added to those loaded: the same as one file with both; a wave twice counts twice */
+  static const char first[] = "255.555 M2 2 2 -39.36214 46.75729 9.57270 5.24459\n";
+  static const char second[] = "275.555 K2 2 2 -3.32941 1.39263 0.83014 0.31502\n";
+  const myb_time t = utc_like(2025, 6, 3, 7, 30, 0.0);
+  double both[2];
+  double added[2];
+  double twice[2];
+  MT_CHECK(myb_tides_load_ocean(given, pivots, strlen(pivots), 4, &diag) == MYB_OK);
+  ocean_22(given, t, MYB_TIDES_OCEAN | MYB_TIDES_ADMITTANCE, &both[0], &both[1]);
+  MT_CHECK(myb_tides_load_ocean(carried, first, strlen(first), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_secondary_waves(carried) == 0);
+  double single[2];
+  ocean_22(carried, t, MYB_TIDES_OCEAN, &single[0], &single[1]);
+  MT_CHECK(myb_tides_add_waves(carried, second, strlen(second), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_ocean_waves(carried) == 2 && myb_tides_secondary_waves(carried) == 1);
+  ocean_22(carried, t, MYB_TIDES_OCEAN | MYB_TIDES_ADMITTANCE, &added[0], &added[1]);
+  MT_CHECK(added[0] == both[0] && added[1] == both[1]);
+  MT_CHECK(myb_tides_load_ocean(carried, first, strlen(first), 4, &diag) == MYB_OK);
+  MT_CHECK(myb_tides_add_waves(carried, first, strlen(first), 4, &diag) == MYB_OK);
+  ocean_22(carried, t, MYB_TIDES_OCEAN, &twice[0], &twice[1]);
+  MT_CHECK(twice[0] == 2.0 * single[0] && twice[1] == 2.0 * single[1]);
+  /* a text that is refused leaves what was loaded */
+  MT_CHECK(myb_tides_add_waves(carried, "header only\n", 12, 4, &diag) == MYB_E_FORMAT);
+  MT_CHECK(myb_tides_ocean_waves(carried) == 2);
+  MT_CHECK(myb_tides_add_waves_file(carried, MYB_TEST_DATA_DIR "/grav/none.dat", 4, &diag) ==
+           MYB_E_IO);
+  myb_tides_destroy(carried);
+  myb_tides_destroy(given);
+
+  /* tables that are refused */
+  static const char* const wrong[3] = {
+      "\\begindata\nIERS10_TIDE_ADMITTANCE = ( 265.455 -0.01786 255.555 0.63192 )\n"
+      "\\begintext\n",
+      "\\begindata\nIERS10_TIDE_ADMITTANCE = ( 265.455 -0.01786 255.555 0.63192 "
+      "255.555 0.63192 )\n\\begintext\n",
+      "\\begindata\nIERS10_TIDE_ADMITTANCE = ( 265.4555 -0.01786 255.555 0.63192 "
+      "275.555 0.07996 )\n\\begintext\n"};
+  for (int k = 0; k < 3; ++k) {
+    myb_tides* none = NULL;
+    MT_CHECK(myb_kpool_load_text(pool, wrong[k], strlen(wrong[k]), &diag) == MYB_OK);
+    MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &none, &diag) == MYB_E_FORMAT);
+    MT_CHECK(strstr(diag.message, "ADMITTANCE") != NULL);
+  }
+  myb_kpool_destroy(pool);
+
+  /* the whole model, if downloaded: every secondary wave of the table finds its pivots */
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/grav/iers2010-tides.tk", &diag) == MYB_OK);
+  myb_tides* full = NULL;
+  MT_CHECK(myb_tides_create(pool, "IERS10_TIDE", NULL, &full, &diag) == MYB_OK);
+  if (myb_tides_load_ocean_file(full, MYB_DATA_DIR "/download/fes2004_Cnm-Snm.dat", 20, &diag) ==
+      MYB_OK) {
+    printf("FES2004 with the table of admittance: %zu secondary waves on %zu given\n",
+           myb_tides_secondary_waves(full), myb_tides_ocean_waves(full));
+    MT_CHECK(myb_tides_secondary_waves(full) == 63);
+  }
+  myb_tides_destroy(full);
+  myb_kpool_destroy(pool);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_addition_theorem();
   test_step2_and_poles();
   test_ocean();
   test_iers_kernel();
+  test_admittance();
   return mt_finish("test_tides");
 }

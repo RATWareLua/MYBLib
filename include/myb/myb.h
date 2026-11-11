@@ -7,6 +7,7 @@
 #include "myb/body.h"
 #include "myb/budget.h"
 #include "myb/ccsds.h"
+#include "myb/ck.h"
 #include "myb/cmath.h"
 #include "myb/conjunction.h"
 #include "myb/core.h"
@@ -34,11 +35,13 @@
 #include "myb/regular.h"
 #include "myb/rel.h"
 #include "myb/relative.h"
+#include "myb/site.h"
 #include "myb/surface.h"
 #include "myb/system.h"
 #include "myb/thrust.h"
 #include "myb/time.h"
 #include "myb/transfer.h"
 #include "myb/uncert.h"
+#include "myb/weather.h"
 
 #endif /* MYB_MYB_H_ */

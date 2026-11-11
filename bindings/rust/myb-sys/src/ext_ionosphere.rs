@@ -46,3 +46,117 @@ unsafe extern "C" {
         vtec: *mut f64,
     ) -> myb_status;
 }
+pub type myb_electron_density = ::std::option::Option<
+    unsafe extern "C" fn(
+        context: *mut ::std::os::raw::c_void,
+        mjd: f64,
+        r: *const f64,
+        density: *mut f64,
+    ) -> myb_status,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_iono_layer {
+    pub maps: *const myb_ionex,
+    pub peak: f64,
+    pub scale: f64,
+}
+impl Default for myb_iono_layer {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_iono_layer_density(
+        layer: *mut ::std::os::raw::c_void,
+        mjd: f64,
+        r: *const f64,
+        density: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_iono_grid {
+    pub radius: f64,
+    pub latitude: f64,
+    pub latitude_step: f64,
+    pub latitudes: ::std::os::raw::c_int,
+    pub longitude: f64,
+    pub longitude_step: f64,
+    pub longitudes: ::std::os::raw::c_int,
+    pub height: f64,
+    pub height_step: f64,
+    pub heights: ::std::os::raw::c_int,
+    pub epochs: *const f64,
+    pub maps: ::std::os::raw::c_int,
+    pub density: *const f64,
+}
+impl Default for myb_iono_grid {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_iono_grid_density(
+        grid: *mut ::std::os::raw::c_void,
+        mjd: f64,
+        r: *const f64,
+        density: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_iono_ray {
+    pub content: f64,
+    pub field: f64,
+    pub square: f64,
+    pub field_square: f64,
+}
+unsafe extern "C" {
+    pub fn myb_iono_ray_integrals(
+        density: myb_electron_density,
+        context: *mut ::std::os::raw::c_void,
+        field: *const myb_magnetic_field,
+        work: *mut myb_gravity_work,
+        mjd: f64,
+        receiver: *const f64,
+        transmitter: *const f64,
+        bottom: f64,
+        top: f64,
+        panels: ::std::os::raw::c_int,
+        ray: *mut myb_iono_ray,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_iono_orders {
+    pub s1: f64,
+    pub s2: f64,
+    pub s3: f64,
+}
+unsafe extern "C" {
+    pub fn myb_iono_orders_of(
+        ray: *const myb_iono_ray,
+        e: f64,
+        m_e: f64,
+        eps0: f64,
+        orders: *mut myb_iono_orders,
+    );
+}
+unsafe extern "C" {
+    pub fn myb_iono_phase_delay(orders: *const myb_iono_orders, frequency: f64) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_iono_code_delay(orders: *const myb_iono_orders, frequency: f64) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_iono_bending(content: f64, elevation: f64) -> f64;
+}

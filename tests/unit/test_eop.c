@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "mtest.h"
 #include "myb/frames.h"
@@ -191,6 +192,91 @@ static void test_errors(const myb_timesys* sys, myb_scale tt) {
   myb_eop_destroy(NULL);
 }
 
+/* The series of the pole at equal steps against the series themselves. */
+static void test_table(void) {
+  myb_kpool* pool = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/frames/iau2006-cip.tk", &diag) == MYB_OK);
+  myb_cip* series = NULL;
+  myb_cip* tabulated = NULL;
+  MT_CHECK(myb_cip_create(pool, "IAU2006A", NULL, &series, &diag) == MYB_OK);
+  MT_CHECK(myb_cip_create(pool, "IAU2006A", NULL, &tabulated, &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  const myb_time start = myb_time_from_seconds(8.1e8 + 0.375);
+  const double span = 40.0 * 86400.0;
+  mt_rng rng = {2020};
+  double worst[4] = {0.0, 0.0, 0.0, 0.0}; /* an hour, six hours: values, rates */
+  for (int pass = 0; pass < 2; ++pass) {
+    MT_CHECK(myb_cip_tabulate(tabulated, start, myb_time_add(start, span),
+                              pass == 0 ? 0.0 : 21600.0) == MYB_OK);
+    for (int k = 0; k < 3000; ++k) {
+      const double u = (double)(mt_next(&rng) >> 11) * 0x1p-53;
+      const myb_time t = myb_time_add(start, k < 2 ? span * (double)k : span * u);
+      double a[3];
+      double b[3];
+      double da[3];
+      double db[3];
+      myb_cip_xys(series, t, a, da);
+      myb_cip_xys(tabulated, t, b, db);
+      for (int i = 0; i < 3; ++i) {
+        worst[2 * pass] = fmax(worst[2 * pass], fabs(a[i] - b[i]));
+        worst[2 * pass + 1] = fmax(worst[2 * pass + 1], fabs(da[i] - db[i]));
+      }
+    }
+  }
+  /* outside the table the series, bit for bit; the rotation built on it follows */
+  const myb_time before = myb_time_add(start, -10.0);
+  const myb_time after = myb_time_add(start, span + 21600.0);
+  double a[3];
+  double b[3];
+  myb_cip_xys(series, before, a, NULL);
+  myb_cip_xys(tabulated, before, b, NULL);
+  MT_CHECK(memcmp(a, b, sizeof a) == 0);
+  myb_cip_xys(series, after, a, NULL);
+  myb_cip_xys(tabulated, after, b, NULL);
+  MT_CHECK(memcmp(a, b, sizeof a) == 0);
+  MT_CHECK(myb_cip_tabulate(tabulated, start, myb_time_add(start, span), 3600.0) == MYB_OK);
+  const myb_time inside = myb_time_add(start, 12345.678);
+  myb_rotation r1;
+  myb_rotation r2;
+  myb_cip_terrestrial(series, inside, inside, NULL, &r1);
+  myb_cip_terrestrial(tabulated, inside, inside, NULL, &r2);
+  double apart = 0.0;
+  for (int i = 0; i < 9; ++i) {
+    apart = fmax(apart, fabs(r1.m[i] - r2.m[i]));
+  }
+  /* what it saves */
+  enum { CALLS = 20000 };
+  double sink = 0.0;
+  const clock_t t0 = clock();
+  for (int k = 0; k < CALLS; ++k) {
+    myb_cip_xys(series, myb_time_add(start, 100.0 * k), a, NULL);
+    sink += a[0];
+  }
+  const clock_t t1 = clock();
+  for (int k = 0; k < CALLS; ++k) {
+    myb_cip_xys(tabulated, myb_time_add(start, 100.0 * k), a, NULL);
+    sink += a[0];
+  }
+  const clock_t t2 = clock();
+  printf("the series of the pole at equal steps: an hour — values %.1e rad, rates %.1e rad/s; "
+         "six hours — %.1e rad, %.1e rad/s; the rotation built on it %.1e; %.2f us a call "
+         "against %.2f of the series (%.0f)\n",
+         worst[0], worst[1], worst[2], worst[3], apart,
+         1e6 * (double)(t2 - t1) / CLOCKS_PER_SEC / (double)CALLS,
+         1e6 * (double)(t1 - t0) / CLOCKS_PER_SEC / (double)CALLS, sink * 0.0);
+  MT_CHECK(worst[0] < 1e-15 && worst[1] < 1e-18);
+  MT_CHECK(worst[2] < 1e-12 && worst[3] < 1e-16);
+  MT_CHECK(apart < 1e-15);
+  /* refused */
+  MT_CHECK(myb_cip_tabulate(tabulated, start, start, 0.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_cip_tabulate(tabulated, start, myb_time_add(start, span), -1.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_cip_tabulate(tabulated, start, myb_time_add(start, 1e9), 1.0) == MYB_E_DOMAIN);
+  myb_cip_destroy(series);
+  myb_cip_destroy(tabulated);
+}
+
 int main(void) {
   myb_timesys* sys = load_system();
   myb_scale tt = {0};
@@ -199,6 +285,7 @@ int main(void) {
   test_leap_second(sys, tt);
   test_finals(sys, tt);
   test_errors(sys, tt);
+  test_table();
   myb_timesys_destroy(sys);
   return mt_finish("test_eop");
 }

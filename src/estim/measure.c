@@ -6,6 +6,7 @@
 
 #include "core/base.h"
 #include "env/env_internal.h"
+#include "force/surface_internal.h"
 #include "myb/cmath.h"
 #include "myb/estim.h"
 #include "num/vec3.h"
@@ -61,14 +62,82 @@ myb_status myb_station_init(myb_station* station, myb_env* env, size_t body,
   memcpy(station->enu, enu.m, sizeof station->enu);
   station->env = env;
   station->body = body;
+  station->motion = NULL;
   return MYB_OK;
+}
+
+/* What moves the station at t: the displacement in the body-fixed frame. */
+static myb_status moved(const myb_station* st, double t, double d[3]) {
+  const myb_station_motion* m = st->motion;
+  MYB_CHECK(m->tides != NULL && m->raiser_count <= MYB_ENV_MAX_RAISERS);
+  const double* s = NULL;
+  myb_status status = myb_internal_env_state(st->env, t, st->body, &s);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const myb_orientation* o = NULL;
+  status = myb_internal_env_orientation(st->env, t, st->body, &o, NULL);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_time when;
+  status = myb_internal_env_orientation_time(st->env, t, st->body, &when);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_tide_raiser raisers[MYB_ENV_MAX_RAISERS];
+  for (size_t k = 0; k < m->raiser_count; ++k) {
+    const double* sr = NULL;
+    status = myb_internal_env_state(st->env, t, m->raisers[k], &sr);
+    if (status != MYB_OK) {
+      return status;
+    }
+    const double from[3] = {sr[0] - s[0], sr[1] - s[1], sr[2] - s[2]};
+    raisers[k].gm = myb_internal_env_body(st->env, m->raisers[k])->gm;
+    myb_rotation_apply_position(&o->rotation, from, raisers[k].r);
+  }
+  const myb_dd ahead = myb_time_diff(when, o->ut);
+  const myb_site_input input = {.gm = myb_internal_env_body(st->env, st->body)->gm,
+                                .raisers = raisers,
+                                .count = m->raiser_count,
+                                .t = o->ut,
+                                .dynamical = ahead.hi + ahead.lo,
+                                .xp = o->xp,
+                                .yp = o->yp,
+                                .flags = m->flags};
+  return myb_site_displacement(m->tides, st->position, st->enu, m->loads, &input, d);
 }
 
 /* State of the station and the rotation inertial axes -> body-fixed frame at t. */
 static myb_status station_at(const myb_station* st, double t, double state[6],
                              const myb_orientation** orientation) {
+  double fixed[6] = {st->position[0], st->position[1], st->position[2], 0.0, 0.0, 0.0};
+  myb_status status = MYB_OK;
+  if (st->motion != NULL) {
+    /* the instant itself last: what the environment keeps is then of t */
+    const double span = 30.0;
+    double before[3] = {0.0, 0.0, 0.0};
+    double after[3] = {0.0, 0.0, 0.0};
+    double d[3];
+    if (st->motion->rate) {
+      status = moved(st, t - span, before);
+      if (status == MYB_OK) {
+        status = moved(st, t + span, after);
+      }
+    }
+    if (status == MYB_OK) {
+      status = moved(st, t, d);
+    }
+    if (status != MYB_OK) {
+      return status;
+    }
+    for (int i = 0; i < 3; ++i) {
+      fixed[i] += d[i];
+      fixed[3 + i] = (after[i] - before[i]) / (2.0 * span);
+    }
+  }
   const double* s = NULL;
-  myb_status status = myb_internal_env_state(st->env, t, st->body, &s);
+  status = myb_internal_env_state(st->env, t, st->body, &s);
   if (status != MYB_OK) {
     return status;
   }
@@ -77,7 +146,6 @@ static myb_status station_at(const myb_station* st, double t, double state[6],
   if (status != MYB_OK) {
     return status;
   }
-  const double fixed[6] = {st->position[0], st->position[1], st->position[2], 0.0, 0.0, 0.0};
   double inertial[6];
   myb_rotation_apply_state(inverse, fixed, inertial);
   for (int i = 0; i < 6; ++i) {
@@ -256,18 +324,25 @@ myb_status myb_measure_azel(void* station, double t, const double y[6], double* 
   return MYB_OK;
 }
 
-/* The offset of the observed point in the inertial axes at t for the state (x, v). */
+/* The offset of the observed point in the inertial axes at t for the state (x, v), with its
+ * derivatives in that state. */
 static myb_status offset_at(const myb_offset_measure* o, double t, const double x[3],
-                            const double v[3], double out[3]) {
-  double m[9];
-  const myb_status status = o->attitude(o->attitude_context, t, x, v, m);
+                            const double v[3], myb_dual out[3]) {
+  myb_dual m[9];
+  const myb_status status =
+      myb_internal_attitude_dual(o->attitude, o->attitude_context, t, x, v, m);
   if (status != MYB_OK) {
     return status;
   }
   for (int i = 0; i < 3; ++i) {
-    out[i] = m[i] * o->offset[0] + m[3 + i] * o->offset[1] + m[6 + i] * o->offset[2];
+    out[i] = myb_dual_add(myb_dual_add(myb_dual_scale(m[i], o->offset[0]),
+                                       myb_dual_scale(m[3 + i], o->offset[1])),
+                          myb_dual_scale(m[6 + i], o->offset[2]));
+    if (!isfinite(out[i].v)) {
+      return MYB_E_DOMAIN;
+    }
   }
-  return myb_vec3_finite(out) ? MYB_OK : MYB_E_DOMAIN;
+  return MYB_OK;
 }
 
 myb_status myb_measure_offset(void* offset, double t, const double y[6], double* values,
@@ -276,9 +351,9 @@ myb_status myb_measure_offset(void* offset, double t, const double y[6], double*
   MYB_CHECK(o != NULL && o->measure != NULL && o->attitude != NULL && y != NULL &&
             values != NULL);
   static const double half = 0.5; /* s: the attitude a second apart gives its rate */
-  double now[3];
-  double before[3];
-  double after[3];
+  myb_dual now[3];
+  myb_dual before[3];
+  myb_dual after[3];
   const double x_before[3] = {y[0] - half * y[3], y[1] - half * y[4], y[2] - half * y[5]};
   const double x_after[3] = {y[0] + half * y[3], y[1] + half * y[4], y[2] + half * y[5]};
   myb_status status = offset_at(o, t, y, y + 3, now);
@@ -293,8 +368,45 @@ myb_status myb_measure_offset(void* offset, double t, const double y[6], double*
   }
   double point[6];
   for (int i = 0; i < 3; ++i) {
-    point[i] = y[i] + now[i];
-    point[3 + i] = y[3 + i] + (after[i] - before[i]) / (2.0 * half);
+    point[i] = y[i] + now[i].v;
+    point[3 + i] = y[3 + i] + (after[i].v - before[i].v) / (2.0 * half);
   }
-  return o->measure(o->context, t, point, values, partials);
+  if (partials == NULL) {
+    return o->measure(o->context, t, point, values, NULL);
+  }
+  /* d point / d y: the centre of mass, and the offset as the attitude follows the state.
+   * The offsets half a second apart were taken at x -+ v / 2: their derivatives in v have
+   * that part of the derivatives in x */
+  double jacobian[36] = {0.0};
+  for (int i = 0; i < 6; ++i) {
+    jacobian[7 * i] = 1.0;
+  }
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      jacobian[6 * i + j] += now[i].d[j];
+      jacobian[6 * i + 3 + j] += now[i].d[3 + j];
+      jacobian[6 * (3 + i) + j] += (after[i].d[j] - before[i].d[j]) / (2.0 * half);
+      jacobian[6 * (3 + i) + 3 + j] += (after[i].d[3 + j] - before[i].d[3 + j]) / (2.0 * half) +
+                                       0.5 * (after[i].d[j] + before[i].d[j]);
+    }
+  }
+  /* the measurement knows how many values it has: its rows are those it wrote */
+  double at_point[6 * MYB_MEASURE_MAX];
+  for (int i = 0; i < 6 * MYB_MEASURE_MAX; ++i) {
+    at_point[i] = (double)NAN;
+  }
+  status = o->measure(o->context, t, point, values, at_point);
+  if (status != MYB_OK) {
+    return status;
+  }
+  for (int i = 0; i < MYB_MEASURE_MAX && !isnan(at_point[6 * i]); ++i) {
+    for (int j = 0; j < 6; ++j) {
+      double sum = 0.0;
+      for (int k = 0; k < 6; ++k) {
+        sum += at_point[6 * i + k] * jacobian[6 * k + j];
+      }
+      partials[6 * i + j] = sum;
+    }
+  }
+  return MYB_OK;
 }

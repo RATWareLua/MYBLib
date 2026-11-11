@@ -113,8 +113,43 @@
 - `myb/cr3bp.h`: квазипериодические орбиты как инвариантные окружности потока —
   `myb_cr3bp_torus_from_orbit`, `myb_cr3bp_torus_continue` (семейства постоянной Якоби,
   периода или угла поворота), `myb_cr3bp_torus_state`.
+- Файлы и системы отсчёта: SPK типа 15; граф систем отсчёта (`myb_frame_graph_*`) и
+  состояние через разные системы (`myb_spk_state_in`); `myb/ck.h` (новый) — часы аппарата
+  SCLK (`myb_sclk_*`), чтение CK типов 1–3 (`myb_ck_pointing_at`, `myb_orientation_ck`) и их
+  запись (`myb_ck_writer_*`); таблица нутации `myb_cip_tabulate`; разность шкал функцией и
+  таблицей (`myb_timesys_set_difference`, `myb_timesys_tabulate`), TDB−TT из эфемериды
+  (`myb_spk_time_difference`).
+- `myb/system.h`: тела с заданным движением (`myb_system_add_guided`), меняющаяся масса
+  (`myb_system_set_mass_rate`), эффект Лензе–Тирринга (`myb_system_add_frame_dragging`).
+- `myb/weather.h` (новый): таблица космической погоды (`myb_space_weather_*`) и вход
+  моделей верхней атмосферы (`myb_thermosphere_point_at`); в `ext/nrlmsise00` —
+  `myb_nrlmsise00_density`, модель как `myb_density_function`.
+- `myb/site.h` (новый): смещения пункта по IERS 2010 гл. 7 — `myb_site_displacement`
+  (прилив твёрдой Земли, полюсный прилив, нагрузки), океанская нагрузка из таблиц BLQ
+  (`myb_ocean_loading_*`), сетка коэффициентов (`myb_site_grid_*`); ядро
+  `data/frames/iers2010-site.tk`. Станция, которая движется: `myb_station.motion`.
+- `myb/grav.h`: вторичные волны океанского прилива по адмиттансу (`MYB_TIDES_ADMITTANCE`,
+  `myb_tides_secondary_waves`), добавление волн к загруженным (`myb_tides_add_waves`).
+- `myb/estim.h`: измерения со световым временем — `myb_light_measure`,
+  `myb_measure_light_range`, `_range_rate`, `_radec`, `_azel`.
+- `ext/troposphere`: `myb_tropo_vmf3`, GPT3 (`myb_gpt3_*`), `myb_tropo_zwd_askne`,
+  `myb_tropo_gradient_delay_parts`. `ext/ionosphere`: интегралы вдоль луча
+  (`myb_iono_ray_integrals`), плотность слоем над картами и сеткой (`myb_iono_layer_density`,
+  `myb_iono_grid_density`), члены высших порядков (`myb_iono_orders_of`,
+  `myb_iono_phase_delay`, `myb_iono_code_delay`, `myb_iono_bending`).
+- `cmake/FetchData.cmake`: сетка GPT3; большие файлы по `-DLARGE=ON`.
 
 ### Изменено
+- `MYB_TIDES_ALL` включает `MYB_TIDES_ADMITTANCE`: с ядром, где есть таблица адмиттанса, и
+  загруженными океанскими волнами результат меняется (вторичные волны добавляются).
+- Новые поля в конце структур (ноль сохраняет прежнее поведение): `myb_station.motion`,
+  `myb_spk_body.graph`.
+- `myb_measure_offset`: производные включают поворот смещения вслед за орбитой (раньше —
+  производные измерения в самой точке).
+- `myb_ionex_vtec`: значение, отсутствующее в соседней карте, не мешает запросу точно в
+  эпоху карты.
+- `myb/kin.h` включает `myb/frames.h`; `myb/system.h` — `myb/kin.h`; `myb/estim.h` —
+  `myb/site.h`; `myb/weather.h` — `myb/frames.h` и `myb/time.h`.
 - `myb_state_function` объявлен в `myb/kin.h` (`myb/observe.h` его включает).
 - `myb/force.h` включает `myb/frames.h`.
 - `myb/thrust.h` включает `myb/model.h`.

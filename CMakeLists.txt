@@ -68,14 +68,18 @@ set(_myb_sources
   src/dyn/whfast.c
   src/env/env.c
   src/env/terms.c
+  src/env/weather.c
   src/estim/filter.c
   src/estim/fit.c
+  src/estim/light.c
   src/estim/measure.c
   src/frames/bpck.c
   src/frames/cip.c
   src/frames/equinox.c
   src/frames/eop.c
   src/frames/geodetic.c
+  src/frames/graph.c
+  src/frames/site.c
   src/frames/orientation.c
   src/frames/orbital.c
   src/frames/rotation.c
@@ -108,6 +112,8 @@ set(_myb_sources
   src/io/daf.c
   src/io/kpool.c
   src/kepler/anomaly.c
+  src/kin/ck.c
+  src/kin/sclk.c
   src/kin/segset.c
   src/kin/spk.c
   src/kin/sp3.c

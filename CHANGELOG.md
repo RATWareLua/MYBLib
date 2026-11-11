@@ -118,8 +118,44 @@ version the API only grows. Details, checks and measured accuracies of every pha
 - `myb/cr3bp.h`: quasi-periodic orbits as invariant circles of the flow —
   `myb_cr3bp_torus_from_orbit`, `myb_cr3bp_torus_continue` (families of one Jacobi constant,
   one period or one rotation), `myb_cr3bp_torus_state`.
+- Files and frames: SPK type 15; a graph of frames (`myb_frame_graph_*`) and a state across
+  frames (`myb_spk_state_in`); `myb/ck.h` (new) — the clock of a spacecraft, SCLK
+  (`myb_sclk_*`), reading CK types 1–3 (`myb_ck_pointing_at`, `myb_orientation_ck`) and
+  writing them (`myb_ck_writer_*`); a table of the nutation, `myb_cip_tabulate`; the
+  difference of two scales by a function and by a table (`myb_timesys_set_difference`,
+  `myb_timesys_tabulate`), TDB−TT from the ephemeris (`myb_spk_time_difference`).
+- `myb/system.h`: bodies with a given motion (`myb_system_add_guided`), a mass that changes
+  (`myb_system_set_mass_rate`), the Lense–Thirring effect (`myb_system_add_frame_dragging`).
+- `myb/weather.h` (new): a table of space weather (`myb_space_weather_*`) and the input of
+  the models of the upper atmosphere (`myb_thermosphere_point_at`); in `ext/nrlmsise00` —
+  `myb_nrlmsise00_density`, the model as a `myb_density_function`.
+- `myb/site.h` (new): the displacement of a site after IERS 2010 chapter 7 —
+  `myb_site_displacement` (the tide of the solid Earth, the pole tide, the loads), ocean
+  loading from BLQ tables (`myb_ocean_loading_*`), a grid of coefficients
+  (`myb_site_grid_*`); the kernel `data/frames/iers2010-site.tk`. A station that moves:
+  `myb_station.motion`.
+- `myb/grav.h`: the secondary waves of the ocean tide by admittance (`MYB_TIDES_ADMITTANCE`,
+  `myb_tides_secondary_waves`), waves added to those loaded (`myb_tides_add_waves`).
+- `myb/estim.h`: measurements with the light time — `myb_light_measure`,
+  `myb_measure_light_range`, `_range_rate`, `_radec`, `_azel`.
+- `ext/troposphere`: `myb_tropo_vmf3`, GPT3 (`myb_gpt3_*`), `myb_tropo_zwd_askne`,
+  `myb_tropo_gradient_delay_parts`. `ext/ionosphere`: integrals along a ray
+  (`myb_iono_ray_integrals`), the density as a layer over the maps and as a grid
+  (`myb_iono_layer_density`, `myb_iono_grid_density`), the higher orders
+  (`myb_iono_orders_of`, `myb_iono_phase_delay`, `myb_iono_code_delay`, `myb_iono_bending`).
+- `cmake/FetchData.cmake`: the GPT3 grid; large files with `-DLARGE=ON`.
 
 ### Changed
+- `MYB_TIDES_ALL` includes `MYB_TIDES_ADMITTANCE`: with a kernel that has a table of
+  admittance and ocean waves loaded the result changes (the secondary waves are added).
+- New fields at the end of structures (zero keeps the former behaviour):
+  `myb_station.motion`, `myb_spk_body.graph`.
+- `myb_measure_offset`: the derivatives include the turning of the offset after the orbit
+  (they were those of the measurement at the point itself).
+- `myb_ionex_vtec`: a value missing in the neighbouring map does not hinder a request
+  exactly at the epoch of a map.
+- `myb/kin.h` includes `myb/frames.h`; `myb/system.h` — `myb/kin.h`; `myb/estim.h` —
+  `myb/site.h`; `myb/weather.h` — `myb/frames.h` and `myb/time.h`.
 - `myb_state_function` is declared in `myb/kin.h` (`myb/observe.h` includes it).
 - `myb/force.h` includes `myb/frames.h`.
 - `myb/thrust.h` includes `myb/model.h`.

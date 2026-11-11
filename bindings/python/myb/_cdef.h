@@ -300,6 +300,12 @@ typedef struct myb_scale {
         const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale scale);
                       myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
                                                      myb_scale from, myb_scale to, myb_time* out);
+typedef myb_status (*myb_scale_difference)(void* context, myb_time t, double* difference);
+                      myb_status myb_timesys_set_difference(myb_timesys* system, myb_scale scale,
+                                                            myb_scale_difference function,
+                                                            void* context);
+                      myb_status myb_timesys_tabulate(myb_timesys* system, myb_scale scale,
+                                                      myb_time t0, myb_time t1, double step);
                       myb_status myb_timesys_from_utc(const myb_timesys* system,
                                                       const myb_calendar* utc, myb_scale to,
                                                       myb_time* out);
@@ -495,6 +501,277 @@ typedef struct myb_ocm_data {
                       myb_status myb_ocm_format_line(const myb_calendar* epoch, double offset,
                                                      const double* values, size_t count,
                                                      char* buffer, size_t size, size_t* length);
+typedef struct myb_rotation {
+  double m[9];
+  double dm[9];
+} myb_rotation;
+        void myb_rotation_apply_position(const myb_rotation* rotation, const double in[3],
+                                         double out[3]);
+        void myb_rotation_apply_state(const myb_rotation* rotation, const double in[6],
+                                      double out[6]);
+        void myb_rotation_compose(const myb_rotation* second, const myb_rotation* first,
+                                  myb_rotation* out);
+        void myb_rotation_invert(const myb_rotation* rotation, myb_rotation* out);
+        void myb_rotation_euler313(const double angles[3], const double rates[3],
+                                   myb_rotation* rotation);
+typedef struct myb_cip myb_cip;
+                      myb_status myb_cip_create(const myb_kpool* pool, const char* prefix,
+                                                const myb_allocator* allocator, myb_cip** cip,
+                                                myb_diag* diag);
+        void myb_cip_destroy(myb_cip* cip);
+        void myb_cip_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]);
+                      myb_status myb_cip_tabulate(myb_cip* cip, myb_time tt0, myb_time tt1,
+                                                  double step);
+        double myb_cip_era(const myb_cip* cip, myb_time ut1, double* rate);
+        double myb_cip_sprime(const myb_cip* cip, myb_time tt);
+        void myb_cip_c2i(const double xys[3], const double rates[3], myb_rotation* rotation);
+typedef struct myb_eop_values {
+  double xp;
+  double yp;
+  double dut1;
+  double lod;
+  double dx;
+  double dy;
+} myb_eop_values;
+typedef struct myb_eop myb_eop;
+                      myb_status myb_eop_create(const myb_allocator* allocator, myb_eop** eop);
+        void myb_eop_destroy(myb_eop* eop);
+                      myb_status myb_eop_load_c04(myb_eop* eop, const char* text, size_t size,
+                                                  myb_diag* diag);
+                      myb_status myb_eop_load_c04_file(myb_eop* eop, const char* path,
+                                                       myb_diag* diag);
+                      myb_status myb_eop_load_finals(myb_eop* eop, const char* text, size_t size,
+                                                     myb_diag* diag);
+                      myb_status myb_eop_load_finals_file(myb_eop* eop, const char* path,
+                                                          myb_diag* diag);
+                      myb_status myb_eop_set_tides(myb_eop* eop, const myb_kpool* pool,
+                                                   const char* prefix, myb_diag* diag);
+        size_t myb_eop_rows(const myb_eop* eop, double* first, double* last);
+                      myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
+                                            myb_time t, myb_scale scale, myb_eop_values* values,
+                                            myb_time* ut1);
+        void myb_cip_terrestrial(const myb_cip* cip, myb_time tt, myb_time ut1,
+                                 const myb_eop_values* eop, myb_rotation* rotation);
+typedef struct myb_equinox myb_equinox;
+                      myb_status myb_equinox_create(const myb_kpool* pool, const char* prefix,
+                                                    const myb_allocator* allocator,
+                                                    myb_equinox** equinox, myb_diag* diag);
+        void myb_equinox_destroy(myb_equinox* equinox);
+        void myb_equinox_precession(const myb_equinox* equinox, myb_time tt, double angles[3],
+                                    double rates[3]);
+        double myb_equinox_obliquity(const myb_equinox* equinox, myb_time tt, double* rate);
+        void myb_equinox_nutation(const myb_equinox* equinox, myb_time tt, double nutation[2],
+                                  double rates[2]);
+typedef enum myb_equinox_frame {
+  MYB_EQUINOX_MOD = 0,
+  MYB_EQUINOX_TOD = 1,
+  MYB_EQUINOX_TEME = 2
+} myb_equinox_frame;
+        void myb_equinox_rotation(const myb_equinox* equinox, myb_equinox_frame frame,
+                                  myb_time tt, myb_rotation* rotation);
+        double myb_equinox_gmst(const myb_equinox* equinox, myb_time ut1, double* rate);
+        void myb_equinox_teme_pef(const myb_equinox* equinox, myb_time ut1,
+                                  myb_rotation* rotation);
+typedef struct myb_wgccre myb_wgccre;
+                      myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
+                                                   const myb_allocator* allocator,
+                                                   myb_wgccre** model, myb_diag* diag);
+        void myb_wgccre_destroy(myb_wgccre* model);
+        int32_t myb_wgccre_frame(const myb_wgccre* model);
+        void myb_wgccre_euler(const myb_wgccre* model, myb_time t, double angles[3],
+                              double rates[3]);
+        void myb_wgccre_rotation(const myb_wgccre* model, myb_time t, myb_rotation* rotation);
+typedef struct myb_ellipsoid {
+  double a;
+  double f;
+} myb_ellipsoid;
+                      myb_status myb_geodetic_from_cartesian(const myb_ellipsoid* ellipsoid,
+                                                             const double xyz[3],
+                                                             double* longitude,
+                                                             double* latitude, double* height);
+                      myb_status myb_geodetic_to_cartesian(const myb_ellipsoid* ellipsoid,
+                                                           double longitude, double latitude,
+                                                           double height, double xyz[3]);
+        void myb_topocentric_enu(double longitude, double latitude, myb_rotation* rotation);
+typedef enum myb_orbital_frame {
+  MYB_ORBITAL_RTN = 1,
+  MYB_ORBITAL_VNC = 2,
+  MYB_ORBITAL_LVLH = 3
+} myb_orbital_frame;
+                      myb_status myb_orbital_rotation(myb_orbital_frame kind,
+                                                      const double state[6],
+                                                      const double acceleration[3],
+                                                      myb_rotation* rotation);
+                      myb_status myb_tkframe(const myb_kpool* pool, int64_t id,
+                                             myb_rotation* rotation, char relative[33],
+                                             myb_diag* diag);
+typedef struct myb_pck myb_pck;
+                      myb_status myb_pck_create(const myb_allocator* allocator, myb_pck** pck);
+        void myb_pck_destroy(myb_pck* pck);
+                      myb_status myb_pck_load_file(myb_pck* pck, const char* path, myb_diag* diag);
+                      myb_status myb_pck_load_memory(myb_pck* pck, const void* data, size_t size,
+                                                     myb_diag* diag);
+                      myb_status myb_pck_euler(const myb_pck* pck, int32_t id, myb_time t,
+                                               double angles[3], double rates[3], int32_t* base);
+                      myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
+                                                  myb_rotation* rotation, int32_t* base);
+typedef struct myb_orientation myb_orientation;
+typedef myb_status (*myb_orientation_function)(void* context, myb_time t,
+                                               myb_orientation* orientation);
+typedef struct myb_pck_writer myb_pck_writer;
+                      myb_status myb_pck_writer_create(const char* internal_name,
+                                                       const myb_allocator* allocator,
+                                                       myb_pck_writer** writer);
+        void myb_pck_writer_destroy(myb_pck_writer* writer);
+                      myb_status myb_pck_writer_add_chebyshev(
+    myb_pck_writer* writer, int32_t frame, int32_t base, const char* name,
+    myb_orientation_function orientation, void* context, double start, double stop,
+    size_t intervals, int degree, double* max_error);
+                      myb_status myb_pck_writer_add_raw(myb_pck_writer* writer, int32_t frame,
+                                                        int32_t base, const char* name,
+                                                        int type, double start, double stop,
+                                                        const double* words, size_t count);
+        size_t myb_pck_writer_size(const myb_pck_writer* writer);
+                      myb_status myb_pck_writer_write(const myb_pck_writer* writer, void* buffer,
+                                                      size_t size);
+                      myb_status myb_pck_writer_write_file(const myb_pck_writer* writer,
+                                                           const char* path);
+struct myb_orientation {
+  myb_rotation rotation;
+  myb_time ut;
+  double xp;
+  double yp;
+};
+typedef struct myb_cip_orientation {
+  const myb_cip* cip;
+  const myb_eop* eop;
+  const myb_timesys* timesys;
+  myb_scale tt;
+} myb_cip_orientation;
+                      myb_status myb_orientation_cip(void* context, myb_time t,
+                                                     myb_orientation* orientation);
+typedef struct myb_pck_orientation {
+  const myb_pck* pck;
+  int32_t id;
+  const myb_rotation* base;
+} myb_pck_orientation;
+                      myb_status myb_orientation_pck(void* context, myb_time t,
+                                                     myb_orientation* orientation);
+typedef struct myb_wgccre_orientation {
+  const myb_wgccre* model;
+  const myb_rotation* base;
+} myb_wgccre_orientation;
+                      myb_status myb_orientation_wgccre(void* context, myb_time t,
+                                                        myb_orientation* orientation);
+                      myb_status myb_orientation_fixed(void* rotation, myb_time t,
+                                                       myb_orientation* orientation);
+enum { MYB_FRAME_GRAPH_MAX_DEPTH = 32 };
+typedef struct myb_frame_graph myb_frame_graph;
+typedef struct myb_frame_graph_options {
+  const myb_timesys* timesys;
+  const char* scale;
+} myb_frame_graph_options;
+                      myb_status myb_frame_graph_create(const myb_frame_graph_options* options,
+                                                        const myb_allocator* allocator,
+                                                        myb_frame_graph** graph);
+        void myb_frame_graph_destroy(myb_frame_graph* graph);
+                      myb_status myb_frame_graph_add(myb_frame_graph* graph, int32_t id,
+                                                     int32_t base,
+                                                     myb_orientation_function orientation,
+                                                     void* context, const char* scale);
+                      myb_status myb_frame_graph_add_fixed(myb_frame_graph* graph, int32_t id,
+                                                           int32_t base,
+                                                           const myb_rotation* rotation);
+                      myb_status myb_frame_graph_add_tkframe(myb_frame_graph* graph,
+                                                             const myb_kpool* pool, int32_t id,
+                                                             myb_diag* diag);
+                      myb_status myb_frame_graph_rotation(const myb_frame_graph* graph,
+                                                          int32_t from, int32_t to, myb_time t,
+                                                          myb_rotation* rotation);
+typedef struct myb_graph_orientation {
+  const myb_frame_graph* graph;
+  int32_t from;
+  int32_t to;
+} myb_graph_orientation;
+                      myb_status myb_orientation_graph(void* context, myb_time t,
+                                                       myb_orientation* orientation);
+enum { MYB_SCLK_MAX_FIELDS = 10 };
+typedef struct myb_sclk myb_sclk;
+                      myb_status myb_sclk_create(const myb_kpool* pool, int64_t id,
+                                                 const myb_allocator* allocator, myb_sclk** sclk,
+                                                 myb_diag* diag);
+        void myb_sclk_destroy(myb_sclk* sclk);
+        int myb_sclk_time_system(const myb_sclk* sclk);
+        size_t myb_sclk_partitions(const myb_sclk* sclk);
+                      myb_status myb_sclk_to_time(const myb_sclk* sclk, double ticks,
+                                                  myb_time* t);
+                      myb_status myb_sclk_from_time(const myb_sclk* sclk, myb_time t,
+                                                    double* ticks);
+                      myb_status myb_sclk_encode(const myb_sclk* sclk, const char* text,
+                                                 size_t length, double* ticks);
+                      myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text,
+                                                 size_t size, size_t* length);
+typedef struct myb_ck myb_ck;
+                      myb_status myb_ck_create(const myb_allocator* allocator, myb_ck** ck);
+        void myb_ck_destroy(myb_ck* ck);
+                      myb_status myb_ck_load_file(myb_ck* ck, const char* path, myb_diag* diag);
+                      myb_status myb_ck_load_memory(myb_ck* ck, const void* data, size_t size,
+                                                    myb_diag* diag);
+typedef struct myb_ck_segment_info {
+  int32_t instrument;
+  int32_t frame;
+  int32_t type;
+  int has_rates;
+  double start;
+  double stop;
+  size_t file;
+  char name[41];
+} myb_ck_segment_info;
+        size_t myb_ck_segment_count(const myb_ck* ck);
+        void myb_ck_segment(const myb_ck* ck, size_t index, myb_ck_segment_info* info);
+typedef struct myb_ck_pointing {
+  double q[4];
+  double rate[3];
+  int has_rate;
+  double ticks;
+  int32_t frame;
+  myb_rotation rotation;
+} myb_ck_pointing;
+                      myb_status myb_ck_pointing_at(const myb_ck* ck, int32_t instrument,
+                                                    double ticks, double tolerance,
+                                                    int need_rate, myb_ck_pointing* pointing);
+typedef struct myb_ck_orientation {
+  const myb_ck* ck;
+  const myb_sclk* sclk;
+  int32_t instrument;
+  int32_t base;
+  double tolerance;
+} myb_ck_orientation;
+                      myb_status myb_orientation_ck(void* context, myb_time t,
+                                                    myb_orientation* orientation);
+typedef struct myb_ck_writer myb_ck_writer;
+                      myb_status myb_ck_writer_create(const char* internal_name,
+                                                      const myb_allocator* allocator,
+                                                      myb_ck_writer** writer);
+        void myb_ck_writer_destroy(myb_ck_writer* writer);
+typedef struct myb_ck_segment_header {
+  int32_t instrument;
+  int32_t frame;
+  const char* name;
+} myb_ck_segment_header;
+                      myb_status myb_ck_writer_add_pointings(
+    myb_ck_writer* writer, const myb_ck_segment_header* header, int type, const double* ticks,
+    const double* quaternions, const double* rates, size_t count,
+    const double* interval_starts, size_t interval_count);
+                      myb_status myb_ck_writer_add_intervals(
+    myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
+    const double* stops, const double* quaternions, const double* rates,
+    const double* seconds_per_tick, size_t count);
+        size_t myb_ck_writer_size(const myb_ck_writer* writer);
+                      myb_status myb_ck_writer_write(const myb_ck_writer* writer, void* buffer,
+                                                     size_t size);
+                      myb_status myb_ck_writer_write_file(const myb_ck_writer* writer,
+                                                          const char* path);
  double myb_fma(double a, double b, double c);
         double myb_sin(double x);
         double myb_cos(double x);
@@ -539,14 +816,26 @@ typedef struct myb_spk_segment_info {
                                                       double* values);
                       myb_status myb_spk_state(const myb_spk* spk, int32_t target, int32_t center,
                                                myb_time t, double state[6], int32_t* frame);
+                      myb_status myb_spk_state_in(const myb_spk* spk,
+                                                  const myb_frame_graph* graph, int32_t target,
+                                                  int32_t center, myb_time t, int32_t frame,
+                                                  double state[6]);
 typedef myb_status (*myb_state_function)(void* context, myb_time t, double state[6]);
 typedef struct myb_spk_body {
   const myb_spk* spk;
   int32_t target;
   int32_t center;
   int32_t frame;
+  const myb_frame_graph* graph;
 } myb_spk_body;
                       myb_status myb_spk_body_state(void* body, myb_time t, double state[6]);
+typedef struct myb_spk_time {
+  const myb_spk* spk;
+  int32_t target;
+  int32_t center;
+} myb_spk_time;
+                      myb_status myb_spk_time_difference(void* context, myb_time tdb,
+                                                         double* difference);
 typedef struct myb_spk_writer myb_spk_writer;
                       myb_status myb_spk_writer_create(const char* internal_name,
                                                        const myb_allocator* allocator,
@@ -1077,168 +1366,6 @@ typedef struct myb_wh myb_wh;
                       myb_status myb_wh_state(myb_wh* wh, double* x, double* v);
                       myb_status myb_wh_dense(myb_wh* wh, double t, double* x, double* v);
         myb_wh_stats myb_wh_statistics(const myb_wh* wh);
-typedef struct myb_rotation {
-  double m[9];
-  double dm[9];
-} myb_rotation;
-        void myb_rotation_apply_position(const myb_rotation* rotation, const double in[3],
-                                         double out[3]);
-        void myb_rotation_apply_state(const myb_rotation* rotation, const double in[6],
-                                      double out[6]);
-        void myb_rotation_compose(const myb_rotation* second, const myb_rotation* first,
-                                  myb_rotation* out);
-        void myb_rotation_invert(const myb_rotation* rotation, myb_rotation* out);
-        void myb_rotation_euler313(const double angles[3], const double rates[3],
-                                   myb_rotation* rotation);
-typedef struct myb_cip myb_cip;
-                      myb_status myb_cip_create(const myb_kpool* pool, const char* prefix,
-                                                const myb_allocator* allocator, myb_cip** cip,
-                                                myb_diag* diag);
-        void myb_cip_destroy(myb_cip* cip);
-        void myb_cip_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]);
-        double myb_cip_era(const myb_cip* cip, myb_time ut1, double* rate);
-        double myb_cip_sprime(const myb_cip* cip, myb_time tt);
-        void myb_cip_c2i(const double xys[3], const double rates[3], myb_rotation* rotation);
-typedef struct myb_eop_values {
-  double xp;
-  double yp;
-  double dut1;
-  double lod;
-  double dx;
-  double dy;
-} myb_eop_values;
-typedef struct myb_eop myb_eop;
-                      myb_status myb_eop_create(const myb_allocator* allocator, myb_eop** eop);
-        void myb_eop_destroy(myb_eop* eop);
-                      myb_status myb_eop_load_c04(myb_eop* eop, const char* text, size_t size,
-                                                  myb_diag* diag);
-                      myb_status myb_eop_load_c04_file(myb_eop* eop, const char* path,
-                                                       myb_diag* diag);
-                      myb_status myb_eop_load_finals(myb_eop* eop, const char* text, size_t size,
-                                                     myb_diag* diag);
-                      myb_status myb_eop_load_finals_file(myb_eop* eop, const char* path,
-                                                          myb_diag* diag);
-                      myb_status myb_eop_set_tides(myb_eop* eop, const myb_kpool* pool,
-                                                   const char* prefix, myb_diag* diag);
-        size_t myb_eop_rows(const myb_eop* eop, double* first, double* last);
-                      myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
-                                            myb_time t, myb_scale scale, myb_eop_values* values,
-                                            myb_time* ut1);
-        void myb_cip_terrestrial(const myb_cip* cip, myb_time tt, myb_time ut1,
-                                 const myb_eop_values* eop, myb_rotation* rotation);
-typedef struct myb_equinox myb_equinox;
-                      myb_status myb_equinox_create(const myb_kpool* pool, const char* prefix,
-                                                    const myb_allocator* allocator,
-                                                    myb_equinox** equinox, myb_diag* diag);
-        void myb_equinox_destroy(myb_equinox* equinox);
-        void myb_equinox_precession(const myb_equinox* equinox, myb_time tt, double angles[3],
-                                    double rates[3]);
-        double myb_equinox_obliquity(const myb_equinox* equinox, myb_time tt, double* rate);
-        void myb_equinox_nutation(const myb_equinox* equinox, myb_time tt, double nutation[2],
-                                  double rates[2]);
-typedef enum myb_equinox_frame {
-  MYB_EQUINOX_MOD = 0,
-  MYB_EQUINOX_TOD = 1,
-  MYB_EQUINOX_TEME = 2
-} myb_equinox_frame;
-        void myb_equinox_rotation(const myb_equinox* equinox, myb_equinox_frame frame,
-                                  myb_time tt, myb_rotation* rotation);
-        double myb_equinox_gmst(const myb_equinox* equinox, myb_time ut1, double* rate);
-        void myb_equinox_teme_pef(const myb_equinox* equinox, myb_time ut1,
-                                  myb_rotation* rotation);
-typedef struct myb_wgccre myb_wgccre;
-                      myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
-                                                   const myb_allocator* allocator,
-                                                   myb_wgccre** model, myb_diag* diag);
-        void myb_wgccre_destroy(myb_wgccre* model);
-        int32_t myb_wgccre_frame(const myb_wgccre* model);
-        void myb_wgccre_euler(const myb_wgccre* model, myb_time t, double angles[3],
-                              double rates[3]);
-        void myb_wgccre_rotation(const myb_wgccre* model, myb_time t, myb_rotation* rotation);
-typedef struct myb_ellipsoid {
-  double a;
-  double f;
-} myb_ellipsoid;
-                      myb_status myb_geodetic_from_cartesian(const myb_ellipsoid* ellipsoid,
-                                                             const double xyz[3],
-                                                             double* longitude,
-                                                             double* latitude, double* height);
-                      myb_status myb_geodetic_to_cartesian(const myb_ellipsoid* ellipsoid,
-                                                           double longitude, double latitude,
-                                                           double height, double xyz[3]);
-        void myb_topocentric_enu(double longitude, double latitude, myb_rotation* rotation);
-typedef enum myb_orbital_frame {
-  MYB_ORBITAL_RTN = 1,
-  MYB_ORBITAL_VNC = 2,
-  MYB_ORBITAL_LVLH = 3
-} myb_orbital_frame;
-                      myb_status myb_orbital_rotation(myb_orbital_frame kind,
-                                                      const double state[6],
-                                                      const double acceleration[3],
-                                                      myb_rotation* rotation);
-                      myb_status myb_tkframe(const myb_kpool* pool, int64_t id,
-                                             myb_rotation* rotation, char relative[33],
-                                             myb_diag* diag);
-typedef struct myb_pck myb_pck;
-                      myb_status myb_pck_create(const myb_allocator* allocator, myb_pck** pck);
-        void myb_pck_destroy(myb_pck* pck);
-                      myb_status myb_pck_load_file(myb_pck* pck, const char* path, myb_diag* diag);
-                      myb_status myb_pck_load_memory(myb_pck* pck, const void* data, size_t size,
-                                                     myb_diag* diag);
-                      myb_status myb_pck_euler(const myb_pck* pck, int32_t id, myb_time t,
-                                               double angles[3], double rates[3], int32_t* base);
-                      myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
-                                                  myb_rotation* rotation, int32_t* base);
-typedef struct myb_orientation myb_orientation;
-typedef myb_status (*myb_orientation_function)(void* context, myb_time t,
-                                               myb_orientation* orientation);
-typedef struct myb_pck_writer myb_pck_writer;
-                      myb_status myb_pck_writer_create(const char* internal_name,
-                                                       const myb_allocator* allocator,
-                                                       myb_pck_writer** writer);
-        void myb_pck_writer_destroy(myb_pck_writer* writer);
-                      myb_status myb_pck_writer_add_chebyshev(
-    myb_pck_writer* writer, int32_t frame, int32_t base, const char* name,
-    myb_orientation_function orientation, void* context, double start, double stop,
-    size_t intervals, int degree, double* max_error);
-                      myb_status myb_pck_writer_add_raw(myb_pck_writer* writer, int32_t frame,
-                                                        int32_t base, const char* name,
-                                                        int type, double start, double stop,
-                                                        const double* words, size_t count);
-        size_t myb_pck_writer_size(const myb_pck_writer* writer);
-                      myb_status myb_pck_writer_write(const myb_pck_writer* writer, void* buffer,
-                                                      size_t size);
-                      myb_status myb_pck_writer_write_file(const myb_pck_writer* writer,
-                                                           const char* path);
-struct myb_orientation {
-  myb_rotation rotation;
-  myb_time ut;
-  double xp;
-  double yp;
-};
-typedef struct myb_cip_orientation {
-  const myb_cip* cip;
-  const myb_eop* eop;
-  const myb_timesys* timesys;
-  myb_scale tt;
-} myb_cip_orientation;
-                      myb_status myb_orientation_cip(void* context, myb_time t,
-                                                     myb_orientation* orientation);
-typedef struct myb_pck_orientation {
-  const myb_pck* pck;
-  int32_t id;
-  const myb_rotation* base;
-} myb_pck_orientation;
-                      myb_status myb_orientation_pck(void* context, myb_time t,
-                                                     myb_orientation* orientation);
-typedef struct myb_wgccre_orientation {
-  const myb_wgccre* model;
-  const myb_rotation* base;
-} myb_wgccre_orientation;
-                      myb_status myb_orientation_wgccre(void* context, myb_time t,
-                                                        myb_orientation* orientation);
-                      myb_status myb_orientation_fixed(void* rotation, myb_time t,
-                                                       myb_orientation* orientation);
 typedef struct myb_gravity_field myb_gravity_field;
                       myb_status myb_gravity_field_create(double gm, double radius, int degree,
                                                           const double* c, const double* s,
@@ -1292,6 +1419,12 @@ typedef struct myb_tides myb_tides;
                       myb_status myb_tides_load_ocean_file(myb_tides* tides, const char* path,
                                                            int max_degree, myb_diag* diag);
         size_t myb_tides_ocean_waves(const myb_tides* tides);
+                      myb_status myb_tides_add_waves(myb_tides* tides, const char* text,
+                                                     size_t size, int max_degree,
+                                                     myb_diag* diag);
+                      myb_status myb_tides_add_waves_file(myb_tides* tides, const char* path,
+                                                          int max_degree, myb_diag* diag);
+        size_t myb_tides_secondary_waves(const myb_tides* tides);
 typedef struct myb_tide_raiser {
   double gm;
   double r[3];
@@ -1302,7 +1435,8 @@ enum {
   MYB_TIDES_OCEAN = 4,
   MYB_TIDES_POLE_SOLID = 8,
   MYB_TIDES_POLE_OCEAN = 16,
-  MYB_TIDES_ALL = 31
+  MYB_TIDES_ADMITTANCE = 32,
+  MYB_TIDES_ALL = 63
 };
 typedef enum myb_permanent_tide {
   MYB_PERMANENT_TIDE_AUTO = 0,
@@ -1747,6 +1881,77 @@ typedef struct myb_empirical_term {
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);
+typedef struct myb_site_tides myb_site_tides;
+                      myb_status myb_site_tides_create(const myb_kpool* pool, const char* prefix,
+                                                       const myb_allocator* allocator,
+                                                       myb_site_tides** tides, myb_diag* diag);
+        void myb_site_tides_destroy(myb_site_tides* tides);
+        size_t myb_site_tides_waves(const myb_site_tides* tides);
+        size_t myb_site_tides_given_waves(const myb_site_tides* tides);
+enum { MYB_SITE_MAX_GIVEN_WAVES = 16 };
+typedef struct myb_ocean_loading myb_ocean_loading;
+                      myb_status myb_ocean_loading_create(const myb_site_tides* tides,
+                                                          const double* amplitudes,
+                                                          const double* phases,
+                                                          const myb_allocator* allocator,
+                                                          myb_ocean_loading** loading);
+                      myb_status myb_ocean_loading_load(const myb_site_tides* tides,
+                                                        const char* text, size_t size,
+                                                        const char* site,
+                                                        const myb_allocator* allocator,
+                                                        myb_ocean_loading** loading,
+                                                        myb_diag* diag);
+                      myb_status myb_ocean_loading_load_file(const myb_site_tides* tides,
+                                                             const char* path, const char* site,
+                                                             const myb_allocator* allocator,
+                                                             myb_ocean_loading** loading,
+                                                             myb_diag* diag);
+        void myb_ocean_loading_destroy(myb_ocean_loading* loading);
+        void myb_ocean_loading_at(const myb_site_tides* tides, const myb_ocean_loading* loading,
+                                  myb_time t, double dynamical, double displacement[3]);
+enum { MYB_SITE_GRID_MAX_VALUES = 12 };
+typedef struct myb_site_grid myb_site_grid;
+                      myb_status myb_site_grid_load(const char* text, size_t size,
+                                                    const myb_allocator* allocator,
+                                                    myb_site_grid** grid, myb_diag* diag);
+                      myb_status myb_site_grid_load_file(const char* path,
+                                                         const myb_allocator* allocator,
+                                                         myb_site_grid** grid, myb_diag* diag);
+        void myb_site_grid_destroy(myb_site_grid* grid);
+        size_t myb_site_grid_values(const myb_site_grid* grid);
+                      myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude,
+                                                  double latitude, double* values);
+typedef struct myb_site_loads {
+  const myb_ocean_loading* ocean;
+  double atmosphere[12];
+  double ocean_pole[6];
+} myb_site_loads;
+enum {
+  MYB_SITE_SOLID = 1,
+  MYB_SITE_FREQUENCY = 2,
+  MYB_SITE_POLE = 4,
+  MYB_SITE_OCEAN = 8,
+  MYB_SITE_ATMOSPHERE = 16,
+  MYB_SITE_OCEAN_POLE = 32,
+  MYB_SITE_ALL = 63,
+  MYB_SITE_MEAN_TIDE = 64
+};
+typedef struct myb_site_input {
+  double gm;
+  const myb_tide_raiser* raisers;
+  size_t count;
+  myb_time t;
+  double dynamical;
+  double xp;
+  double yp;
+  int flags;
+} myb_site_input;
+                      myb_status myb_site_displacement(const myb_site_tides* tides,
+                                                       const double position[3],
+                                                       const double* enu,
+                                                       const myb_site_loads* loads,
+                                                       const myb_site_input* input,
+                                                       double displacement[3]);
  myb_status myb_force_radiation_mesh(const myb_polyhedron* shape,
                                                           const myb_plate* surface,
                                                           double pressure, const double u[3],
@@ -1875,11 +2080,20 @@ typedef struct myb_observation {
                                                       double* values, double* partials);
                       myb_status myb_measure_state(void* context, double t, const double y[6],
                                                    double* values, double* partials);
+typedef struct myb_station_motion {
+  const myb_site_tides* tides;
+  const myb_site_loads* loads;
+  size_t raisers[MYB_ENV_MAX_RAISERS];
+  size_t raiser_count;
+  int flags;
+  int rate;
+} myb_station_motion;
 typedef struct myb_station {
   myb_env* env;
   size_t body;
   double position[3];
   double enu[9];
+  const myb_station_motion* motion;
 } myb_station;
                       myb_status myb_station_init(myb_station* station, myb_env* env, size_t body,
                                                   const myb_ellipsoid* ellipsoid,
@@ -1905,6 +2119,25 @@ typedef struct myb_offset_measure {
 } myb_offset_measure;
                       myb_status myb_measure_offset(void* offset, double t, const double y[6],
                                                     double* values, double* partials);
+typedef struct myb_light_measure {
+  const myb_station* station;
+  double c;
+  double gm;
+  int two_way;
+  int aberration;
+} myb_light_measure;
+                      myb_status myb_measure_light_range(void* light, double t,
+                                                         const double y[6], double* values,
+                                                         double* partials);
+                      myb_status myb_measure_light_range_rate(void* light, double t,
+                                                              const double y[6],
+                                                              double* values, double* partials);
+                      myb_status myb_measure_light_radec(void* light, double t,
+                                                         const double y[6], double* values,
+                                                         double* partials);
+                      myb_status myb_measure_light_azel(void* light, double t,
+                                                        const double y[6], double* values,
+                                                        double* partials);
 typedef struct myb_fit_options {
   int max_iterations;
   double tolerance;
@@ -2335,7 +2568,8 @@ enum {
   MYB_SYSTEM_MAX_TIDES = 64,
   MYB_SYSTEM_MAX_DISTORTIONS = 32,
   MYB_SYSTEM_MAX_PN_PAIRS = 16,
-  MYB_SYSTEM_MAX_ACTIONS = 64
+  MYB_SYSTEM_MAX_ACTIONS = 64,
+  MYB_SYSTEM_MAX_DRAGS = 64
 };
                       myb_status myb_system_create(size_t bodies, const double* gm,
                                                    const myb_allocator* allocator,
@@ -2396,6 +2630,15 @@ typedef myb_status (*myb_system_action)(void* context, double t, const myb_syste
                                         double acceleration[3], double torque[3]);
                       myb_status myb_system_add_action(myb_system* system, size_t body,
                                                        myb_system_action action, void* context);
+                      myb_status myb_system_add_frame_dragging(myb_system* system, size_t body,
+                                                               size_t point,
+                                                               const double spin[3]);
+                      myb_status myb_system_set_mass_rate(myb_system* system, size_t body,
+                                                          double rate, double epoch);
+                      myb_status myb_system_add_guided(myb_system* system, double gm,
+                                                       myb_state_function state, void* context,
+                                                       size_t* index);
+        size_t myb_system_guided(const myb_system* system);
 typedef struct myb_system_light {
   size_t source;
   const myb_polyhedron* shape;
@@ -2612,3 +2855,66 @@ typedef struct myb_rng {
                       myb_status myb_sample_statistics(size_t count, size_t n,
                                                        const double* samples, double* mean,
                                                        double* covariance);
+typedef struct myb_space_weather myb_space_weather;
+                      myb_status myb_space_weather_load(const char* text, size_t size,
+                                                        const myb_allocator* allocator,
+                                                        myb_space_weather** weather,
+                                                        myb_diag* diag);
+                      myb_status myb_space_weather_load_file(const char* path,
+                                                             const myb_allocator* allocator,
+                                                             myb_space_weather** weather,
+                                                             myb_diag* diag);
+        void myb_space_weather_destroy(myb_space_weather* weather);
+        size_t myb_space_weather_days(const myb_space_weather* weather, int64_t* first,
+                                      int64_t* last);
+enum { MYB_SPACE_WEATHER_OBSERVED = 0, MYB_SPACE_WEATHER_INTERPOLATED = 1,
+       MYB_SPACE_WEATHER_PREDICTED = 2 };
+typedef struct myb_space_weather_day {
+  int64_t mjd;
+  double kp[8];
+  double ap[8];
+  double ap_daily;
+  double f107_observed;
+  double f107_adjusted;
+  double f107_observed_81[2];
+  double f107_adjusted_81[2];
+  int kind;
+} myb_space_weather_day;
+                      myb_status myb_space_weather_day_at(const myb_space_weather* weather,
+                                                          int64_t mjd,
+                                                          myb_space_weather_day* day);
+typedef struct myb_space_weather_inputs {
+  double f107;
+  double f107_average;
+  double ap;
+  double ap_history[7];
+  int has_history;
+  double kp;
+} myb_space_weather_inputs;
+                      myb_status myb_space_weather_inputs_at(const myb_space_weather* weather,
+                                                             int64_t mjd, double seconds,
+                                                             int adjusted,
+                                                             myb_space_weather_inputs* inputs);
+typedef struct myb_thermosphere_setting {
+  const myb_space_weather* weather;
+  double f107;
+  double f107_average;
+  double ap;
+  int adjusted;
+  const myb_timesys* timesys;
+  myb_scale scale;
+  myb_ellipsoid ellipsoid;
+} myb_thermosphere_setting;
+typedef struct myb_thermosphere_point {
+  int64_t mjd;
+  int day_of_year;
+  double seconds;
+  double height;
+  double latitude;
+  double longitude;
+  double local_solar_time;
+  myb_space_weather_inputs indices;
+} myb_thermosphere_point;
+                      myb_status myb_thermosphere_point_at(
+    const myb_thermosphere_setting* setting, myb_time t, const double r[3],
+    myb_thermosphere_point* point);

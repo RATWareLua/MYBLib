@@ -14,3 +14,8 @@ MYB_NRLMSISE00_1.0 {
   local:
     *;
 };
+
+MYB_NRLMSISE00_1.2 {
+  global:
+    myb_nrlmsise00_density;
+} MYB_NRLMSISE00_1.0;

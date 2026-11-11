@@ -162,9 +162,301 @@ static void test_pierce_point(void) {
            MYB_E_DOMAIN);
 }
 
+/* The place at a geocentric latitude and longitude (rad) and a distance. */
+static void place(double latitude, double longitude, double distance, double r[3]) {
+  r[0] = distance * myb_cos(latitude) * myb_cos(longitude);
+  r[1] = distance * myb_cos(latitude) * myb_sin(longitude);
+  r[2] = distance * myb_sin(latitude);
+}
+
+/* A density that is the same everywhere. */
+static myb_status uniform(void* context, double mjd, const double r[3], double* density) {
+  (void)mjd;
+  (void)r;
+  *density = *(const double*)context;
+  return MYB_OK;
+}
+
+/* The higher orders of the delay: the integrals along a ray through a layer over the maps
+ * and through a grid of densities, with the field of a dipole. */
+static void test_orders(void) {
+  size_t size = 0;
+  char* text = read_file(MYB_TEST_DATA_DIR "/ionosphere/synthetic.inx", &size);
+  myb_ionex* maps = NULL;
+  myb_diag diag;
+  MT_CHECK(text != NULL && myb_ionex_load(text, size, NULL, &maps, &diag) == MYB_OK);
+  free(text);
+  if (maps == NULL) {
+    return;
+  }
+  const double base = 6371000.0;
+  const double mjd = 60310.03; /* 2024-01-01, after the first map */
+  myb_iono_layer layer = {.maps = maps, .peak = 350e3, .scale = 70e3};
+  const double bottom = base + 50e3;
+  const double top = base + 4000e3;
+  const double lat = 20.0 * DEG;
+  const double lon = 40.0 * DEG;
+  double vtec = 0.0;
+  MT_CHECK(myb_ionex_vtec(maps, mjd, lat, lon, &vtec) == MYB_OK);
+
+  /* straight up: the content of the map, and the square by the shape of the layer */
+  double receiver[3];
+  double transmitter[3];
+  place(lat, lon, base, receiver);
+  place(lat, lon, base + 20000e3, transmitter);
+  myb_iono_ray up;
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, NULL, NULL, mjd, receiver,
+                                  transmitter, bottom, top, 256, &up) == MYB_OK);
+  const double peak_density = vtec / (layer.scale * sqrt(2.0 * 3.141592653589793 * exp(1.0)));
+  const double shape = sqrt(exp(1.0) / (2.0 * 3.141592653589793));
+  printf("a layer over the maps, straight up: the content %.4f TECU (the map: %.4f), "
+         "int N^2 dl / (N_max S) = %.4f (the layer: %.4f; the Conventions take 0.66)\n",
+         up.content / 1e16, vtec / 1e16, up.square / (peak_density * up.content), shape);
+  MT_CHECK(fabs(up.content / vtec - 1.0) < 1e-7);
+  MT_CHECK(fabs(up.square / (peak_density * vtec * shape) - 1.0) < 1e-7);
+  MT_CHECK(up.field == 0.0 && up.field_square == 0.0);
+  /* fewer panels: how the rule converges on the 3950 km of the line */
+  double converged[3];
+  for (int k = 0; k < 3; ++k) {
+    myb_iono_ray coarse;
+    MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, NULL, NULL, mjd, receiver,
+                                    transmitter, bottom, top, 16 << k, &coarse) == MYB_OK);
+    converged[k] = fabs(coarse.content / up.content - 1.0);
+  }
+  printf("  the content with 16, 32, 64 panels against 256: %.1e, %.1e, %.1e\n", converged[0],
+         converged[1], converged[2]);
+  MT_CHECK(converged[0] < 3e-3 && converged[1] < 1e-5 && converged[2] < 1e-7);
+
+  /* at 30 degrees of elevation: near the single layer of the maps at the height of the
+   * peak */
+  const double elevation = 30.0 * DEG;
+  const double azimuth = 120.0 * DEG;
+  const double se = myb_sin(elevation);
+  const double ce = myb_cos(elevation);
+  const double east[3] = {-myb_sin(lon), myb_cos(lon), 0.0};
+  const double north[3] = {-myb_sin(lat) * myb_cos(lon), -myb_sin(lat) * myb_sin(lon),
+                           myb_cos(lat)};
+  const double zenith[3] = {receiver[0] / base, receiver[1] / base, receiver[2] / base};
+  for (int i = 0; i < 3; ++i) {
+    transmitter[i] = receiver[i] + 25000e3 * (ce * (myb_sin(azimuth) * east[i] +
+                                                    myb_cos(azimuth) * north[i]) +
+                                              se * zenith[i]);
+  }
+  myb_iono_ray slant;
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, NULL, NULL, mjd, receiver,
+                                  transmitter, bottom, top, 256, &slant) == MYB_OK);
+  double pierce_lat = 0.0;
+  double pierce_lon = 0.0;
+  double mapping = 0.0;
+  double pierce_vtec = 0.0;
+  MT_CHECK(myb_iono_pierce_point(lat, lon, azimuth, elevation, base, layer.peak, 1.0,
+                                 &pierce_lat, &pierce_lon, &mapping) == MYB_OK);
+  MT_CHECK(myb_ionex_vtec(maps, mjd, pierce_lat, pierce_lon, &pierce_vtec) == MYB_OK);
+  printf("  at 30 degrees: %.3f TECU through the layer, %.3f TECU by the single layer at "
+         "its peak\n",
+         slant.content / 1e16, mapping * pierce_vtec / 1e16);
+  MT_CHECK(fabs(slant.content / (mapping * pierce_vtec) - 1.0) < 0.05);
+
+  /* the field of a dipole (the first degree of the IGRF of 2020): against sums of the
+   * same integrands on 200000 steps, and near the single layer (eq. 9.46) */
+  const double g[3] = {0.0, -29404.8e-9, -1450.9e-9};
+  const double h[3] = {0.0, 0.0, 4652.5e-9};
+  myb_magnetic_field* field = NULL;
+  myb_gravity_work* work = NULL;
+  MT_CHECK(myb_magnetic_field_create(6371200.0, 1, g, h, NULL, &field) == MYB_OK);
+  MT_CHECK(myb_gravity_work_create(1, NULL, &work) == MYB_OK);
+  myb_iono_ray with_field;
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, field, work, mjd, receiver,
+                                  transmitter, bottom, top, 256, &with_field) == MYB_OK);
+  double direct[4] = {0.0, 0.0, 0.0, 0.0};
+  double u[3];
+  double length = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    u[i] = transmitter[i] - receiver[i];
+    length += u[i] * u[i];
+  }
+  length = sqrt(length);
+  enum { STEPS = 200000 };
+  const double step = 9000e3 / (double)STEPS; /* the first 9000 km hold the ionosphere */
+  for (int k = 0; k < STEPS; ++k) {
+    const double s = (k + 0.5) * step;
+    const double r[3] = {receiver[0] + s * u[0] / length, receiver[1] + s * u[1] / length,
+                         receiver[2] + s * u[2] / length};
+    const double distance = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    if (distance < bottom || distance > top) {
+      continue;
+    }
+    double n = 0.0;
+    double b[3];
+    MT_CHECK(myb_iono_layer_density(&layer, mjd, r, &n) == MYB_OK);
+    MT_CHECK(myb_magnetic_field_eval(field, work, r, b) == MYB_OK);
+    const double cosine = -(b[0] * u[0] + b[1] * u[1] + b[2] * u[2]) / length;
+    direct[0] += n * step;
+    direct[1] += n * cosine * step;
+    direct[2] += n * n * step;
+    direct[3] += n * (b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + cosine * cosine) * step;
+  }
+  const double worst =
+      fmax(fmax(fabs(with_field.content / direct[0] - 1.0), fabs(with_field.field / direct[1] - 1.0)),
+           fmax(fabs(with_field.square / direct[2] - 1.0),
+                fabs(with_field.field_square / direct[3] - 1.0)));
+  /* the field where the line meets the layer's peak */
+  double pierce[3];
+  place(pierce_lat, pierce_lon, base + layer.peak, pierce);
+  double bp[3];
+  MT_CHECK(myb_magnetic_field_eval(field, work, pierce, bp) == MYB_OK);
+  const double thin = -(bp[0] * u[0] + bp[1] * u[1] + bp[2] * u[2]) / length * slant.content;
+  printf("  with the field of a dipole: the four integrals against sums on 200000 steps "
+         "%.1e; int N B cos(theta) dl = %.4e, by the field at the peak %.4e\n",
+         worst, with_field.field, thin);
+  MT_CHECK(worst < 1e-6);
+  MT_CHECK(fabs(with_field.field / thin - 1.0) < 0.1);
+  MT_CHECK(with_field.content == slant.content && with_field.square == slant.square);
+
+  /* the orders of the delay: the constants of the Conventions from those of nature */
+  const double e_charge = 1.602176634e-19;
+  const double m_e = 9.1093837139e-31;
+  const double eps0 = 8.8541878188e-12;
+  myb_iono_orders k;
+  const myb_iono_ray unit1 = {.content = 1.0};
+  const myb_iono_ray unit2 = {.field = 1.0};
+  const myb_iono_ray unit3 = {.square = 1.0};
+  const myb_iono_ray unit4 = {.field_square = 1.0};
+  myb_iono_orders_of(&unit1, e_charge, m_e, eps0, &k);
+  MT_CHECK(fabs(k.s1 / 40.308 - 1.0) < 2e-5 && k.s2 == 0.0 && k.s3 == 0.0);
+  myb_iono_orders_of(&unit2, e_charge, m_e, eps0, &k);
+  MT_CHECK(fabs(k.s2 / 1.1283e12 - 1.0) < 5e-5 && k.s1 == 0.0);
+  myb_iono_orders_of(&unit3, e_charge, m_e, eps0, &k);
+  MT_CHECK(fabs(k.s3 / 812.38 - 1.0) < 2e-5);
+  myb_iono_orders_of(&unit4, e_charge, m_e, eps0, &k);
+  MT_CHECK(fabs(k.s3 / 1.5792e22 - 1.0) < 5e-5);
+  myb_iono_orders orders;
+  myb_iono_orders_of(&with_field, e_charge, m_e, eps0, &orders);
+  const double f1 = 1575.42e6;
+  const double phase = myb_iono_phase_delay(&orders, f1);
+  const double code = myb_iono_code_delay(&orders, f1);
+  printf("  the delay at 1575.42 MHz: the first order %.4f m, the second %+.2f mm, the third "
+         "%+.3f mm (code); the phase %.4f m\n",
+         orders.s1 / (f1 * f1), 2e3 * orders.s2 / (f1 * f1 * f1),
+         3e3 * orders.s3 / (f1 * f1 * f1 * f1), phase);
+  MT_CHECK(fabs(code + phase - (orders.s2 / (f1 * f1 * f1) + 2.0 * orders.s3 / (f1 * f1 * f1 * f1))) <
+           1e-12);
+  MT_CHECK(phase < 0.0 && code > 0.0 && fabs(orders.s2 / (f1 * f1 * f1)) < 0.05);
+  MT_CHECK(isnan(myb_iono_phase_delay(&orders, 0.0)) && isnan(myb_iono_code_delay(&orders, -1.0)));
+  /* the bending: 100 TECU at 10 degrees and the frequency of GPS L1, in millimetres */
+  const double bend = myb_iono_bending(100e16, 10.0 * DEG);
+  const double c10 = myb_cos(10.0 * DEG);
+  MT_CHECK(fabs(bend / (2.495e8 * 1e21 * (1.0 / sqrt(1.0 - 0.8592 * c10 * c10) - 1.0) * 1e4) -
+                1.0) < 1e-12);
+  printf("  the bending of the ray, 100 TECU at 10 degrees: %.2f mm at 1575.42 MHz\n",
+         1e3 * bend / (f1 * f1 * f1 * f1));
+  MT_CHECK(myb_iono_bending(100e16, 1.5707963267948966) == 0.0 && isnan(myb_iono_bending(-1.0, 0.3)));
+
+  /* a grid of densities sampled from the layer: the same integrals within what a grid of
+   * 25 km, 10 and 15 degrees can give */
+  enum { HEIGHTS = 73, LATITUDES = 17, LONGITUDES = 24 };
+  static double densities[2 * HEIGHTS * LATITUDES * LONGITUDES];
+  /* the first and the third map (the second has a value missing) */
+  static const double epochs[2] = {60310.0, 60310.0 + 4.0 / 24.0};
+  for (int m = 0; m < 2; ++m) {
+    for (int a = 0; a < HEIGHTS; ++a) {
+      for (int b = 0; b < LATITUDES; ++b) {
+        for (int c = 0; c < LONGITUDES; ++c) {
+          double r[3];
+          place((-80.0 + 10.0 * b) * DEG, (-180.0 + 15.0 * c) * DEG, base + 100e3 + 25e3 * a, r);
+          MT_CHECK(myb_iono_layer_density(
+                       &layer, epochs[m], r,
+                       &densities[((m * HEIGHTS + a) * LATITUDES + b) * LONGITUDES + c]) == MYB_OK);
+        }
+      }
+    }
+  }
+  myb_iono_grid grid = {.radius = base, .latitude = -80.0 * DEG,
+                              .latitude_step = 10.0 * DEG, .latitudes = LATITUDES,
+                              .longitude = -180.0 * DEG, .longitude_step = 15.0 * DEG,
+                              .longitudes = LONGITUDES, .height = 100e3, .height_step = 25e3,
+                              .heights = HEIGHTS, .epochs = epochs, .maps = 2,
+                              .density = densities};
+  myb_iono_ray gridded;
+  myb_iono_ray sampled;
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_grid_density, &grid, field, work, epochs[0],
+                                  receiver, transmitter, bottom, top, 256, &gridded) == MYB_OK);
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, field, work, epochs[0],
+                                  receiver, transmitter, bottom, top, 256, &sampled) == MYB_OK);
+  printf("  through a grid of densities sampled from the layer: the content %.3f TECU "
+         "(%.3f), int N B cos(theta) dl %.4e (%.4e)\n",
+         gridded.content / 1e16, sampled.content / 1e16, gridded.field, sampled.field);
+  MT_CHECK(fabs(gridded.content / sampled.content - 1.0) < 0.03);
+  MT_CHECK(fabs(gridded.field / sampled.field - 1.0) < 0.03);
+  /* between its epochs the grid is defined */
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_grid_density, &grid, NULL, NULL, mjd, receiver,
+                                  transmitter, bottom, top, 64, &gridded) == MYB_OK);
+  MT_CHECK(gridded.content > 0.5 * sampled.content && gridded.content < 2.0 * sampled.content);
+  /* at a node the grid gives the node; above and below it nothing; outside it an error */
+  double at_node = 0.0;
+  double r[3];
+  place(-20.0 * DEG, 45.0 * DEG, base + 350e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, epochs[0], r, &at_node) == MYB_OK);
+  MT_CHECK(fabs(at_node / densities[((0 * HEIGHTS + 10) * LATITUDES + 6) * LONGITUDES + 15] - 1.0) <
+           1e-12);
+  place(-20.0 * DEG, 45.0 * DEG, base + 99e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, epochs[0], r, &at_node) == MYB_OK && at_node == 0.0);
+  place(85.0 * DEG, 45.0 * DEG, base + 350e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, epochs[0], r, &at_node) == MYB_E_RANGE);
+  place(0.0, 0.0, base + 350e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, 60311.0, r, &at_node) == MYB_E_RANGE);
+  myb_iono_grid none = grid;
+  none.heights = 1;
+  MT_CHECK(myb_iono_grid_density(&none, epochs[0], r, &at_node) == MYB_E_DOMAIN);
+
+  /* the parts of a line in the ionosphere, with a density that is the same everywhere:
+   * the length of the parts. From the ground; from inside; a line that dips below the
+   * ionosphere between two satellites; a line above it */
+  double one = 1.0;
+  myb_iono_ray chord;
+  const double low[3] = {base, 0.0, 0.0};
+  const double high[3] = {base + 30000e3, 0.0, 0.0};
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, low, high, bottom, top, 8,
+                                  &chord) == MYB_OK);
+  MT_CHECK(fabs(chord.content - (top - bottom)) < 1e-6);
+  const double inside[3] = {base + 800e3, 0.0, 0.0};
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, inside, high, bottom, top, 8,
+                                  &chord) == MYB_OK);
+  MT_CHECK(fabs(chord.content - (top - base - 800e3)) < 1e-6);
+  const double d = base + 800e3;
+  const double tangent = base + 20e3; /* the line passes 20 km above the sphere */
+  const double half_chord = sqrt(d * d - tangent * tangent);
+  const double left[3] = {tangent, -half_chord, 0.0};
+  const double right[3] = {tangent, half_chord, 0.0};
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, left, right, bottom, top, 8,
+                                  &chord) == MYB_OK);
+  const double below = sqrt(bottom * bottom - tangent * tangent);
+  MT_CHECK(fabs(chord.content - 2.0 * (half_chord - below)) < 1e-6);
+  const double over[3] = {0.0, top + 1e3, -1e7};
+  const double beyond[3] = {0.0, top + 1e3, 1e7};
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, over, beyond, bottom, top, 8,
+                                  &chord) == MYB_OK);
+  MT_CHECK(chord.content == 0.0);
+  /* refused */
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, low, low, bottom, top, 8,
+                                  &chord) == MYB_E_DOMAIN);
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, low, high, bottom, top, 0,
+                                  &chord) == MYB_E_DOMAIN);
+  MT_CHECK(myb_iono_ray_integrals(uniform, &one, NULL, NULL, mjd, low, high, top, bottom, 8,
+                                  &chord) == MYB_E_DOMAIN);
+  MT_CHECK(myb_iono_ray_integrals(myb_iono_layer_density, &layer, NULL, NULL, 70000.0, receiver,
+                                  transmitter, bottom, top, 8, &chord) == MYB_E_RANGE);
+  layer.scale = 0.0;
+  MT_CHECK(myb_iono_layer_density(&layer, mjd, receiver, &at_node) == MYB_E_DOMAIN);
+  myb_gravity_work_destroy(work);
+  myb_magnetic_field_destroy(field);
+  myb_ionex_destroy(maps);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_ionex();
+  test_orders();
   test_pierce_point();
   return mt_finish("test_ionosphere");
 }

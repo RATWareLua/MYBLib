@@ -82,3 +82,83 @@ unsafe extern "C" {
         delay: *mut f64,
     ) -> myb_status;
 }
+unsafe extern "C" {
+    pub fn myb_tropo_gradient_delay_parts(
+        gn_h: f64,
+        ge_h: f64,
+        gn_w: f64,
+        ge_w: f64,
+        elevation: f64,
+        azimuth: f64,
+        delay: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_tropo_zwd_askne(
+        vapour_pressure: f64,
+        mean_temperature: f64,
+        lambda: f64,
+        zwd: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_tropo_vmf3(
+        ah: f64,
+        aw: f64,
+        mjd: f64,
+        latitude: f64,
+        longitude: f64,
+        height: f64,
+        zenith_distance: f64,
+        mh: *mut f64,
+        mw: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_gpt3 {
+    _unused: [u8; 0],
+}
+unsafe extern "C" {
+    pub fn myb_gpt3_load(
+        text: *const ::std::os::raw::c_char,
+        size: usize,
+        allocator: *const myb_allocator,
+        grid: *mut *mut myb_gpt3,
+        diag: *mut myb_diag,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_gpt3_destroy(grid: *mut myb_gpt3);
+}
+unsafe extern "C" {
+    pub fn myb_gpt3_step(grid: *const myb_gpt3) -> f64;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_gpt3_values {
+    pub pressure: f64,
+    pub temperature: f64,
+    pub lapse_rate: f64,
+    pub mean_temperature: f64,
+    pub vapour_pressure: f64,
+    pub ah: f64,
+    pub aw: f64,
+    pub lambda: f64,
+    pub undulation: f64,
+    pub gn_h: f64,
+    pub ge_h: f64,
+    pub gn_w: f64,
+    pub ge_w: f64,
+}
+unsafe extern "C" {
+    pub fn myb_gpt3_at(
+        grid: *const myb_gpt3,
+        mjd: f64,
+        latitude: f64,
+        longitude: f64,
+        height: f64,
+        constant: ::std::os::raw::c_int,
+        values: *mut myb_gpt3_values,
+    ) -> myb_status;
+}

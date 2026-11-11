@@ -1,0 +1,24 @@
+Ocean Pole Load Tide Deformation Parameters from Self-Consistent
+Equilibrium Model of Ocean Pole Tide (Desai, 2002)
+Nine nodes of opoleloadcoefcmcor.txt of the IERS Conventions 2010 (chapter 7) around the
+point of its test case, with the header changed to those nodes.
+Number_longitude_Grid_Points =         3
+First_longitude_degrees      =    231.75
+Last_longitude_degrees       =    232.75
+Longitude_step_degrees       =      0.50
+Number_latitude_grid_points  =         3
+First_latitude_degrees       =    -44.25
+Last_latitude_degrees        =    -43.25
+Latitude_step_degrees        =      0.50
+Longitude   Latitude   u_r^R       u_r^I       u_n^R       u_n^I       u_e^R       u_e^I    
+(degrees)  (degrees)  (        )  (        )  (        )  (        )  (        )  (        )
+---------  ---------  ----------  ----------  ----------  ----------  ----------  ----------
+   231.75     -44.25    0.218082    0.284129    0.012900    0.025161    0.001237    0.010812
+   232.25     -44.25    0.216194    0.285566    0.012849    0.025269    0.000946    0.010328
+   232.75     -44.25    0.214277    0.286997    0.012797    0.025376    0.000657    0.009847
+   231.75     -43.75    0.218095    0.284189    0.012746    0.024823    0.001158    0.010871
+   232.25     -43.75    0.216192    0.285652    0.012697    0.024930    0.000868    0.010389
+   232.75     -43.75    0.214276    0.287068    0.012643    0.025036    0.000573    0.009912
+   231.75     -43.25    0.218039    0.284179    0.012598    0.024482    0.001079    0.010935
+   232.25     -43.25    0.216129    0.285630    0.012542    0.024594    0.000787    0.010452
+   232.75     -43.25    0.214219    0.287045    0.012485    0.024701    0.000490    0.009972

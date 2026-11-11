@@ -4,6 +4,8 @@
  * authors' code, printed to 19 digits), and properties of the models. */
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "mtest.h"
 #include "myb/cmath.h"
@@ -110,9 +112,150 @@ static void test_properties(void) {
            MYB_E_DOMAIN);
 }
 
+/* VMF3 and GPT3 against the routines of TU Wien (gpt3_5.f90, vmf3_ht.f90, asknewet.f run
+ * apart: tests/data/tropo/gpt3_vmf3.ref) on the grid gpt3_5.grd, if downloaded: 20 sites and
+ * dates — between nodes, at a node, across the first meridian and the date line, within half
+ * a step of the poles, at sea level and on Everest, a leap year after February, the means
+ * without the seasons. */
+static void test_gpt3(void) {
+  FILE* file = fopen(MYB_DATA_DIR "/download/gpt3_5.grd", "rb");
+  if (file == NULL) {
+    printf("GPT3: data/download/gpt3_5.grd is not there (cmake -P cmake/FetchData.cmake): "
+           "skipped\n");
+    return;
+  }
+  enum { CAPACITY = 2 * 1024 * 1024 };
+  char* text = malloc(CAPACITY);
+  MT_CHECK(text != NULL);
+  const size_t size = text != NULL ? fread(text, 1, CAPACITY, file) : 0;
+  fclose(file);
+  myb_gpt3* grid = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(size > 0 && size < CAPACITY);
+  const myb_status loaded = myb_gpt3_load(text, size, NULL, &grid, &diag);
+  if (loaded != MYB_OK) {
+    printf("GPT3: status %d, line %ld: %s%c", (int)loaded, diag.line, diag.message, 10);
+    free(text);
+    MT_CHECK(loaded == MYB_OK);
+    return;
+  }
+  MT_CHECK(fabs(myb_gpt3_step(grid) - 5.0 * DEG) < 1e-15);
+  FILE* reference = fopen(MYB_TEST_DATA_DIR "/tropo/gpt3_vmf3.ref", "r");
+  MT_CHECK(reference != NULL);
+  char line[1024];
+  int cases = 0;
+  double worst[3] = {0.0, 0.0, 0.0}; /* GPT3, VMF3, the wet delay */
+  while (reference != NULL && fgets(line, sizeof line, reference) != NULL) {
+    if (line[0] == '#') {
+      continue;
+    }
+    double in[6];
+    double r[16];
+    int read = 0;
+    const char* at = line;
+    for (int k = 0; k < 22; ++k) {
+      char* end = NULL;
+      const double value = strtod(at, &end);
+      if (end == at) {
+        break;
+      }
+      if (k < 6) {
+        in[k] = value;
+      } else {
+        r[k - 6] = value;
+      }
+      at = end;
+      ++read;
+    }
+    MT_CHECK(read == 22);
+    if (read != 22) {
+      continue;
+    }
+    myb_gpt3_values v;
+    MT_CHECK(myb_gpt3_at(grid, in[0], in[1] * DEG, in[2] * DEG, in[3], (int)in[4], &v) ==
+             MYB_OK);
+    const double mine[13] = {v.pressure, v.temperature, v.lapse_rate, v.mean_temperature,
+                             v.vapour_pressure, v.ah, v.aw, v.lambda, v.undulation, v.gn_h,
+                             v.ge_h, v.gn_w, v.ge_w};
+    for (int k = 0; k < 13; ++k) {
+      /* by what the quantity is worth: the temperature in degrees Celsius passes zero */
+      const double scale = k == 1 ? 273.15 : fmax(fabs(r[k]), 1e-6);
+      worst[0] = fmax(worst[0], fabs(mine[k] - r[k]) / scale);
+    }
+    double mh = 0.0;
+    double mw = 0.0;
+    double zwd = 0.0;
+    MT_CHECK(myb_tropo_vmf3(r[5], r[6], in[0], in[1] * DEG, in[2] * DEG, in[3], in[5], &mh,
+                            &mw) == MYB_OK);
+    MT_CHECK(myb_tropo_zwd_askne(r[4], r[3], r[7], &zwd) == MYB_OK);
+    worst[1] = fmax(worst[1], fmax(rel(mh, r[13]), rel(mw, r[14])));
+    worst[2] = fmax(worst[2], rel(zwd, r[15]));
+    ++cases;
+  }
+  if (reference != NULL) {
+    fclose(reference);
+  }
+  printf("GPT3 on its 5 degree grid, %d sites and dates against the routines of TU Wien: "
+         "%.1e of the values; VMF3 %.1e; the wet delay of Askne and Nordius %.1e\n",
+         cases, worst[0], worst[1], worst[2]);
+  MT_CHECK(cases == 20);
+  /* the sums of the seasons cancel in the small quantities: the last digits of cos and sin
+   * of the two libraries show there */
+  MT_CHECK(worst[0] < 3e-12 && worst[1] < 2e-14 && worst[2] < 1e-14);
+
+  /* the gradients of GPT3 as a delay: each part with its own mapping function */
+  myb_gpt3_values v;
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 48.2 * DEG, 16.37 * DEG, 156.0, 0, &v) == MYB_OK);
+  double delay = 0.0;
+  const double e = 7.0 * DEG;
+  const double az = 0.6;
+  MT_CHECK(myb_tropo_gradient_delay_parts(v.gn_h, v.ge_h, v.gn_w, v.ge_w, e, az, &delay) ==
+           MYB_OK);
+  const double tangent = myb_sin(e) * myb_tan(e);
+  const double expected =
+      (v.gn_h * myb_cos(az) + v.ge_h * myb_sin(az)) / (tangent + 0.0031) +
+      (v.gn_w * myb_cos(az) + v.ge_w * myb_sin(az)) / (tangent + 0.0007);
+  printf("  Vienna: %.1f hPa, %.1f C, e %.1f hPa; the gradients at 7 degrees of elevation: "
+         "%.1f mm\n",
+         v.pressure, v.temperature, v.vapour_pressure, 1e3 * delay);
+  MT_CHECK(fabs(delay - expected) < 1e-17 && fabs(delay) > 1e-4 && fabs(delay) < 0.05);
+  /* a longitude a turn away is the same point */
+  myb_gpt3_values turned;
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 48.2 * DEG, (16.37 - 360.0) * DEG, 156.0, 0, &turned) ==
+           MYB_OK);
+  MT_CHECK(fabs(turned.pressure - v.pressure) < 1e-9);
+  /* refused */
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 1.6, 0.0, 0.0, 0, &v) == MYB_E_DOMAIN);
+  MT_CHECK(myb_gpt3_at(grid, (double)NAN, 0.5, 0.0, 0.0, 0, &v) == MYB_E_DOMAIN);
+  double mh = 0.0;
+  double mw = 0.0;
+  MT_CHECK(myb_tropo_vmf3(0.0012, 0.0006, 59000.0, 0.8, 0.2, 100.0, 1.6, &mh, &mw) ==
+           MYB_E_DOMAIN);
+  MT_CHECK(myb_tropo_zwd_askne(10.0, 270.0, -1.0, &delay) == MYB_E_DOMAIN);
+  MT_CHECK(myb_tropo_gradient_delay_parts(1e-4, 1e-4, 1e-4, 1e-4, 0.0, 0.0, &delay) ==
+           MYB_E_DOMAIN);
+  myb_gpt3_destroy(grid);
+  /* grids that are refused: a torn line, a count that is no grid, nodes out of order */
+  myb_gpt3* none = NULL;
+  size_t second = 0;
+  for (size_t i = 0, lines = 0; i < size && lines < 2; ++i) {
+    if (text[i] == '\n') {
+      ++lines;
+      second = i + 1;
+    }
+  }
+  MT_CHECK(myb_gpt3_load(text, second, NULL, &none, &diag) == MYB_E_FORMAT);
+  text[second + 3] = '9'; /* the latitude of the second node */
+  MT_CHECK(myb_gpt3_load(text, size, NULL, &none, &diag) == MYB_E_FORMAT && diag.line == 3);
+  MT_CHECK(myb_gpt3_load("% nothing\n", 10, NULL, &none, &diag) == MYB_E_FORMAT);
+  myb_gpt3_destroy(NULL);
+  free(text);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_iers_cases();
   test_properties();
+  test_gpt3();
   return mt_finish("test_troposphere");
 }

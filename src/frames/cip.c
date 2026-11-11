@@ -14,11 +14,18 @@ static const double two_pi = 0x1.921fb54442d18p+2;
 static const double seconds_per_day = 86400.0;
 static const double seconds_per_century = 3155760000.0; /* 36525 days */
 
+enum { TABLE_VALUES = 6, MAX_NODES = 1 << 26 };
+
 struct myb_cip {
   myb_allocator allocator;
   myb_internal_poisson_group series; /* X, Y, s + XY/2 */
   double era[2];                  /* ERA = 2 pi (era[0] + Tu + era[1] Tu) */
   double sprime_rate;             /* s' = sprime_rate * t * scale of X */
+  /* the series at equal steps of TT (myb_cip_tabulate): X, Y, s and their rates a node */
+  double* table;
+  size_t nodes;
+  myb_time table_start;
+  double table_step;
 };
 
 static myb_status read_numbers(const myb_kpool* pool, const char* name, size_t expected,
@@ -88,6 +95,7 @@ void myb_cip_destroy(myb_cip* cip) {
   }
   const myb_allocator a = cip->allocator;
   myb_internal_poisson_free(&cip->series, &a);
+  myb_internal_release(&a, cip->table);
   myb_internal_release(&a, cip);
 }
 
@@ -95,8 +103,72 @@ static double centuries(myb_time tt) {
   return myb_time_seconds(tt) / seconds_per_century;
 }
 
+/* The series themselves. */
+static void series_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]);
+
+myb_status myb_cip_tabulate(myb_cip* cip, myb_time tt0, myb_time tt1, double step) {
+  MYB_CHECK(cip != NULL);
+  const double h = step > 0.0 ? step : 3600.0;
+  const double span = myb_dd_to_double(myb_time_diff(tt1, tt0));
+  if (!(step >= 0.0) || !isfinite(step) || !(span > 0.0) || !(span / h < (double)MAX_NODES - 2.0)) {
+    return MYB_E_DOMAIN;
+  }
+  const size_t nodes = (size_t)ceil(span / h) + 1;
+  void* block = NULL;
+  const myb_status status =
+      myb_internal_alloc_array(&cip->allocator, nodes * TABLE_VALUES, sizeof(double), &block);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* table = block;
+  for (size_t k = 0; k < nodes; ++k) {
+    series_xys(cip, myb_time_add(tt0, h * (double)k), table + TABLE_VALUES * k,
+               table + TABLE_VALUES * k + 3);
+  }
+  myb_internal_release(&cip->allocator, cip->table);
+  cip->table = table;
+  cip->nodes = nodes;
+  cip->table_start = tt0;
+  cip->table_step = h;
+  return MYB_OK;
+}
+
 void myb_cip_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]) {
   MYB_CHECK(cip != NULL && xys != NULL);
+  if (cip->table != NULL) {
+    const double h = cip->table_step;
+    const double since = myb_dd_to_double(myb_time_diff(tt, cip->table_start));
+    if (since >= 0.0 && since <= h * (double)(cip->nodes - 1)) {
+      /* the cubic through the values and the rates at the two nodes around tt */
+      double k = floor(since / h);
+      if (k > (double)(cip->nodes - 2)) {
+        k = (double)(cip->nodes - 2);
+      }
+      const double* a = cip->table + TABLE_VALUES * (size_t)k;
+      const double* b = a + TABLE_VALUES;
+      const double s = since / h - k;
+      const double s2 = s * s;
+      const double s3 = s2 * s;
+      const double h00 = 2.0 * s3 - 3.0 * s2 + 1.0;
+      const double h10 = s3 - 2.0 * s2 + s;
+      const double h01 = -2.0 * s3 + 3.0 * s2;
+      const double h11 = s3 - s2;
+      const double d00 = 6.0 * s2 - 6.0 * s;
+      const double d10 = 3.0 * s2 - 4.0 * s + 1.0;
+      const double d11 = 3.0 * s2 - 2.0 * s;
+      for (int i = 0; i < 3; ++i) {
+        xys[i] = h00 * a[i] + h10 * h * a[3 + i] + h01 * b[i] + h11 * h * b[3 + i];
+        if (rates != NULL) {
+          rates[i] = d00 * (a[i] - b[i]) / h + d10 * a[3 + i] + d11 * b[3 + i];
+        }
+      }
+      return;
+    }
+  }
+  series_xys(cip, tt, xys, rates);
+}
+
+static void series_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]) {
   const double t = centuries(tt);
   double value[3];
   double rate[3];

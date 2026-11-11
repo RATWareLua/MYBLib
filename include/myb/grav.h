@@ -126,10 +126,17 @@ MYB_API MYB_NODISCARD myb_status myb_gravity_field_gradient(const myb_gravity_fi
  *     m2 = -(yp - ys) about the secular pole (sections 6.4, 6.5; chapter 7, eq. 21);
  *   ocean tides: dC_nm - i dS_nm = sum_f (C+ - i S+) e^(i theta_f) + (C- + i S-) e^(-i theta_f)
  *     (eq. 6.15) from files of the form of the IERS fes2004_Cnm-Snm.dat (Doodson number, name,
- *     n, m, C+, S+, C-, S- in units of 1e-11), degree 1 skipped; S_n0 is not changed.
+ *     n, m, C+, S+, C-, S- in units of 1e-11), degree 1 skipped; S_n0 is not changed;
+ *   secondary waves of the ocean tides: a wave the file does not give takes its coefficients
+ *     from two waves it gives, the pivot waves, the admittance changing linearly with the
+ *     frequency between them (eq. 6.16, Table 6.7):
+ *     C_f = (w_f - w_1) / (w_2 - w_1) H_f / H_2 C_2 + (w_2 - w_f) / (w_2 - w_1) H_f / H_1 C_1,
+ *     w the rates of the arguments and H the astronomical amplitudes.
  * The kernel variables: <prefix>_ARGUMENT_* and the series <prefix>_C20 .. _S22 (form of
  * data/frames/iau2006-cip.tk), <prefix>_LOVE (rows n, m, Re k, Im k, k+), _PERMANENT (A0, H0),
- * _POLE_SOLID and _POLE_OCEAN (c1, a1, c2, a2), _SECULAR_POLE (xs0, xs1, ys0, ys1 in mas). */
+ * _POLE_SOLID and _POLE_OCEAN (c1, a1, c2, a2), _SECULAR_POLE (xs0, xs1, ys0, ys1 in mas),
+ * and, if there are secondary waves, _ADMITTANCE (rows of the Doodson number and H of the wave
+ * and of its two pivot waves). */
 
 typedef struct myb_tides myb_tides;
 
@@ -149,6 +156,21 @@ MYB_API MYB_NODISCARD myb_status myb_tides_load_ocean_file(myb_tides* tides, con
                                                            int max_degree, myb_diag* diag);
 MYB_API size_t myb_tides_ocean_waves(const myb_tides* tides);
 
+/* Adds the waves of another text of the same form to those loaded: a wave given apart from a
+ * model of the ocean tides (the mean S1 of the Conventions), the tides S1 and S2 of the
+ * atmosphere given as coefficients of the geopotential. A wave that is already loaded counts
+ * twice: its coefficients add. Errors as myb_tides_load_ocean; on an error the loaded waves
+ * stay. */
+MYB_API MYB_NODISCARD myb_status myb_tides_add_waves(myb_tides* tides, const char* text,
+                                                     size_t size, int max_degree,
+                                                     myb_diag* diag);
+MYB_API MYB_NODISCARD myb_status myb_tides_add_waves_file(myb_tides* tides, const char* path,
+                                                          int max_degree, myb_diag* diag);
+
+/* The secondary waves of the table of admittance that the loaded waves carry: those whose
+ * two pivot waves are loaded and which are not loaded themselves. */
+MYB_API size_t myb_tides_secondary_waves(const myb_tides* tides);
+
 /* A tide-raising body: its GM and its position in the body-fixed frame of the field (m). */
 typedef struct myb_tide_raiser {
   double gm;
@@ -161,7 +183,8 @@ enum {
   MYB_TIDES_OCEAN = 4,
   MYB_TIDES_POLE_SOLID = 8,
   MYB_TIDES_POLE_OCEAN = 16,
-  MYB_TIDES_ALL = 31
+  MYB_TIDES_ADMITTANCE = 32, /* with MYB_TIDES_OCEAN: the secondary waves too */
+  MYB_TIDES_ALL = 63
 };
 
 typedef enum myb_permanent_tide {

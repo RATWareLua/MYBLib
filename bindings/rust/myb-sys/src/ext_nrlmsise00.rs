@@ -41,3 +41,31 @@ unsafe extern "C" {
         output: *mut myb_nrlmsise00_output,
     ) -> myb_status;
 }
+#[repr(C)]
+pub struct myb_nrlmsise00_atmosphere {
+    pub weather: *const myb_space_weather,
+    pub f107: f64,
+    pub f107_average: f64,
+    pub ap: f64,
+    pub timesys: *const myb_timesys,
+    pub scale: myb_scale,
+    pub ellipsoid: myb_ellipsoid,
+    pub anomalous_oxygen: ::std::os::raw::c_int,
+}
+impl Default for myb_nrlmsise00_atmosphere {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_nrlmsise00_density(
+        atmosphere: *mut ::std::os::raw::c_void,
+        t: myb_time,
+        r: *const f64,
+        density: *mut f64,
+    ) -> myb_status;
+}
