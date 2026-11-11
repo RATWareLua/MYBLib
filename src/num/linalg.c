@@ -11,6 +11,7 @@
 
 #include "core/base.h"
 #include "myb/num.h"
+#include "num/linalg_internal.h"
 
 enum { MAX_N = 64 };
 
@@ -18,6 +19,10 @@ static const double eps = 0x1p-52;
 
 myb_status myb_lu_solve(size_t n, double* a, double* b, size_t nrhs) {
   MYB_CHECK(a != NULL && b != NULL && n <= MAX_N);
+  return myb_internal_lu_solve(n, a, b, nrhs);
+}
+
+myb_status myb_internal_lu_solve(size_t n, double* a, double* b, size_t nrhs) {
   for (size_t k = 0; k < n; ++k) {
     /* pivot */
     size_t p = k;

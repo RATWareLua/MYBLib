@@ -31,4 +31,10 @@ int myb_internal_nbody_velocity_dependent(const myb_nbody* nbody);
  * bodies is mirrored), so that sum GM_i a_i = 0 over the massive bodies (Newton's third law). */
 int myb_internal_nbody_reciprocal(myb_nbody* nbody);
 
+/* A new GM for a massive body (mergers of dyn/system.c): finite, >= 0. */
+void myb_internal_nbody_set_gm(myb_nbody* nbody, size_t body, double gm);
+
+/* 1 and the parameters if myb_nbody_set_relativity was called, 0 otherwise. */
+int myb_internal_nbody_relativity(const myb_nbody* nbody, myb_ppn* ppn);
+
 #endif /* MYB_SRC_DYN_NBODY_INTERNAL_H_ */

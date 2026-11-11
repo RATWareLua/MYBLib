@@ -51,6 +51,14 @@ struct myb_orbit {
   int64_t breaks;
   signed char break_sign[MYB_MODEL_MAX_BREAKS]; /* at the time integrated to; 0 = not known */
   double y_begin[6]; /* at the beginning of the step being taken */
+  /* DOP853 with the variational equations: the state and its variations as one system of
+   * the first order, `wide` values — the state (6), then for every column of the transition
+   * matrix and of the sensitivities its part of the position (3) and of the velocity (3) */
+  size_t wide;       /* 0 without them */
+  size_t parameters; /* of the model, when the object was made */
+  double* wide_start;   /* 3 * wide: the state the integration (re)started from, */
+  double* wide_begin;   /* that at the beginning of the step being taken, */
+  double* wide_scratch; /* and one to read into */
 };
 
 void myb_orbit_destroy(myb_orbit* orbit) {
@@ -61,6 +69,7 @@ void myb_orbit_destroy(myb_orbit* orbit) {
   myb_ias15_destroy(orbit->ias);
   myb_variational_destroy(orbit->var);
   myb_dop853_destroy(orbit->dop);
+  myb_internal_release(&a, orbit->wide_start);
   myb_internal_release(&a, orbit);
 }
 
@@ -72,8 +81,7 @@ myb_status myb_orbit_create(myb_force_model* model, const myb_orbit_options* opt
   if (!(opt->epsilon >= 0.0) || !(opt->h_max >= 0.0) || opt->max_steps < 0 ||
       !isfinite(opt->epsilon) || !isfinite(opt->h_max) || !(opt->rtol >= 0.0) ||
       !(opt->atol >= 0.0) || !isfinite(opt->rtol) || !isfinite(opt->atol) ||
-      (opt->integrator != MYB_ORBIT_IAS15 && opt->integrator != MYB_ORBIT_DOP853) ||
-      (opt->integrator == MYB_ORBIT_DOP853 && opt->variational)) {
+      (opt->integrator != MYB_ORBIT_IAS15 && opt->integrator != MYB_ORBIT_DOP853)) {
     return MYB_E_DOMAIN;
   }
   const myb_allocator a = myb_internal_allocator(allocator);
@@ -92,7 +100,22 @@ myb_status myb_orbit_create(myb_force_model* model, const myb_orbit_options* opt
     const myb_dop853_options options853 = {.rtol = opt->rtol > 0.0 ? opt->rtol : 1e-12,
                                            .atol = opt->atol > 0.0 ? opt->atol : 1e-9,
                                            .h_max = opt->h_max};
-    status = myb_dop853_create(6, &options853, allocator, &o->dop);
+    size_t n = 6;
+    if (opt->variational) {
+      o->parameters = myb_force_model_parameter_count(model);
+      o->wide = 6 + 6 * (6 + o->parameters);
+      n = o->wide;
+      status = myb_internal_alloc_array(&a, 3 * o->wide, sizeof(double), &block);
+      if (status == MYB_OK) {
+        o->wide_start = block;
+        o->wide_begin = o->wide_start + o->wide;
+        o->wide_scratch = o->wide_begin + o->wide;
+        memset(o->wide_start, 0, 3 * o->wide * sizeof(double));
+      }
+    }
+    if (status == MYB_OK) {
+      status = myb_dop853_create(n, &options853, allocator, &o->dop);
+    }
   } else if (opt->variational) {
     const myb_variational_options vo = {.epsilon = epsilon, .h_max = opt->h_max};
     status = myb_variational_create(model, &vo, allocator, &o->var);
@@ -116,6 +139,69 @@ static myb_status first_order(void* model, double t, const double* y, double* dy
   return myb_force_model_acceleration(model, t, y, y + 3, dydt + 3);
 }
 
+/* The same with the variations (context = the orbit): for every column d of the transition
+ * matrix and of the sensitivities, d(position)' = d(velocity) and
+ * d(velocity)' = (da/dx) d(position) + (da/dv) d(velocity) (+ da/dp for a parameter). */
+static myb_status first_order_wide(void* orbit, double t, const double* y, double* dydt) {
+  const myb_orbit* o = orbit;
+  dydt[0] = y[3];
+  dydt[1] = y[4];
+  dydt[2] = y[5];
+  myb_status status = myb_force_model_acceleration(o->model, t, y, y + 3, dydt + 3);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double jx[9];
+  double jv[9];
+  double jp[3 * MYB_MODEL_MAX_PARAMETERS];
+  status = myb_force_model_jacobian(o->model, t, y, y + 3, jx, jv, o->parameters > 0 ? jp : NULL);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const size_t columns = 6 + o->parameters;
+  for (size_t col = 0; col < columns; ++col) {
+    const double* d = y + 6 + 6 * col;
+    double* dd = dydt + 6 + 6 * col;
+    for (int i = 0; i < 3; ++i) {
+      dd[i] = d[3 + i];
+      double s = jx[3 * i] * d[0] + jx[3 * i + 1] * d[1] + jx[3 * i + 2] * d[2] +
+                 jv[3 * i] * d[3] + jv[3 * i + 1] * d[4] + jv[3 * i + 2] * d[5];
+      if (col >= 6) {
+        s += jp[(size_t)i * o->parameters + (col - 6)];
+      }
+      dd[3 + i] = s;
+    }
+  }
+  return MYB_OK;
+}
+
+/* The state, the transition matrix and the sensitivities out of the wide vector. */
+static void unpack_wide(const myb_orbit* o, const double* wide, double y[6], double phi[36],
+                        double* sensitivity) {
+  if (y != NULL) {
+    memcpy(y, wide, 6 * sizeof *wide);
+  }
+  const size_t columns = 6 + o->parameters;
+  for (size_t col = 0; col < columns; ++col) {
+    const double* d = wide + 6 + 6 * col;
+    for (size_t i = 0; i < 6; ++i) {
+      if (col < 6 && phi != NULL) {
+        phi[i * 6 + col] = d[i];
+      } else if (col >= 6 && sensitivity != NULL) {
+        sensitivity[i * o->parameters + (col - 6)] = d[i];
+      }
+    }
+  }
+}
+
+/* (Re)starts DOP853 from o->wide_start, or from the six numbers y without the variations. */
+static myb_status start_dop853(myb_orbit* o, double t, const double* y) {
+  if (o->wide == 0) {
+    return myb_dop853_start(o->dop, first_order, o->model, t, y);
+  }
+  return myb_dop853_start(o->dop, first_order_wide, o, t, o->wide_start);
+}
+
 static signed char sign_of(double g) {
   return g > 0.0 ? 1 : (g < 0.0 ? -1 : 0);
 }
@@ -132,8 +218,15 @@ myb_status myb_orbit_start(myb_orbit* orbit, double t0, const double y0[6], doub
       return MYB_E_DOMAIN;
     }
   }
+  if (o->wide != 0) { /* the state, the unit matrix, no sensitivity yet */
+    memset(o->wide_start, 0, o->wide * sizeof(double));
+    memcpy(o->wide_start, y0, 6 * sizeof(double));
+    for (size_t col = 0; col < 6; ++col) {
+      o->wide_start[6 + 6 * col + col] = 1.0;
+    }
+  }
   const myb_status status =
-      o->dop != NULL   ? myb_dop853_start(o->dop, first_order, o->model, t0, y0)
+      o->dop != NULL   ? start_dop853(o, t0, y0)
       : o->var != NULL ? myb_variational_start(o->var, t0, y0)
                        : myb_ias15_start(o->ias, myb_force_model_accel, o->model, t0, y0);
   if (status != MYB_OK) {
@@ -187,6 +280,13 @@ static myb_status dense(myb_orbit* o, double t, double y[6]) {
   if (!o->have_step) {
     memcpy(y, o->y0, sizeof o->y0);
     return MYB_OK;
+  }
+  if (o->dop != NULL && o->wide != 0) {
+    const myb_status status = myb_dop853_dense(o->dop, t, o->wide_scratch);
+    if (status == MYB_OK) {
+      memcpy(y, o->wide_scratch, 6 * sizeof *y);
+    }
+    return status;
   }
   if (o->dop != NULL) {
     return myb_dop853_dense(o->dop, t, y);
@@ -270,6 +370,9 @@ static myb_status advance_dop853(myb_orbit* o) {
   const double before = myb_dop853_time(o->dop);
   if (count > 0) {
     memcpy(o->y_begin, myb_dop853_state(o->dop), sizeof o->y_begin);
+    if (o->wide != 0) {
+      memcpy(o->wide_begin, myb_dop853_state(o->dop), o->wide * sizeof(double));
+    }
   }
   myb_status status = myb_dop853_step(o->dop, o->approaching ? o->break_time : o->t_end);
   if (status != MYB_OK) {
@@ -301,7 +404,10 @@ static myb_status advance_dop853(myb_orbit* o) {
     return MYB_OK;
   }
   o->have_step = 0;
-  status = myb_dop853_start(o->dop, first_order, o->model, before, o->y_begin);
+  if (o->wide != 0) {
+    memcpy(o->wide_start, o->wide_begin, o->wide * sizeof(double));
+  }
+  status = start_dop853(o, before, o->y_begin);
   if (status == MYB_OK) {
     status = myb_dop853_step(o->dop, t_break);
   }
@@ -429,7 +535,7 @@ myb_status myb_orbit_partials(myb_orbit* orbit, double t, double y[6], double ph
                               double* sensitivity) {
   MYB_CHECK(orbit != NULL && orbit->started);
   myb_orbit* o = orbit;
-  if (o->var == NULL) {
+  if (o->var == NULL && o->wide == 0) {
     return MYB_E_DOMAIN;
   }
   myb_status status = in_order(o, t);
@@ -440,7 +546,16 @@ myb_status myb_orbit_partials(myb_orbit* orbit, double t, double y[6], double ph
   if (status != MYB_OK) {
     return status;
   }
-  if (o->have_step) {
+  if (o->wide != 0) {
+    const double* wide = o->wide_start;
+    if (o->have_step) {
+      status = myb_dop853_dense(o->dop, t, o->wide_scratch);
+      wide = o->wide_scratch;
+    }
+    if (status == MYB_OK) {
+      unpack_wide(o, wide, y, phi, sensitivity);
+    }
+  } else if (o->have_step) {
     status = myb_variational_dense(o->var, t, y, phi, sensitivity);
   } else {
     myb_variational_get(o->var, y, phi, sensitivity);
@@ -483,8 +598,18 @@ myb_status myb_orbit_kick(myb_orbit* orbit, const double dv[3]) {
     for (int i = 0; i < 3; ++i) {
       y[3 + i] += dv[i];
     }
+    if (o->wide != 0) { /* the variations go on from where they are: an impulse changes none */
+      if (o->have_step) {
+        status = myb_dop853_dense(o->dop, t, o->wide_scratch);
+        if (status != MYB_OK) {
+          return status;
+        }
+        memcpy(o->wide_start, o->wide_scratch, o->wide * sizeof(double));
+      }
+      memcpy(o->wide_start, y, 6 * sizeof(double));
+    }
     status = o->dop != NULL
-                 ? myb_dop853_start(o->dop, first_order, o->model, t, y)
+                 ? start_dop853(o, t, y)
                  : myb_ias15_start(o->ias, myb_force_model_accel, o->model, t, y);
     o->approaching = 0;
   }

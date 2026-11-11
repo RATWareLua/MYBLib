@@ -37,6 +37,6 @@ function(myb_add_ext name)
 endfunction()
 
 myb_add_ext(nrlmsise00 nrlmsise00/nrlmsise00.c)
-myb_add_ext(sgp4 sgp4/sgp4.c)
+myb_add_ext(sgp4 sgp4/sgp4.c sgp4/tle_fit.c)
 myb_add_ext(troposphere troposphere/troposphere.c)
 myb_add_ext(ionosphere ionosphere/ionosphere.c)

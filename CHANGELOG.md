@@ -78,10 +78,51 @@ version the API only grows. Details, checks and measured accuracies of every pha
   package `myb` over the shared library (cffi); Rust — the crates `myb-sys` and `myb`. Each
   has the whole C interface and classes for the usual path; results agree with the C calls
   to the bit. The example `examples/low_orbit.cpp`.
+- `myb_budget_linear` (`myb/budget.h`): the budget of effects to first order — one
+  propagation with a variation per term instead of a propagation per term; no floor of
+  round-off.
+- `myb/regular.h`: the time element of the KS equations (`MYB_REGULAR_KS_ELEMENT`,
+  `myb_ks_element_from_cartesian`, `myb_ks_element_to_cartesian`, `myb_ks_element_rhs`); the
+  Sundman transformation with any exponent α ≥ 0.
+- The XML notation of the CCSDS messages: values in CDATA sections; a document type
+  declaration with an internal subset is passed over.
+- `myb/system.h`: a system of bodies with models (`myb_system`) — over the point masses of
+  `myb_nbody`, levels of the graph: the field of a body on a point, the quadrupoles of two
+  bodies, the tide by band with lags, the distortion of a body, the terms beyond 1PN of a
+  pair (with spins), actions of any kind and light on the mesh of a body; the rotation of
+  bodies (a mantle with a fluid core) integrated with the motion; encounters, collisions,
+  rebound and merger.
+- `myb_ias15_options.groups`, `group_count`: groups of coordinates of different kinds, each
+  setting the step and judging the convergence by itself.
+- `myb/iod.h`: initial orbit determination — `myb_iod_gibbs`, `myb_iod_herrick_gibbs`,
+  `myb_iod_gauss` (from directions, refined by Newton's method).
+- `myb/relative.h`: relative motion — the state in the frame of the chief, the linear map
+  for any conic (`myb_relative_stm`), Clohessy–Wiltshire (`myb_cw_stm`), a two-impulse
+  rendezvous, relative elements.
+- `myb/conjunction.h`: the closest approaches of two objects (`myb_approach_find`,
+  `myb_approach_orbits`) and the probability of collision (`myb_encounter_plane`,
+  `myb_collision_probability`, `_chan`, `_max`).
+- `myb/kepler.h`: `myb_mean_elements_average`; `ext/sgp4`: `myb_tle_fit`,
+  `myb_tle_from_state`.
+- `myb/cr3bp.h`: multiple shooting and pseudo-arclength continuation of families of periodic
+  orbits (`myb_cr3bp_orbit_from_state`, `_correct`, `_continue`).
+- `myb/thrust.h`: the Q-law of low thrust — `myb_qlaw`, `myb_qlaw_direction`,
+  `myb_qlaw_arrived`, the model term `myb_term_qlaw` with an effectivity threshold; the same
+  engine with the mass in the state — `myb_qlaw_flight_rhs`, `myb_qlaw_fly`.
+- `myb/conjunction.h`: `myb_conjunction_find` — approaches with the covariances carried to
+  them by the transition matrices of the orbits, and the probability of collision at each.
+- `myb/optimal.h` (new): the indirect method for low thrust — `myb_indirect_solve` (the
+  least propellant in a given time, the least time), `myb_indirect_sample`; the direct method
+  of Sims and Flanagan — `myb_sims_flanagan_mismatch`, `myb_sims_flanagan_solve`; a solver of
+  nonlinear programs — `myb_nlp_solve`.
+- `myb/cr3bp.h`: quasi-periodic orbits as invariant circles of the flow —
+  `myb_cr3bp_torus_from_orbit`, `myb_cr3bp_torus_continue` (families of one Jacobi constant,
+  one period or one rotation), `myb_cr3bp_torus_state`.
 
 ### Changed
 - `myb_state_function` is declared in `myb/kin.h` (`myb/observe.h` includes it).
 - `myb/force.h` includes `myb/frames.h`.
+- `myb/thrust.h` includes `myb/model.h`.
 - The headers of `ext/` mark their functions with `MYB_EXT_API` instead of `MYB_API`.
 - `ext/sgp4/myb_sgp4.h` includes `myb/ccsds.h`.
 - New trailing fields (zero keeps the former behaviour): `myb_object.mass_function` and
@@ -98,6 +139,14 @@ version the API only grows. Details, checks and measured accuracies of every pha
   `myb/surface.h`.
 - `myb_term_drag_jacobian` takes the gradient of a wind into account (by differences of the
   wind function); without a wind the result is the same to the bit.
+- `myb_sundman_rhs` no longer returns `MYB_E_DOMAIN` for an exponent other than 1, 3/2 and 2
+  (only for a negative or non-finite one); for 1, 3/2 and 2 the result is the same to the
+  bit. The description in `myb/regular.h` is corrected: steps uniform in the true anomaly
+  belong to α = 2, not to 3/2.
+- The C++ header: the functions that C calls moved to `myb::detail` and are pinned by
+  `static_assert(noexcept(…))`.
+- `myb_orbit` with DOP853 accepts `variational` (it was `MYB_E_DOMAIN`): the variations are
+  integrated with the state.
 
 ## 1.1.0.0 — 2026-11-10 (no tag)
 

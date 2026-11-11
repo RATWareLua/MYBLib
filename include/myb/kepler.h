@@ -11,6 +11,8 @@
 #ifndef MYB_KEPLER_H_
 #define MYB_KEPLER_H_
 
+#include <stddef.h>
+
 #include "myb/core.h"
 
 #ifdef __cplusplus
@@ -103,6 +105,33 @@ MYB_API MYB_NODISCARD myb_status myb_equinoctial_from_pv(double mu, const myb_pv
                                                          myb_equinoctial* elements);
 MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial(double mu, const myb_equinoctial* elements,
                                                          myb_pv* pv);
+
+/* Mean elements by averaging: the elements of a perturbed orbit oscillate about values that
+ * change slowly; the means of the semi-major axis and of the equinoctial f, g, h, k over
+ * samples that span whole revolutions are free of the oscillation to the first order, and
+ * the mean longitude M + argp + raan is fitted by a line — its value at the mean of the times
+ * and its rate, the mean motion with the secular drifts in it. Nothing is assumed about the
+ * forces. (The mean elements of an analytic theory are another thing: for those of SGP4 see
+ * myb_tle_fit of ext/sgp4.) */
+typedef struct myb_mean_elements {
+  double a;      /* m */
+  double f;      /* e cos(argp + raan) */
+  double g;      /* e sin(argp + raan) */
+  double h;      /* tan(i/2) cos(raan) */
+  double k;      /* tan(i/2) sin(raan) */
+  double lambda; /* mean longitude at `epoch`, [0, 2 pi) */
+  double rate;   /* of the mean longitude (rad/s) */
+  double epoch;  /* the mean of the times (s) */
+} myb_mean_elements;
+
+/* From count >= 3 states (6 values each: m, m/s) at increasing times (s), neighbours less
+ * than a revolution apart, the whole spanning whole revolutions as closely as the caller can
+ * arrange (a part of a revolution left over biases the means by that part of the
+ * oscillation). Errors: MYB_E_DOMAIN (mu <= 0, too few states, times not increasing, a state
+ * that is no ellipse), those of myb_equinoctial_from_pv. */
+MYB_API MYB_NODISCARD myb_status myb_mean_elements_average(double mu, const double* times,
+                                                           const double* states, size_t count,
+                                                           myb_mean_elements* mean);
 
 /* ---- Propagation ------------------------------------------------------------------------- */
 

@@ -33,6 +33,7 @@ typedef struct line {
   size_t value_length;
   long number;
   const char* alias; /* the keyword of a mark that the text spells otherwise (XML) */
+  int raw;           /* XML: the value is a CDATA section, to be taken as written */
 } line;
 
 typedef struct cursor {
@@ -59,7 +60,9 @@ static int keyword_char(char c) {
  * 505.0-B): the root names the message and its version in the attributes id and version; a
  * keyword is an element with its value as text; the sections are elements in lower case.
  * The scanner gives them as the lines of the other notation — nothing is copied —, so that one
- * reader serves both. Not read: CDATA sections, a document type with an internal subset. */
+ * reader serves both. A value may be given as one CDATA section (taken as written: no entities
+ * in it); a document type declaration is passed over with its internal subset, whose entities
+ * are not known to the reader (&name; stays as written). */
 
 static int xml_space(char c) {
   return blank(c) || c == '\n';
@@ -91,6 +94,75 @@ static void xml_skip(cursor* c, const char* end) {
     c->line += c->text[c->at] == '\n';
     ++c->at;
   }
+}
+
+static int xml_at(const cursor* c, size_t at, const char* what) {
+  const size_t n = strlen(what);
+  return at <= c->size && c->size - at >= n && memcmp(c->text + at, what, n) == 0;
+}
+
+/* Past a document type declaration: its '>' outside the quotes and outside the internal subset
+ * [ ... ], where comments and processing instructions may hold any character. */
+static void xml_skip_doctype(cursor* c) {
+  int subset = 0;
+  char quote = '\0';
+  /* bound: the size of the text; every pass moves on */
+  while (c->at < c->size) {
+    const char ch = c->text[c->at];
+    if (quote != '\0') {
+      quote = ch == quote ? '\0' : quote;
+    } else if (subset && xml_at(c, c->at, "<!--")) {
+      xml_skip(c, "-->");
+      continue;
+    } else if (subset && xml_at(c, c->at, "<?")) {
+      xml_skip(c, "?>");
+      continue;
+    } else if (ch == '"' || ch == '\'') {
+      quote = ch;
+    } else if (ch == '[') {
+      subset = 1;
+    } else if (ch == ']') {
+      subset = 0;
+    } else if (ch == '>' && !subset) {
+      ++c->at;
+      return;
+    }
+    c->line += ch == '\n';
+    ++c->at;
+  }
+}
+
+/* A value that is one CDATA section, [*from, *to) trimmed: narrowed to what the section holds.
+ * 1 if it was one; -1 if a section is mixed with other characters (no value of a message is). */
+static int xml_cdata(const cursor* c, size_t* from, size_t* to) {
+  static const char open[] = "<![CDATA[";
+  static const char close[] = "]]>";
+  const char* s = c->text;
+  size_t first = *to; /* of the first section in the value */
+  /* bound: the characters of the value */
+  for (size_t i = *from; i + sizeof open - 1 <= *to && first == *to; ++i) {
+    if (memcmp(s + i, open, sizeof open - 1) == 0) {
+      first = i;
+    }
+  }
+  if (first == *to) {
+    return 0;
+  }
+  if (first != *from || *to - *from < sizeof open - 1 + sizeof close - 1 ||
+      memcmp(s + *to - (sizeof close - 1), close, sizeof close - 1) != 0) {
+    return -1;
+  }
+  const size_t inner = *from + sizeof open - 1;
+  const size_t inner_end = *to - (sizeof close - 1);
+  /* bound: the characters of the section */
+  for (size_t i = inner; i + sizeof close - 1 <= inner_end; ++i) {
+    if (memcmp(s + i, close, sizeof close - 1) == 0) {
+      return -1; /* it ended before: more follows it */
+    }
+  }
+  *from = inner;
+  *to = inner_end;
+  return 1;
 }
 
 /* The value of the attribute `name` among the characters [from, to) of a tag. */
@@ -182,7 +254,13 @@ static void next_xml(cursor* c, line* out) {
       continue;
     }
     if (tag + 1 < c->size && s[tag + 1] == '!') {
-      xml_skip(c, ">");
+      if (xml_at(c, tag, "<![CDATA[")) {
+        xml_skip(c, "]]>"); /* character data between the elements: nothing reads it */
+      } else if (xml_at(c, tag, "<!DOCTYPE")) {
+        xml_skip_doctype(c);
+      } else {
+        xml_skip(c, ">");
+      }
       continue;
     }
     const int closing = tag + 1 < c->size && s[tag + 1] == '/';
@@ -206,6 +284,7 @@ static void next_xml(cursor* c, line* out) {
     }
     out->number = c->line + 1;
     out->alias = NULL;
+    out->raw = 0;
     if (close >= c->size) { /* a tag that does not end: no keyword reads it */
       c->at = c->size;
       out->kind = LINE_DATA;
@@ -252,20 +331,39 @@ static void next_xml(cursor* c, line* out) {
       /* <KEYWORD>value</KEYWORD>: the value, and past the closing tag */
       size_t from = c->at;
       size_t to = from;
+      int section = 0;
       if (empty) {
         from = to = close;
       } else {
-        while (to < c->size && s[to] != '<') {
+        /* bound: the size of the text */
+        while (to < c->size && (s[to] != '<' || xml_at(c, to, "<![CDATA["))) {
+          if (s[to] == '<') { /* a section: to its end, whatever it holds */
+            c->at = to;
+            xml_skip(c, "]]>");
+            to = c->at;
+            continue;
+          }
           c->line += s[to] == '\n';
           ++to;
         }
         c->at = to;
         xml_skip(c, ">");
+        trim(s, &from, &to);
+        section = xml_cdata(c, &from, &to);
       }
       trim(s, &from, &to);
       if (n == 7 && memcmp(s + name, "COMMENT", 7) == 0) {
         continue;
       }
+      if (section < 0) { /* a section among other characters: no keyword reads it */
+        out->kind = LINE_DATA;
+        out->key = tag;
+        out->key_length = 0;
+        out->value = tag;
+        out->value_length = close - tag;
+        return;
+      }
+      out->raw = section;
       out->kind = LINE_PAIR;
       out->key = name;
       out->key_length = n;
@@ -313,6 +411,12 @@ static void next_xml(cursor* c, line* out) {
     c->at = to;
     xml_skip(c, ">");
     trim(s, &from, &to);
+    /* the whole line as one section: what it holds (sections inside the elements of a line
+     * are for next_word) */
+    if (xml_cdata(c, &from, &to) > 0) {
+      out->raw = 1;
+      trim(s, &from, &to);
+    }
     out->kind = LINE_DATA;
     out->key = from;
     out->key_length = 0;
@@ -353,6 +457,7 @@ static size_t xml_decode(char* s, size_t n) {
 static void next_line(cursor* c, line* out) {
   out->kind = LINE_END;
   out->alias = NULL;
+  out->raw = 0;
   if (c->xml) {
     next_xml(c, out);
     return;
@@ -422,13 +527,17 @@ static int key_is(const cursor* c, const line* l, const char* name) {
 }
 
 /* The next word of a line of data: blanks, line ends and the tags of the XML notation part
- * the words. */
+ * the words, and so do the two ends of a CDATA section. */
 static int next_word(const char* s, size_t n, size_t* at, size_t* start, size_t* length) {
   size_t i = *at;
   /* bound: the characters of the line */
   while (i < n) {
     if (xml_space(s[i])) {
       ++i;
+    } else if (n - i >= 9 && memcmp(s + i, "<![CDATA[", 9) == 0) {
+      i += 9;
+    } else if (n - i >= 3 && memcmp(s + i, "]]>", 3) == 0) {
+      i += 3;
     } else if (s[i] == '<') {
       while (i < n && s[i] != '>') {
         ++i;
@@ -439,7 +548,8 @@ static int next_word(const char* s, size_t n, size_t* at, size_t* start, size_t*
     }
   }
   size_t end = i;
-  while (end < n && !xml_space(s[end]) && s[end] != '<') {
+  while (end < n && !xml_space(s[end]) && s[end] != '<' &&
+         !(n - end >= 3 && memcmp(s + end, "]]>", 3) == 0)) {
     ++end;
   }
   *start = i;
@@ -1005,7 +1115,7 @@ static myb_status oem_pass(myb_oem* oem, size_t size, int fill, myb_diag* diag) 
       }
       if (fill) {
         const size_t value_length =
-            c.xml ? xml_decode(oem->text + l.value, l.value_length) : l.value_length;
+            c.xml && !l.raw ? xml_decode(oem->text + l.value, l.value_length) : l.value_length;
         oem->text[l.key + l.key_length] = '\0';
         oem->text[l.value + value_length] = '\0';
         oem->pairs[pairs] = (pair){oem->text + l.key, oem->text + l.value};
@@ -1366,7 +1476,7 @@ static myb_status named(const cursor* c, const line* l, char out[MYB_ODM_TEXT], 
   if (text_of(c->text + l->value, l->value_length, out) != MYB_OK) {
     return fail(diag, l->number, "an empty value or one longer than 63 characters");
   }
-  if (c->xml) {
+  if (c->xml && !l->raw) {
     out[xml_decode(out, l->value_length)] = '\0';
   }
   return MYB_OK;
@@ -1976,7 +2086,7 @@ static myb_status ocm_pass(myb_ocm* ocm, size_t size, int fill, myb_diag* diag) 
       }
       if (fill) {
         const size_t value_length =
-            c.xml ? xml_decode(ocm->text + l.value, l.value_length) : l.value_length;
+            c.xml && !l.raw ? xml_decode(ocm->text + l.value, l.value_length) : l.value_length;
         ocm->text[l.key + l.key_length] = '\0';
         ocm->text[l.value + value_length] = '\0';
         ocm->pairs[pairs] = (pair){ocm->text + l.key, ocm->text + l.value};
@@ -1996,7 +2106,8 @@ static myb_status ocm_pass(myb_ocm* ocm, size_t size, int fill, myb_diag* diag) 
       return fail(diag, l.number, "OCM: a line of data where there is none");
     }
     if (fill) {
-      const size_t length = c.xml ? xml_decode(ocm->text + l.value, l.value_length) : l.value_length;
+      const size_t length =
+          c.xml && !l.raw ? xml_decode(ocm->text + l.value, l.value_length) : l.value_length;
       ocm->text[l.value + length] = '\0';
       ocm->lines[lines] = ocm->text + l.value;
       ocm->blocks[blocks - 1].line_count++;

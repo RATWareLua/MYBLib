@@ -61,8 +61,10 @@ set(_myb_sources
   src/core/pool.c
   src/core/status.c
   src/cr3bp/cr3bp.c
+  src/cr3bp/torus.c
   src/dyn/model.c
   src/dyn/nbody.c
+  src/dyn/system.c
   src/dyn/whfast.c
   src/env/env.c
   src/env/terms.c
@@ -85,6 +87,7 @@ set(_myb_sources
   src/force/charging.c
   src/force/radiation.c
   src/force/surface.c
+  src/force/qlaw.c
   src/force/thrust.c
   src/frames/wgccre.c
   src/geom/geometry.c
@@ -112,7 +115,10 @@ set(_myb_sources
   src/kin/spk_writer.c
   src/kepler/elements.c
   src/kepler/propagate.c
+  src/kepler/iod.c
+  src/kepler/mean.c
   src/kepler/regular.c
+  src/kepler/relative.c
   src/kepler/stumpff.c
   src/io/numformat.c
   src/io/numparse.c
@@ -132,9 +138,13 @@ set(_myb_sources
   src/rel/rel.c
   src/cmath/cmath.c
   src/time/instant.c
+  src/transfer/indirect.c
   src/transfer/lambert.c
+  src/transfer/nlp.c
+  src/transfer/sims_flanagan.c
   src/transfer/transfer.c
   src/uncert/budget.c
+  src/uncert/conjunction.c
   src/uncert/uncert.c
   src/time/timesys.c
   ${_myb_platform_sources})

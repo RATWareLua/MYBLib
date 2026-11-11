@@ -14,6 +14,7 @@
 
 #include "myb/core.h"
 #include "myb/kepler.h"
+#include "myb/model.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,6 +100,102 @@ MYB_API MYB_NODISCARD myb_status myb_edelbaum(double v0, double v1, double di, d
  *   v = sqrt(v0^2 - 2 v0 dv cos beta0 + dv^2),
  *   di = (2 / pi) [atan((dv - v0 cos beta0) / (v0 sin beta0)) + pi / 2 - beta0]. */
 MYB_API void myb_edelbaum_state(double v0, double beta0, double dv, double* v, double* di);
+
+/* ---- The Q-law ---------------------------------------------------------------------------------
+ * A feedback law for a transfer between any two orbits (A. E. Petropoulos, AIAA 2004-5089):
+ * Q measures how far the orbit is from the target,
+ *   Q = (1 + W_P P) sum_k W_k S_k [(oe_k - target_k) / rate_k]^2,
+ * the distance of each element over the largest rate at which thrust of unit acceleration can
+ * change it anywhere on the orbit, so that Q is about the square of the time still needed;
+ * the thrust points where Q falls fastest — the gradient of Q carried through the Gauss
+ * equations at the true anomaly of the moment. P = exp(100 (1 - r_p / rp_min)) keeps the
+ * periapsis up. No optimisation and no guess is needed, and what comes out is near the
+ * optimum in time for the simple transfers (against Edelbaum's: the tests); it is the usual
+ * first guess for an optimiser. The elements are a, e, i, raan, argp: the law is singular
+ * where an angle that is targeted is not defined (argp on a circle, raan in the equator).
+ *
+ * The direction is the gradient made a unit vector, so it jumps where the gradient passes
+ * through zero — places of the orbit where thrust gains nothing — and near the target, where
+ * the terms pull against each other, an engine that always burns dithers there and stops
+ * advancing. Petropoulos' remedy is the effectivity: the rate of Q at the place of the moment
+ * over the best rate anywhere on the orbit; the engine burns only above a threshold (0.2 to
+ * 0.5 is usual) and coasts through the rest, which also saves propellant. */
+typedef struct myb_qlaw {
+  double mu;        /* of the centre, m^3 s^-2 */
+  double target[5]; /* a (m), e, i, raan, argp (rad) */
+  double weight[5]; /* W_k >= 0; 0 leaves the element free; at least one above 0 */
+  double rp_min;    /* the lowest periapsis radius wanted (m); 0: no limit */
+  double rp_weight; /* W_P; 0 = 1 */
+} myb_qlaw;
+
+/* The unit direction of the thrust (radial, transverse, normal components) for the orbit and
+ * the place on it given by `now`; *q (may be NULL) the value of Q for unit acceleration
+ * (s^2: of the order of the square of the time still needed), *q_rate (may be NULL) its
+ * rate per unit acceleration (s; never positive), *effectivity (may be NULL) that rate over
+ * the best at any of 72 places of the orbit, in [0, 1]. A zero direction where Q does not
+ * change with any thrust (at the target). Errors: MYB_E_DOMAIN (an invalid law, an orbit
+ * that is not an ellipse, non-finite input). */
+MYB_API MYB_NODISCARD myb_status myb_qlaw_direction(const myb_qlaw* law, const myb_elements* now,
+                                                    double direction[3], double* q,
+                                                    double* q_rate, double* effectivity);
+
+/* 1 if every targeted element is within its tolerance (in the units of the target). */
+MYB_API int myb_qlaw_arrived(const myb_qlaw* law, const myb_elements* now,
+                             const double tolerance[5]);
+
+/* The law as a term of a force model (myb_term_function; the context is this structure): an
+ * engine of constant thrust that points as the law says, is off wherever the effectivity is
+ * below the threshold and whenever the orbit is within the tolerances. The mass falls at
+ * thrust / exhaust from t0 on, as if the engine had burned without a pause: exact up to the
+ * arrival without a threshold, an overestimate of what is spent with one (a term has no
+ * memory of when it burned: myb_qlaw_fly below carries the mass in the state).
+ * The thrust goes on and off sharply, so an integrator with steps of its own choosing is the
+ * one to use (MYB_ORBIT_DOP853 of myb/orbit.h). Errors: those of myb_qlaw_direction;
+ * MYB_E_DOMAIN (the mass exhausted, a threshold outside [0, 1)). */
+typedef struct myb_qlaw_term {
+  const myb_qlaw* law;
+  double thrust;       /* N */
+  double exhaust;      /* effective exhaust velocity, m/s */
+  double mass0;        /* kg at t0 */
+  double t0;           /* s */
+  double tolerance[5]; /* of the elements, as the target */
+  double effectivity;  /* the threshold, in [0, 1); 0: the engine always burns */
+} myb_qlaw_term;
+
+MYB_API MYB_NODISCARD myb_status myb_term_qlaw(void* term, double t, const double x[3],
+                                               const double v[3], double a[3]);
+
+/* The same engine with the mass as a seventh component of the state, y = (x, v, m): the mass
+ * falls at thrust / exhaust only while the engine burns, so that what the pauses save is
+ * counted. mass0 and t0 of the term are not used. */
+typedef struct myb_qlaw_flight {
+  const myb_qlaw_term* engine;
+  myb_force_model* field; /* everything but the engine, the centre included (myb/model.h);
+                             NULL: the point mass of the law */
+  double rtol;            /* of DOP853 in myb_qlaw_fly; 0 = 1e-10 */
+  double atol;            /* 0 = 1e-4 (m, m/s, kg) */
+} myb_qlaw_flight;
+
+/* The right-hand side for an integrator of first-order systems (myb_ode_function of
+ * myb/integ.h; the context is a myb_qlaw_flight; 7 components). Errors: MYB_E_DOMAIN (an
+ * invalid engine, the mass exhausted, an orbit that is not an ellipse), those of the field. */
+MYB_API MYB_NODISCARD myb_status myb_qlaw_flight_rhs(void* flight, double t, const double* y,
+                                                     double* dydt);
+
+typedef struct myb_qlaw_arrival {
+  double t;    /* of the arrival, or t_limit (s) */
+  double y[7]; /* x, v (m, m/s) and the mass (kg) there */
+  int arrived; /* 1: every targeted element is within the tolerance of the engine's term */
+} myb_qlaw_arrival;
+
+/* Flies the law by DOP853 from y0 at t0 until the orbit is within the tolerances, looked at
+ * every `step` seconds, or until t_limit. Errors: MYB_E_DOMAIN (t_limit <= t0, step <= 0, a
+ * mass that is not positive, non-finite input), MYB_E_NOMEM, those of the right-hand side
+ * and of the integrator; the state reached by then is in *arrival. allocator may be NULL. */
+MYB_API MYB_NODISCARD myb_status myb_qlaw_fly(const myb_qlaw_flight* flight, double t0,
+                                              const double y0[7], double t_limit, double step,
+                                              const myb_allocator* allocator,
+                                              myb_qlaw_arrival* arrival);
 
 #ifdef __cplusplus
 }

@@ -77,6 +77,18 @@ typedef enum myb_sgp4_error {
                           myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes,
                                                     double r[3], double v[3],
                                                     myb_sgp4_error* error);
+typedef struct myb_tle_fit_options {
+  int bstar;
+  int max_iterations;
+  double tolerance;
+  myb_sgp4_gravity gravity;
+  myb_sgp4_mode mode;
+} myb_tle_fit_options;
+                          myb_status myb_tle_fit(const double* minutes, const double* positions,
+                                             size_t count, const myb_tle_fit_options* options,
+                                             myb_tle* tle, double* rms, int* iterations);
+                          myb_status myb_tle_from_state(const double r[3], const double v[3],
+                                                    myb_sgp4_gravity gravity, myb_tle* tle);
                           myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes,
                                                        double r[3], double v[3],
                                                        myb_sgp4_error* error);

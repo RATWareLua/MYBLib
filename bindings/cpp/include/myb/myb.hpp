@@ -479,6 +479,28 @@ class environment {
 // the model, and returns MYB_OK — or the status that stops the evaluation. It must not throw.
 using term_function = std::function<status(double t, const vec3& x, const vec3& v, vec3& a)>;
 
+namespace detail {
+// What C calls for such a term. It is noexcept, and the assertion keeps it so: an exception
+// leaving the callable ends the program here and never unwinds through the frames of C.
+inline status call_term(void* context, double t, const double x[3], const double v[3],
+                        double a[3]) noexcept {
+  const auto& function = *static_cast<const term_function*>(context);
+  const vec3 position{x[0], x[1], x[2]};
+  const vec3 velocity{v[0], v[1], v[2]};
+  vec3 acceleration{};
+  const status code = function(t, position, velocity, acceleration);
+  if (code != MYB_OK) {
+    return code;
+  }
+  a[0] = acceleration[0];
+  a[1] = acceleration[1];
+  a[2] = acceleration[2];
+  return MYB_OK;
+}
+static_assert(noexcept(call_term(nullptr, 0.0, nullptr, nullptr, nullptr)),
+              "a function called from C must not let an exception through");
+} // namespace detail
+
 // The forces on one object (myb/model.h) with the ready-made terms of myb/env.h. The model
 // owns the structures of its terms and keeps what they point to alive.
 class force_model {
@@ -606,7 +628,7 @@ class force_model {
   // A term of the caller's own; its derivatives are taken by differences of the model.
   result<std::size_t> add_term(const std::string& name, term_function function) {
     auto& stored = keep(std::move(function));
-    return add_raw(name, &force_model::call_term, nullptr, &stored);
+    return add_raw(name, &detail::call_term, nullptr, &stored);
   }
 
   // The acceleration of the object at the model time t and the state (x, v).
@@ -635,22 +657,6 @@ class force_model {
  private:
   explicit force_model(::myb_force_model* model) noexcept : model_(model) {}
 
-  static status call_term(void* context, double t, const double x[3], const double v[3],
-                          double a[3]) noexcept {
-    const auto& function = *static_cast<const term_function*>(context);
-    const vec3 position{x[0], x[1], x[2]};
-    const vec3 velocity{v[0], v[1], v[2]};
-    vec3 acceleration{};
-    const status code = function(t, position, velocity, acceleration);
-    if (code != MYB_OK) {
-      return code;
-    }
-    a[0] = acceleration[0];
-    a[1] = acceleration[1];
-    a[2] = acceleration[2];
-    return MYB_OK;
-  }
-
   // kept_ is declared first and so destroyed last: the model goes before what it points to
   std::vector<std::shared_ptr<void>> kept_;
   std::unique_ptr<::myb_force_model, detail::model_deleter> model_;
@@ -660,6 +666,17 @@ class force_model {
 
 // A function of the state whose zeros are looked for: g(t, y). It must not throw.
 using event_function = std::function<double(double t, const state& y)>;
+
+namespace detail {
+// What C calls for it; noexcept for the same reason as call_term.
+inline double call_event(void* context, double t, const double* y) noexcept {
+  const auto& g = *static_cast<const event_function*>(context);
+  const state now{y[0], y[1], y[2], y[3], y[4], y[5]};
+  return g(t, now);
+}
+static_assert(noexcept(call_event(nullptr, 0.0, nullptr)),
+              "a function called from C must not let an exception through");
+} // namespace detail
 
 // One object under a force model (myb/orbit.h): states at the times asked for, events.
 class orbit {
@@ -716,7 +733,7 @@ class orbit {
     int found = 0;
     crossing hit{};
     const status code =
-        ::myb_orbit_event(orbit_.get(), &orbit::call_event,
+        ::myb_orbit_event(orbit_.get(), &detail::call_event,
                           const_cast<void*>(static_cast<const void*>(&g)), t_limit, direction,
                           &found, &hit.t, hit.y.data());
     if (code != MYB_OK) {
@@ -752,12 +769,6 @@ class orbit {
  private:
   orbit(::myb_orbit* made, std::shared_ptr<force_model> model) noexcept
       : model_(std::move(model)), orbit_(made) {}
-
-  static double call_event(void* context, double t, const double* y) noexcept {
-    const auto& g = *static_cast<const event_function*>(context);
-    const state now{y[0], y[1], y[2], y[3], y[4], y[5]};
-    return g(t, now);
-  }
 
   std::shared_ptr<force_model> model_; // outlives the propagator
   std::unique_ptr<::myb_orbit, detail::orbit_deleter> orbit_;

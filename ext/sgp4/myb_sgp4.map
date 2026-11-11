@@ -30,6 +30,8 @@ MYB_SGP4_1.2 {
     myb_sgp4_spk10_packet;
     myb_sgp4_spk10_size;
     myb_sgp4_spk10_words;
+    myb_tle_fit;
     myb_tle_format;
     myb_tle_from_omm;
+    myb_tle_from_state;
 } MYB_SGP4_1.0;

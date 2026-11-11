@@ -522,8 +522,53 @@ static void test_dop853(const problem* p) {
   /* no variational equations with it */
   MT_CHECK(myb_orbit_partials(orbit, t_end, y, NULL, NULL) == MYB_E_DOMAIN);
   myb_orbit_destroy(orbit);
-  const myb_orbit_options both = {.integrator = MYB_ORBIT_DOP853, .variational = 1};
-  MT_CHECK(myb_orbit_create(p->model, &both, NULL, &orbit) == MYB_E_DOMAIN);
+  /* the variational equations with it: the transition matrix of two revolutions against
+   * the closed form, as IAS15 gives it; an impulse on the way leaves it as it is */
+  const myb_orbit_options both = {.integrator = MYB_ORBIT_DOP853, .variational = 1,
+                                  .rtol = 1e-13, .atol = 1e-9};
+  MT_CHECK(myb_orbit_create(p->model, &both, NULL, &orbit) == MYB_OK);
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_OK);
+  double phi[36];
+  MT_CHECK(myb_orbit_partials(orbit, 0.0, y, phi, NULL) == MYB_OK);
+  for (int i = 0; i < 36; ++i) {
+    MT_CHECK_SAME(phi[i], i % 7 == 0 ? 1.0 : 0.0);
+  }
+  double worst_phi = 0.0;
+  for (int k = 1; k <= 8; ++k) {
+    const double t = t_end * k / 8.0;
+    MT_CHECK(myb_orbit_partials(orbit, t, y, phi, NULL) == MYB_OK);
+    myb_pv pv;
+    double exact[36];
+    MT_CHECK(myb_kepler_stm(mu, &p->pv0, t, &pv, exact) == MYB_OK);
+    double scale = 0.0;
+    double error = 0.0;
+    for (int i = 0; i < 36; ++i) {
+      scale = fmax(scale, fabs(exact[i]));
+      error = fmax(error, fabs(phi[i] - exact[i]));
+    }
+    worst_phi = fmax(worst_phi, error / scale);
+    double ys[6];
+    MT_CHECK(myb_orbit_state(orbit, t, ys) == MYB_OK);
+    for (int i = 0; i < 6; ++i) {
+      MT_CHECK_SAME(ys[i], y[i]);
+    }
+  }
+  printf("DOP853 with the variational equations: the transition matrix over %.0f revolutions "
+         "against the closed form %.1e\n",
+         t_end / p->period, worst_phi);
+  MT_CHECK(worst_phi < 1e-9);
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_OK);
+  double before[36];
+  double after[36];
+  MT_CHECK(myb_orbit_partials(orbit, 0.25 * t_end, y, before, NULL) == MYB_OK);
+  MT_CHECK(myb_orbit_kick(orbit, dv) == MYB_OK);
+  MT_CHECK(myb_orbit_partials(orbit, 0.25 * t_end, ref, after, NULL) == MYB_OK);
+  MT_CHECK(ref[4] == y[4] + 5.0 && ref[0] == y[0]);
+  for (int i = 0; i < 36; ++i) {
+    MT_CHECK_SAME(after[i], before[i]);
+  }
+  MT_CHECK(myb_orbit_partials(orbit, t_end, y, after, NULL) == MYB_OK);
+  myb_orbit_destroy(orbit);
   const myb_orbit_options unknown = {.integrator = (myb_orbit_integrator)7};
   MT_CHECK(myb_orbit_create(p->model, &unknown, NULL, &orbit) == MYB_E_DOMAIN);
   /* a looser tolerance: fewer steps, a larger error */

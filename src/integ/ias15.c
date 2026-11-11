@@ -83,6 +83,9 @@ struct myb_ias15 {
   double hint_h;  /* the length of the step withdrawn (signed) */
   double hint_s0; /* where the next step starts in it, as a fraction */
   double* b_hint; /* 7n */
+  /* the groups of the options: where each ends (one group ending at n without them) */
+  size_t group_count;
+  size_t* group_end;
 };
 
 static int finite(double x) {
@@ -111,6 +114,19 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
   if (o.block == 0) {
     o.block = n;
   }
+  if ((o.group_count == 0) != (o.groups == NULL)) {
+    return MYB_E_DOMAIN;
+  }
+  size_t covered = 0;
+  for (size_t k = 0; k < o.group_count; ++k) {
+    if (o.groups[k] == 0 || o.groups[k] % o.block != 0 || o.groups[k] > n - covered) {
+      return MYB_E_DOMAIN;
+    }
+    covered += o.groups[k];
+  }
+  if (o.group_count != 0 && covered != n) {
+    return MYB_E_DOMAIN;
+  }
   const myb_allocator a = myb_internal_allocator(allocator);
   void* block = NULL;
   myb_status status = myb_internal_alloc_array(&a, 1, sizeof(myb_ias15), &block);
@@ -119,7 +135,20 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
   }
   myb_ias15* s = block;
   *s = (myb_ias15){.allocator = a, .n = n, .options = o};
+  s->options.groups = NULL; /* the caller's array is not kept */
   s->eta = myb_exp(myb_log(5040.0 * o.epsilon) / 7.0);
+  s->group_count = o.group_count != 0 ? o.group_count : 1;
+  status = myb_internal_alloc_array(&a, s->group_count, sizeof(size_t), &block);
+  if (status != MYB_OK) {
+    goto fail;
+  }
+  s->group_end = block;
+  s->group_end[0] = n;
+  covered = 0;
+  for (size_t k = 0; k < o.group_count; ++k) {
+    covered += o.groups[k];
+    s->group_end[k] = covered;
+  }
   /* 8 vectors of 2n, 3 of n, 6 of 7n: 61 n values. */
   size_t count = 0;
   if (ckd_mul(&count, (size_t)(8 * 2 + 3 + 6 * ORDER), n)) {
@@ -152,6 +181,7 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
   return MYB_OK;
 
 fail:
+  myb_internal_release(&a, s->group_end);
   myb_internal_release(&a, s);
   return status;
 }
@@ -162,6 +192,7 @@ void myb_ias15_destroy(myb_ias15* integrator) {
   }
   const myb_allocator a = integrator->allocator;
   myb_internal_release(&a, integrator->y); /* the single block of all vectors */
+  myb_internal_release(&a, integrator->group_end);
   myb_internal_release(&a, integrator);
 }
 
@@ -293,8 +324,8 @@ static myb_status sweeps(myb_ias15* s, double dt) {
   /* bound: MAX_SWEEPS */
   for (int sweep = 0; sweep < MAX_SWEEPS; ++sweep) {
     s->stats.iterations++;
-    double change = 0.0;
-    double scale = 0.0;
+    /* the relative change of b6, the worst over the groups; NaN once a group gives one */
+    double relative = 0.0;
     for (int node = 1; node <= ORDER; ++node) {
       const double h = myb_ias15_h[node];
       state_at(n, s->y, s->y_comp, s->a0, s->b, dt, h, s->y_sub, NULL);
@@ -304,6 +335,9 @@ static myb_status sweeps(myb_ias15* s, double dt) {
       }
       const double* r = myb_ias15_r[node];
       const int j = node - 1; /* the divided difference this node completes */
+      double change = 0.0;
+      double scale = 0.0;
+      size_t group = 0;
       for (size_t i = 0; i < n; ++i) {
         double* g = s->g + (size_t)ORDER * i;
         double* b = s->b + (size_t)ORDER * i;
@@ -319,11 +353,23 @@ static myb_status sweeps(myb_ias15* s, double dt) {
         if (node == ORDER) {
           change = larger_of(change, fabs(delta));
           scale = larger_of(scale, fabs(s->a_sub[i]));
+          if (i + 1 == s->group_end[group]) {
+            /* Relative change of b6 (C[6][6] = 1, so delta b6 = delta g6) of the group. */
+            const double of_group =
+                scale > 0.0 ? change / scale : (change > 0.0 ? change : 0.0);
+            if (of_group != of_group || relative != relative) {
+              relative = (double)NAN;
+            } else {
+              relative = larger_of(relative, of_group);
+            }
+            change = 0.0;
+            scale = 0.0;
+            ++group;
+          }
         }
       }
     }
-    /* Relative change of b6 (C[6][6] = 1, so delta b6 = delta g6). NaN compares false. */
-    const double relative = scale > 0.0 ? change / scale : (change > 0.0 ? change : 0.0);
+    /* NaN compares false. */
     if (relative != relative) {
       return MYB_OK; /* NaN: the series diverged; the step is rejected by its proposal */
     }
@@ -341,13 +387,12 @@ static myb_status sweeps(myb_ias15* s, double dt) {
  * block (Pham, Rein & Spiegel 2024, eq. 7), taken separately for a, a' and a'' before eq. 16:
  * a block whose acceleration passes through zero (the middle body of a symmetric collinear
  * configuration) does not shrink the step, as a minimum of per-block timescales would. */
-static double proposed_step(const myb_ias15* s, double dt) {
-  const size_t n = s->n;
+static double proposed_of_group(const myb_ias15* s, double dt, size_t begin, size_t end) {
   const size_t m = s->options.block;
   double y2 = 0.0; /* max over blocks of |a|^2, |dt a'|^2, |dt^2 a''|^2 */
   double y3 = 0.0;
   double y4 = 0.0;
-  for (size_t first = 0; first < n; first += m) {
+  for (size_t first = begin; first < end; first += m) {
     double b2 = 0.0;
     double b3 = 0.0;
     double b4 = 0.0;
@@ -379,6 +424,23 @@ static double proposed_step(const myb_ias15* s, double dt) {
     return (double)INFINITY;
   }
   return s->eta * sqrt(2.0 / denominator) * dt;
+}
+
+/* The shortest proposal of the groups (in magnitude; dt carries the direction). */
+static double proposed_step(const myb_ias15* s, double dt) {
+  double proposed = (double)INFINITY;
+  size_t begin = 0;
+  for (size_t k = 0; k < s->group_count; ++k) {
+    const double of_group = proposed_of_group(s, dt, begin, s->group_end[k]);
+    if (of_group != of_group) {
+      return of_group;
+    }
+    if (fabs(of_group) < fabs(proposed)) {
+      proposed = of_group;
+    }
+    begin = s->group_end[k];
+  }
+  return proposed;
 }
 
 static double power_int(double q, int k) {

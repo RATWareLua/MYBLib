@@ -336,13 +336,15 @@ typedef struct j2_term {
   double gm;
   double j2;
   double r;
+  long calls;
 } j2_term;
 
 static myb_status j2_accel(void* context, double t, const double x[3], const double v[3],
                            double a[3]) {
   (void)t;
   (void)v;
-  const j2_term* j = context;
+  j2_term* j = context;
+  ++j->calls;
   const double r = norm3(x);
   const double z2 = x[2] * x[2] / (r * r);
   const double k = 1.5 * j->j2 * j->gm * j->r * j->r / (r * r * r * r * r);
@@ -383,7 +385,7 @@ static myb_status constant_accel(void* context, double t, const double x[3], con
 
 static void test_budget(void) {
   earth_term et = {gm_earth};
-  j2_term j2 = {gm_earth, 1.0826e-3, 6378137.0};
+  j2_term j2 = {gm_earth, 1.0826e-3, 6378137.0, 0};
   constant_term srp = {{4e-8, -3e-8, 1e-8}};
   constant_term tiny = {{1e-14, 0.0, 0.0}};
   myb_force_model* m = NULL;
@@ -421,6 +423,48 @@ static void test_budget(void) {
   MT_CHECK(fabs(e[3].effect / first - 2.0) < 0.01);
   const myb_budget_options bad = {.tolerance = 0.0};
   MT_CHECK(myb_budget(m, 0.0, y0, 86400.0, &bad, e) == MYB_E_DOMAIN);
+
+  /* the same budget to first order, from one propagation: the same flags; the small terms as
+   * the full differences give them, the large ones in their order of magnitude */
+  myb_budget_entry lin[5];
+  const long full_calls = j2.calls / 2; /* two budgets so far */
+  j2.calls = 0;
+  MT_CHECK(myb_budget_linear(m, 0.0, y0, 86400.0, &o, lin) == MYB_OK);
+  /* 13 values of J2 per value of the model, 12 of them for the Jacobian that this term leaves
+   * to differences: a model of five such terms is the dear case */
+  printf("the same to first order (one propagation; J2 computed %ld times, the six propagations "
+         "took %ld):\n",
+         j2.calls, full_calls);
+  MT_CHECK((j2.calls - 48) % 13 == 0); /* and once per sample for the largest acceleration */
+  for (int k = 0; k < 5; ++k) {
+    printf("  %-6s effect %.6e m (full %.6e, ratio %.6f)\n", lin[k].name, lin[k].effect,
+           e[k].effect, lin[k].effect / e[k].effect);
+    MT_CHECK(lin[k].flag == e[k].flag && lin[k].enabled == e[k].enabled);
+    MT_CHECK(strcmp(lin[k].name, e[k].name) == 0);
+    MT_CHECK(fabs(lin[k].max_acceleration / e[k].max_acceleration - 1.0) < 1e-6);
+  }
+  MT_CHECK(fabs(lin[3].effect / e[3].effect - 1.0) < 1e-5); /* pressure, metres */
+  /* 1e-14 m/s^2 moves the object by 4 micrometres: the difference of two propagations is
+   * known to half a micrometre (it changed by 11 % when the pressure was doubled), the
+   * variation has no such floor */
+  MT_CHECK(fabs(lin[4].effect / e[4].effect - 1.0) < 0.2);
+  MT_CHECK(fabs(lin[2].effect / e[2].effect - 1.0) < 0.01); /* drag, tens of kilometres */
+  MT_CHECK(fabs(lin[1].effect / e[1].effect - 1.0) < 0.02); /* J2, a thousand kilometres */
+  MT_CHECK(myb_force_model_enabled(m, 2) == 0);
+  /* linear in the term, up to the 18 m by which the halved term moves the trajectory that the
+   * variation is taken along (3e-6 of it) */
+  const double once = lin[3].effect;
+  const double small = lin[4].effect;
+  for (int i = 0; i < 3; ++i) {
+    srp.a[i] *= 0.5;
+  }
+  MT_CHECK(myb_budget_linear(m, 0.0, y0, 86400.0, &o, lin) == MYB_OK);
+  printf("  halved pressure: effect x %.12f; the term of 1e-14 m/s^2 x %.9f\n",
+         lin[3].effect / once, lin[4].effect / small);
+  MT_CHECK(fabs(lin[3].effect / once - 0.5) < 1e-6);
+  MT_CHECK(fabs(lin[4].effect / small - 1.0) < 1e-5);
+  MT_CHECK(myb_budget_linear(m, 0.0, y0, 86400.0, &bad, lin) == MYB_E_DOMAIN);
+  MT_CHECK(myb_budget_linear(m, 0.0, y0, 0.0, &o, lin) == MYB_E_DOMAIN);
   myb_force_model_destroy(m);
 }
 

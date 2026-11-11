@@ -219,6 +219,43 @@ unsafe extern "C" {
         error: *mut myb_sgp4_error,
     ) -> myb_status;
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_tle_fit_options {
+    pub bstar: ::std::os::raw::c_int,
+    pub max_iterations: ::std::os::raw::c_int,
+    pub tolerance: f64,
+    pub gravity: myb_sgp4_gravity,
+    pub mode: myb_sgp4_mode,
+}
+impl Default for myb_tle_fit_options {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_tle_fit(
+        minutes: *const f64,
+        positions: *const f64,
+        count: usize,
+        options: *const myb_tle_fit_options,
+        tle: *mut myb_tle,
+        rms: *mut f64,
+        iterations: *mut ::std::os::raw::c_int,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_tle_from_state(
+        r: *const f64,
+        v: *const f64,
+        gravity: myb_sgp4_gravity,
+        tle: *mut myb_tle,
+    ) -> myb_status;
+}
 unsafe extern "C" {
     pub fn myb_sgp4_propagate_km(
         sgp4: *const myb_sgp4,

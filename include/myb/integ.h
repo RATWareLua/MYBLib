@@ -107,7 +107,8 @@ MYB_API MYB_NODISCARD myb_status myb_dop853_locate(myb_dop853* integrator, myb_e
  * The state is y = (x[0..n-1], v[0..n-1]): 2n values. The acceleration may depend on v.
  *
  * Limitation of the published criterion: tau is relative to the norm of a, so it shrinks to
- * zero where the acceleration of the whole state vanishes (every block at once). A system of
+ * zero where the acceleration of the whole state (of a whole group, when the options name
+ * groups) vanishes — every block at once. A system of
  * bodies never gets there, but a one-dimensional oscillator, whose acceleration changes sign,
  * stalls with MYB_E_STEP_MIN: use DOP853 there. */
 
@@ -124,6 +125,14 @@ typedef struct myb_ias15_options {
   int64_t max_steps;   /* budget of accepted steps per call of myb_ias15_integrate; 0 = 10^9 */
   size_t block;     /* components per block of the timescale; 0 = one block of all n;
                        must divide n */
+  /* Groups of components of different kinds (positions in metres next to the quaternion of
+   * a rotation, say): group_count sizes, each a multiple of `block`, their sum n; NULL and 0:
+   * one group. The norms that set the step and judge the convergence of the iteration are
+   * maxima over the blocks of a group, so that one group measures the others in its own
+   * units and the others disappear beside it; with groups each is judged by itself, the
+   * shortest timescale and the worst convergence counting. The sizes are copied. */
+  const size_t* groups;
+  size_t group_count;
 } myb_ias15_options;
 
 typedef struct myb_ias15_stats {

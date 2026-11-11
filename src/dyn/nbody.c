@@ -182,6 +182,20 @@ double myb_nbody_gm(const myb_nbody* nbody, size_t body) {
   return body < nbody->massive ? nbody->gm[body] : 0.0;
 }
 
+void myb_internal_nbody_set_gm(myb_nbody* nbody, size_t body, double gm) {
+  MYB_CHECK(nbody != NULL && body < nbody->massive && gm >= 0.0 && gm <= 0x1p1023);
+  nbody->gm[body] = gm;
+}
+
+int myb_internal_nbody_relativity(const myb_nbody* nbody, myb_ppn* ppn) {
+  MYB_CHECK(nbody != NULL && ppn != NULL);
+  if (!nbody->relativity) {
+    return 0;
+  }
+  *ppn = nbody->ppn;
+  return 1;
+}
+
 void myb_nbody_set_pool(myb_nbody* nbody, myb_pool* pool) {
   MYB_CHECK(nbody != NULL);
   nbody->pool = pool;

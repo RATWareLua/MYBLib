@@ -2,9 +2,12 @@
 /* Regularisation: the KS transformation (round trip, bilinear relation, both branches), Kepler
  * orbits of eccentricity 0.9 to 0.999 over 20 revolutions against the closed form for Cowell,
  * KS and Sundman with DOP853 at the same tolerance (accuracy and work), a J2-perturbed orbit
- * against IAS15, and the passage of a rectilinear orbit through the centre. */
+ * against IAS15, the passage of a rectilinear orbit through the centre, the time element (its
+ * derivative constant in Kepler motion, the gain at loose tolerances, the perturbed orbit,
+ * unbound orbits refused) and the Sundman form with any exponent. */
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mtest.h"
@@ -245,11 +248,185 @@ static void test_collision(void) {
   MT_CHECK(norm3(x) < 1e-8);
 }
 
+static double error_of(myb_regular_kind kind, const myb_regular_problem* p,
+                       const myb_dop853_options* o, const double x0[3], const double v0[3],
+                       double t1, const double exact[3], int64_t* evaluations) {
+  double x[3];
+  double v[3];
+  MT_CHECK(myb_regular_propagate(kind, p, o, 0.0, x0, v0, t1, x, v, evaluations) == MYB_OK);
+  double e = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    e = fmax(e, fabs(x[i] - exact[i]) / norm3(exact));
+  }
+  return e;
+}
+
+static void test_time_element(void) {
+  const double mu = 1.0;
+  const double e = 0.95;
+  const double ra = 1.0 + e;
+  const double x0[3] = {ra * 0.6, ra * 0.8, 0.0};
+  const double va = sqrt(mu * (1.0 - e) / ra);
+  const double v0[3] = {-0.8 * va * 0.9, 0.6 * va * 0.9, 0.4359 * va};
+  myb_regular_problem p = {.mu = mu};
+  /* the element and back; its derivative is the constant mu / (2 h) anywhere on the orbit */
+  double y[10];
+  MT_CHECK(myb_ks_element_from_cartesian(mu, 3.25, x0, v0, y) == MYB_OK);
+  double t = 0.0;
+  double x[3];
+  double v[3];
+  MT_CHECK(myb_ks_element_to_cartesian(y, &t, x, v) == MYB_OK);
+  MT_CHECK(fabs(t - 3.25) < 1e-15);
+  const myb_pv pv0 = {{x0[0], x0[1], x0[2]}, {v0[0], v0[1], v0[2]}};
+  double worst = 0.0;
+  for (int k = 0; k < 40; ++k) {
+    myb_pv pv;
+    MT_CHECK(myb_kepler_propagate(mu, &pv0, 0.37 * k, &pv) == MYB_OK);
+    MT_CHECK(myb_ks_element_from_cartesian(mu, 0.37 * k, pv.r, pv.v, y) == MYB_OK);
+    double dy[10];
+    MT_CHECK(myb_ks_element_rhs(&p, 0.0, y, dy) == MYB_OK);
+    worst = fmax(worst, fabs(dy[9] / (0.5 * mu / y[8]) - 1.0));
+    /* the plain form at the same point: t' = r */
+    double plain[10];
+    double dplain[10];
+    myb_ks_from_cartesian(mu, 0.37 * k, pv.r, pv.v, plain);
+    MT_CHECK(myb_ks_rhs(&p, 0.0, plain, dplain) == MYB_OK);
+    MT_CHECK(fabs(dplain[9] - norm3(pv.r)) < 1e-14);
+  }
+  printf("time element: tau' against mu / (2 h) on a Kepler orbit %.2e\n", worst);
+  MT_CHECK(worst < 1e-15);
+
+  /* 20 revolutions at tolerances from loose to tight: the element removes the error of the
+   * time, which at a loose tolerance is the whole error */
+  const double t1 = 20.0 * 2.0 * 3.141592653589793;
+  myb_pv exact;
+  MT_CHECK(myb_kepler_propagate(mu, &pv0, t1, &exact) == MYB_OK);
+  const double tolerances[3] = {1e-6, 1e-9, 1e-12};
+  for (int k = 0; k < 3; ++k) {
+    const myb_dop853_options o = {.rtol = tolerances[k], .atol = 1e-3 * tolerances[k]};
+    int64_t n_plain = 0;
+    int64_t n_element = 0;
+    const double plain = error_of(MYB_REGULAR_KS, &p, &o, x0, v0, t1, exact.r, &n_plain);
+    const double element = error_of(MYB_REGULAR_KS_ELEMENT, &p, &o, x0, v0, t1, exact.r,
+                                    &n_element);
+    printf("e = 0.95, 20 periods, DOP853 %.0e: KS %.2e (%lld f), with the time element %.2e "
+           "(%lld f)\n",
+           tolerances[k], plain, (long long)n_plain, element, (long long)n_element);
+    MT_CHECK(element * 2.5 < plain);
+    MT_CHECK(n_element <= n_plain);
+  }
+
+  /* J2, e = 0.7, 3 days: against the plain form at a tight tolerance */
+  const double gm = 3.986004418e14;
+  cowell_context cc = {.mu = gm, .j2r2 = 1.08263e-3 * 6378137.0 * 6378137.0};
+  const double rp = 7000e3;
+  const double vp = sqrt(gm * 1.7 / rp);
+  const double xj[3] = {rp, 0.0, 0.0};
+  const double vj[3] = {0.0, vp * cos(0.9), vp * sin(0.9)};
+  const myb_regular_problem pj = {.mu = gm, .perturbation = j2, .context = &cc};
+  const myb_dop853_options tight = {.rtol = 1e-14, .atol = 1e-6};
+  double xa[3];
+  double xb[3];
+  MT_CHECK(myb_regular_propagate(MYB_REGULAR_KS, &pj, &tight, 0.0, xj, vj, 3.0 * 86400.0, xa, v,
+                                 NULL) == MYB_OK);
+  MT_CHECK(myb_regular_propagate(MYB_REGULAR_KS_ELEMENT, &pj, &tight, 0.0, xj, vj, 3.0 * 86400.0,
+                                 xb, v, NULL) == MYB_OK);
+  double d = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    d = fmax(d, fabs(xa[i] - xb[i]));
+  }
+  printf("J2, e = 0.7, 3 days: KS with the time element against KS %.2e m\n", d);
+  MT_CHECK(d < 3e-3);
+  /* there and back to the start, which is the pericentre: 10 km/s there, so the absolute
+   * tolerance of 1e-6 (seconds, for the time) is a centimetre along the orbit */
+  double back[2];
+  for (int k = 0; k < 2; ++k) {
+    const myb_regular_kind kind = k == 0 ? MYB_REGULAR_KS : MYB_REGULAR_KS_ELEMENT;
+    double xe[3];
+    double ve[3];
+    double xr[3];
+    double vr[3];
+    MT_CHECK(myb_regular_propagate(kind, &pj, &tight, 0.0, xj, vj, 3.0 * 86400.0, xe, ve, NULL) ==
+             MYB_OK);
+    MT_CHECK(myb_regular_propagate(kind, &pj, &tight, 3.0 * 86400.0, xe, ve, 0.0, xr, vr, NULL) ==
+             MYB_OK);
+    back[k] = 0.0;
+    for (int i = 0; i < 3; ++i) {
+      back[k] = fmax(back[k], fabs(xr[i] - xj[i]));
+    }
+  }
+  printf("  there and back to the pericentre: KS %.2e m, with the time element %.2e m\n", back[0],
+         back[1]);
+  MT_CHECK(back[0] < 0.05 && back[1] < 0.05);
+
+  /* not bound: refused, not integrated */
+  const double fast[3] = {0.0, 2.0 * sqrt(mu / norm3(x0)), 0.0};
+  MT_CHECK(myb_ks_element_from_cartesian(mu, 0.0, x0, fast, y) == MYB_E_DOMAIN);
+  const myb_dop853_options o = {.rtol = 1e-10, .atol = 1e-13};
+  MT_CHECK(myb_regular_propagate(MYB_REGULAR_KS_ELEMENT, &p, &o, 0.0, x0, fast, 1.0, x, v,
+                                 NULL) == MYB_E_DOMAIN);
+  MT_CHECK(myb_regular_propagate(MYB_REGULAR_KS, &p, &o, 0.0, x0, fast, 1.0, x, v, NULL) ==
+           MYB_OK);
+}
+
+static void test_sundman_exponents(void) {
+  const double mu = 1.0;
+  const double e = 0.9;
+  const double ra = 1.0 + e;
+  const double x0[3] = {ra * 0.6, ra * 0.8, 0.0};
+  const double va = sqrt(mu * (1.0 - e) / ra);
+  const double v0[3] = {-0.8 * va * 0.9, 0.6 * va * 0.9, 0.4359 * va};
+  const myb_pv pv0 = {{x0[0], x0[1], x0[2]}, {v0[0], v0[1], v0[2]}};
+  const double t1 = 5.0 * 2.0 * 3.141592653589793;
+  myb_pv exact;
+  MT_CHECK(myb_kepler_propagate(mu, &pv0, t1, &exact) == MYB_OK);
+  const myb_dop853_options o = {.rtol = 1e-12, .atol = 1e-15};
+  const double exponents[7] = {0.0, 0.5, 1.0, 1.25, 1.5, 2.0, 2.5};
+  int64_t work[7];
+  for (int k = 0; k < 7; ++k) {
+    const myb_regular_problem p = {.mu = mu, .alpha = exponents[k]};
+    const double error = error_of(MYB_REGULAR_SUNDMAN, &p, &o, x0, v0, t1, exact.r, &work[k]);
+    printf("Sundman, alpha = %.2f, e = 0.9, 5 periods: %.2e (%lld f)\n", exponents[k], error,
+           (long long)work[k]);
+    MT_CHECK(error < 1e-8);
+  }
+  /* alpha = 0 is the time itself: the work of the Cartesian equations, the most of all; the
+   * regularising exponents between 1 and 2 need the least */
+  int64_t cowell_work = 0;
+  double x[3];
+  double v[3];
+  const cowell_context cc = {.mu = mu};
+  MT_CHECK(cowell(&cc, &o, x0, v0, t1, x, v, &cowell_work) == MYB_OK);
+  printf("  the Cartesian equations: %lld f\n", (long long)cowell_work);
+  MT_CHECK(llabs(work[0] - cowell_work) * 20 < cowell_work);
+  MT_CHECK(work[3] < work[0] && work[2] < work[0] && work[4] < work[0]);
+  /* the exponents taken by multiplication agree with the general form next to them */
+  double y[7] = {x0[0], x0[1], x0[2], v0[0], v0[1], v0[2], 0.0};
+  double exact_form[7];
+  double general[7];
+  myb_regular_problem p = {.mu = mu, .alpha = 1.5};
+  MT_CHECK(myb_sundman_rhs(&p, 0.0, y, exact_form) == MYB_OK);
+  p.alpha = 1.5 * (1.0 + 0x1p-52);
+  MT_CHECK(myb_sundman_rhs(&p, 0.0, y, general) == MYB_OK);
+  for (int i = 0; i < 7; ++i) {
+    MT_CHECK(fabs(general[i] - exact_form[i]) <= 2e-15 * fabs(exact_form[i]));
+  }
+  p.alpha = -0.5;
+  MT_CHECK(myb_sundman_rhs(&p, 0.0, y, general) == MYB_E_DOMAIN);
+  p.alpha = (double)NAN;
+  MT_CHECK(myb_sundman_rhs(&p, 0.0, y, general) == MYB_E_DOMAIN);
+  p.alpha = 400.0; /* r^alpha overflows at r = 1.9: not a finite step */
+  y[0] = 1e3;
+  MT_CHECK(myb_sundman_rhs(&p, 0.0, y, general) == MYB_E_DOMAIN);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_transformation();
   test_kepler();
   test_perturbed();
   test_collision();
+  test_time_element();
+  test_sundman_exponents();
   return mt_finish("test_regular");
 }

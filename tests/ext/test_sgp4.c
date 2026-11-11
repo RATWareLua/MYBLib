@@ -826,6 +826,115 @@ static void test_spk10_writer(void) {
   myb_timesys_destroy(sys);
 }
 
+/* The largest relative difference of the six elements of two sets (angles by their sines
+ * and cosines, so that 359.99 and 0.01 degrees are close). */
+static double elements_apart(const myb_tle* a, const myb_tle* b) {
+  const double rad = 3.141592653589793 / 180.0;
+  double worst = fabs(a->mean_motion / b->mean_motion - 1.0);
+  worst = fmax(worst, fabs(a->eccentricity - b->eccentricity));
+  worst = fmax(worst, fabs(a->inclination - b->inclination) * rad);
+  /* node, and the sum that stays defined on a circle */
+  worst = fmax(worst, fabs(sin((a->node - b->node) * rad)));
+  const double la = a->node + a->argument_of_perigee + a->mean_anomaly;
+  const double lb = b->node + b->argument_of_perigee + b->mean_anomaly;
+  worst = fmax(worst, fabs(sin((la - lb) * rad)));
+  return worst;
+}
+
+static void test_fit(void) {
+  /* positions of the theory itself: the set that made them comes back */
+  struct {
+    const char* name;
+    const char* l1;
+    const char* l2;
+    double span; /* minutes */
+    int bstar;
+  } cases[3] = {
+      {"low orbit, 2 days, with B*",
+       "1 25544U 98067A   20153.14072786  .00000907  00000-0  24949-4 0  9994",
+       "2 25544  51.6443  93.0000 0002335  45.4201 314.6988 15.49438371229542", 2880.0, 1},
+      {"eccentric, 3 days",
+       "1 00005U 58002B   20287.20333880 -.00000016  00000-0 -22483-4 0  9998",
+       "2 00005  34.2443 225.5254 1845686 162.2516 205.2356 10.84869164218149", 4320.0, 0},
+      {"12-hour orbit (deep space), 4 days", NULL, NULL, 5760.0, 0}};
+  /* the third from the verification file: the first set of the deep-space branch of the
+   * theory (a period above 225 minutes) */
+  char* text = read_all(MYB_TEST_DATA_DIR "/sgp4/SGP4-VER.TLE");
+  MT_CHECK(text != NULL);
+  if (text == NULL) {
+    return;
+  }
+  static char* lines[400];
+  const int line_count = split_lines(text, lines, 400);
+  for (int i = 0; i + 1 < line_count && cases[2].l1 == NULL; ++i) {
+    myb_tle candidate;
+    myb_diag unused = {0};
+    if (lines[i][0] == '1' && lines[i + 1][0] == '2' &&
+        myb_tle_parse(lines[i], lines[i + 1], 0, &candidate, &unused) == MYB_OK &&
+        candidate.mean_motion < 3.0 && candidate.eccentricity < 0.75) {
+      cases[2].l1 = lines[i];
+      cases[2].l2 = lines[i + 1];
+    }
+  }
+  MT_CHECK(cases[2].l1 != NULL);
+  for (int k = 0; k < 3 && cases[2].l1 != NULL; ++k) {
+    myb_tle truth;
+    myb_diag diag = {0};
+    MT_CHECK(myb_tle_parse(cases[k].l1, cases[k].l2, 0, &truth, &diag) == MYB_OK);
+    myb_sgp4 theory;
+    MT_CHECK(myb_sgp4_init(&truth, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &theory) == MYB_OK);
+    enum { POINTS = 97 };
+    static double minutes[POINTS];
+    static double positions[3 * POINTS];
+    double v[3];
+    double v0[3];
+    double r0[3];
+    for (int i = 0; i < POINTS; ++i) {
+      minutes[i] = cases[k].span * i / (POINTS - 1);
+      MT_CHECK(myb_sgp4_propagate(&theory, minutes[i], positions + 3 * i, v, NULL) == MYB_OK);
+      if (i == 0) {
+        memcpy(r0, positions, sizeof r0);
+        memcpy(v0, v, sizeof v0);
+      }
+    }
+    /* the guess: the osculating elements at the epoch, the identification of the set, a
+     * drag term off by a half */
+    myb_tle fitted = truth;
+    fitted.bstar = cases[k].bstar ? 1.5 * truth.bstar : truth.bstar;
+    MT_CHECK(myb_tle_from_state(r0, v0, MYB_SGP4_WGS72, &fitted) == MYB_OK);
+    const double guess = elements_apart(&fitted, &truth);
+    const myb_tle_fit_options options = {.bstar = cases[k].bstar, .gravity = MYB_SGP4_WGS72};
+    double rms = 0.0;
+    int iterations = 0;
+    MT_CHECK(myb_tle_fit(minutes, positions, POINTS, &options, &fitted, &rms, &iterations) ==
+             MYB_OK);
+    printf("fit of an element set, %-34s: from a guess off by %.1e to %.1e in %d steps; "
+           "residuals %.1e m",
+           cases[k].name, guess, elements_apart(&fitted, &truth), iterations, rms);
+    if (cases[k].bstar) {
+      printf("; B* %.5e (%.5e)", fitted.bstar, truth.bstar);
+      MT_CHECK(fabs(fitted.bstar / truth.bstar - 1.0) < 1e-5);
+    }
+    printf("\n");
+    MT_CHECK(guess > 1e-5);
+    MT_CHECK(elements_apart(&fitted, &truth) < 1e-9);
+    MT_CHECK(rms < 1e-3);
+    MT_CHECK(strcmp(fitted.designator, truth.designator) == 0 &&
+             fitted.epoch_day == truth.epoch_day);
+  }
+  /* refused */
+  myb_tle tle;
+  myb_diag diag = {0};
+  MT_CHECK(myb_tle_parse(cases[0].l1, cases[0].l2, 0, &tle, &diag) == MYB_OK);
+  free(text);
+  const double two[2] = {0.0, 1.0};
+  const double points[6] = {7.0e6, 0.0, 0.0, 0.0, 7.0e6, 0.0};
+  MT_CHECK(myb_tle_fit(two, points, 2, NULL, &tle, NULL, NULL) == MYB_E_DOMAIN);
+  const double fast[3] = {0.0, 12000.0, 0.0};
+  const double here[3] = {7.0e6, 0.0, 0.0};
+  MT_CHECK(myb_tle_from_state(here, fast, MYB_SGP4_WGS72, &tle) == MYB_E_DOMAIN);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   run_verification();
@@ -834,5 +943,6 @@ int main(void) {
   test_modes();
   test_spk10();
   test_spk10_writer();
+  test_fit();
   return mt_finish("test_sgp4");
 }

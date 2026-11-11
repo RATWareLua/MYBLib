@@ -8,7 +8,9 @@
 //!    status;
 //!  - a model keeps alive the environment and the field it was given, an orbit its model;
 //!  - kernels and time scales, an SPK set and a body of it in an environment, a message
-//!    written and read in both notations.
+//!    written and read in both notations;
+//!  - a panic in a closure that C calls ends the process: it is not caught and does not
+//!    unwind through the frames of C (the test runs itself again as the process that dies).
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::ptr;
@@ -356,4 +358,48 @@ fn a_message_in_both_notations() -> myb::Result<()> {
     let uneven = myb::OemSegment { states: vec![[0.0; 6]], ..segment };
     assert_eq!(myb::write_oem("myb", &created, &[uneven], myb::Notation::Kvn).unwrap_err().status, Status::Domain);
     Ok(())
+}
+
+/// The name of the variable that makes this test binary the process that panics.
+const DIES: &str = "MYB_TEST_PANIC_IN";
+
+fn panic_in(what: &str) {
+    let model = ForceModel::new().unwrap();
+    model.add_point_mass("centre", GM).unwrap();
+    match what {
+        "term" => {
+            model.add_term("broken", |_t, _x, _v| -> myb::Result<[f64; 3]> { panic!("in a term") }).unwrap();
+            let _ = model.acceleration(0.0, &[7.0e6, 0.0, 0.0], &[0.0, 7.5e3, 0.0]);
+        }
+        _ => {
+            let model = Rc::new(model);
+            let mut orbit = Orbit::new(&model, &OrbitOptions::default()).unwrap();
+            orbit.start(0.0, &[7.0e6, 0.0, 0.0, 0.0, 7.5e3, 1.0e3], 6000.0).unwrap();
+            let _ = orbit.next_event(|_t, _y| -> f64 { panic!("in an event") }, 6000.0, Direction::Any);
+        }
+    }
+}
+
+#[test]
+fn a_panic_in_a_closure_called_from_c_ends_the_process() {
+    if let Ok(what) = std::env::var(DIES) {
+        panic_in(&what);
+        // not reached: the process is gone. Leaving normally is what the parent takes as failure.
+        std::process::exit(0);
+    }
+    let this = std::env::current_exe().unwrap();
+    for what in ["term", "event"] {
+        let output = std::process::Command::new(&this)
+            .args(["--exact", "a_panic_in_a_closure_called_from_c_ends_the_process", "--nocapture", "--test-threads", "1"])
+            .env(DIES, what)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr);
+        // the message of the panic, then the end: not the exit of a test that failed by
+        // unwinding (101), not success
+        assert!(said.contains(&format!("in {} {}", if what == "term" { "a" } else { "an" }, what)), "{what}: {said}");
+        assert!(!output.status.success(), "{what}: the process went on");
+        assert_ne!(output.status.code(), Some(101), "{what}: the panic unwound through C: {said}");
+        assert!(said.contains("panic in a function that cannot unwind"), "{what}: {said}");
+    }
 }

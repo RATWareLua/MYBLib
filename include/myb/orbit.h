@@ -35,8 +35,9 @@ typedef struct myb_orbit myb_orbit;
 typedef enum myb_orbit_integrator {
   MYB_ORBIT_IAS15 = 0, /* the default */
   MYB_ORBIT_DOP853 = 1 /* the explicit Runge-Kutta pair of myb/integ.h: cheaper per step at
-                          moderate accuracies, for forces of any dependence on the velocity;
-                          without the variational equations */
+                          moderate accuracies, for forces of any dependence on the velocity.
+                          With variational != 0 the variations are carried as part of one
+                          system of the first order, under the same tolerances as the state */
 } myb_orbit_integrator;
 
 typedef struct myb_orbit_options {
@@ -52,8 +53,7 @@ typedef struct myb_orbit_options {
 
 /* The model must outlive the object; with variational != 0 its parameters at this moment are
  * those differentiated. options may be NULL (defaults). Errors: MYB_E_DOMAIN (negative
- * options, an integrator that is not one of the two, the variational equations asked of
- * DOP853), MYB_E_NOMEM, MYB_E_OVERFLOW. */
+ * options, an integrator that is not one of the two), MYB_E_NOMEM, MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_orbit_create(myb_force_model* model,
                                                   const myb_orbit_options* options,
                                                   const myb_allocator* allocator,

@@ -1,7 +1,11 @@
 # Continuous integration of myb: the CMake presets of the repository on Linux (Clang, Ninja) and
 # Windows (Clang targeting x86_64-w64-windows-gnu with the MSYS2 MINGW64 sysroot), with the
 # sanitizers. Every job runs the whole test suite, the reproducibility hash included, so a
-# result that changes by one bit on one platform fails the build. Large data sets are fetched
+# result that changes by one bit on one platform fails the build. The tests of bindings/ run in
+# the presets without a sanitizer: C++ everywhere, Rust wherever cargo is, Python where the
+# shared library is built — the "Bindings" step installs what they need and then checks that
+# CMake registered them, so that a missing interpreter or toolchain fails the job instead of
+# skipping the tests. Large data sets are fetched
 # by cmake/FetchData.cmake (SHA-256 checked) and cached between runs; the live series (EOP,
 # Earth orientation kernel) are refreshed on every run.
 #
@@ -48,6 +52,14 @@ jobs:
             ninja-build cmake libmpfr-dev libgmp-dev
           echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
 
+      - name: Python with cffi and Rust (the tests of bindings/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends python3-cffi
+          python3 -c "import cffi; print('cffi', cffi.__version__)"
+          cargo --version
+
       - name: Allow the sanitizers' shadow memory (kernel ASLR entropy)
         shell: bash
         run: sudo sysctl -w vm.mmap_rnd_bits=28
@@ -68,6 +80,18 @@ jobs:
         run: |
           clang --version
           cmake --preset ${{ matrix.preset }}
+
+      - name: Bindings are registered
+        if: ${{ matrix.preset == 'linux-dev' || matrix.preset == 'linux-release' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset ${{ matrix.preset }} -N > registered.txt
+          grep -q test_cpp_binding registered.txt
+          grep -q test_rust_binding registered.txt
+          if grep -q 'MYB_BUILD_SHARED:BOOL=ON' build/${{ matrix.preset }}/CMakeCache.txt; then
+            grep -q test_python_binding registered.txt
+          fi
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel 4
@@ -112,6 +136,14 @@ jobs:
           "MYB_MINGW_ROOT=${{ steps.msys2.outputs.msys2-location }}\mingw64" |
             Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Python with cffi and the Rust toolchain of the GNU ABI (the tests of bindings/)
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check cffi
+          python -c "import cffi; print('cffi', cffi.__version__)"
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal --no-self-update
+          cargo +stable-x86_64-pc-windows-gnu --version
+
       - name: Cache the downloaded data
         uses: actions/cache@v4
         with:
@@ -128,6 +160,19 @@ jobs:
         run: |
           clang --version
           cmake --preset ${{ matrix.preset }}
+
+      - name: Bindings are registered
+        if: ${{ matrix.preset != 'windows-ubsan' }}
+        shell: pwsh
+        run: |
+          $registered = ctest --preset ${{ matrix.preset }} -N | Out-String
+          $wanted = @('test_cpp_binding', 'test_rust_binding')
+          if (Select-String -Path build/${{ matrix.preset }}/CMakeCache.txt -Pattern 'MYB_BUILD_SHARED:BOOL=ON' -Quiet) {
+            $wanted += 'test_python_binding'
+          }
+          foreach ($name in $wanted) {
+            if ($registered -notmatch $name) { throw "$name is not registered" }
+          }
 
       - name: Build
         shell: pwsh

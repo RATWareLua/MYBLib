@@ -4,6 +4,7 @@
 #include "core/base.h"
 #include "myb/cmath.h"
 #include "myb/rel.h"
+#include "rel/rel_internal.h"
 #include "num/vec3.h"
 
 myb_status myb_ppn_validate(const myb_ppn* ppn) {
@@ -329,9 +330,10 @@ static void precess(const double omega[3], const double chi[3], double out[3]) {
   }
 }
 
-myb_status myb_pn_binary_evaluate(const myb_pn_binary* b, const double x[3], const double v[3],
-                                  const double chi1[3], const double chi2[3], double a[3],
-                                  double dchi1[3], double dchi2[3]) {
+/* newton: 1 for the whole acceleration, 0 for the terms beyond the Newtonian one. */
+static myb_status pn_binary(const myb_pn_binary* b, double newton, const double x[3],
+                            const double v[3], const double chi1[3], const double chi2[3],
+                            double a[3], double dchi1[3], double dchi2[3]) {
   MYB_CHECK(b != NULL && x != NULL && v != NULL && a != NULL);
   static const double zero[3] = {0.0, 0.0, 0.0};
   const double* s1 = chi1 != NULL ? chi1 : zero;
@@ -366,7 +368,7 @@ myb_status myb_pn_binary_evaluate(const myb_pn_binary* b, const double x[3], con
   pn_coefficients(orders, nu, u, rd, v2, c, log_r, &aa, &bb);
   const double f = gm / r2;
   for (int i = 0; i < 3; ++i) {
-    a[i] = -f * ((1.0 + aa) * n[i] + bb * v[i]);
+    a[i] = -f * ((newton + aa) * n[i] + bb * v[i]);
   }
   double w1[3] = {0.0, 0.0, 0.0}; /* precession angular velocities of the spins */
   double w2[3] = {0.0, 0.0, 0.0};
@@ -439,6 +441,19 @@ myb_status myb_pn_binary_evaluate(const myb_pn_binary* b, const double x[3], con
     precess(w2, s2, dchi2);
   }
   return MYB_OK;
+}
+
+myb_status myb_pn_binary_evaluate(const myb_pn_binary* b, const double x[3], const double v[3],
+                                  const double chi1[3], const double chi2[3], double a[3],
+                                  double dchi1[3], double dchi2[3]) {
+  return pn_binary(b, 1.0, x, v, chi1, chi2, a, dchi1, dchi2);
+}
+
+myb_status myb_internal_pn_binary_terms(const myb_pn_binary* b, const double x[3],
+                                        const double v[3], const double chi1[3],
+                                        const double chi2[3], double a[3], double dchi1[3],
+                                        double dchi2[3]) {
+  return pn_binary(b, 0.0, x, v, chi1, chi2, a, dchi1, dchi2);
 }
 
 myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c, unsigned orders,

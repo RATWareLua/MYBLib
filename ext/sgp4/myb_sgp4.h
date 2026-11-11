@@ -165,6 +165,42 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, do
                                                     double r[3], double v[3],
                                                     myb_sgp4_error* error);
 
+/* ---- Fitting an element set ------------------------------------------------------------------
+ * The mean elements of the theory are not the osculating elements of an orbit: an element set
+ * for an object whose motion is known (an ephemeris, a numerical propagation) is the one whose
+ * SGP4 orbit passes closest to it. */
+
+typedef struct myb_tle_fit_options {
+  int bstar;                /* != 0: the drag term B* is fitted too (the arc must feel it) */
+  int max_iterations;       /* 0 = 40 */
+  double tolerance;         /* the fit stops when a step lowers the root mean square of the
+                               residuals by less than this part of it; 0 = 1e-9 */
+  myb_sgp4_gravity gravity; /* the constants to fit for; the catalogue uses MYB_SGP4_WGS72 */
+  myb_sgp4_mode mode;
+} myb_tle_fit_options;
+
+/* Fits the elements of *tle — mean motion, eccentricity, inclination, node, argument of
+ * perigee, mean anomaly and, if asked for, B* — to `count` >= 3 TEME positions (m, 3 each) at
+ * the times `minutes` from the epoch of the set, in the sense of least squares: Gauss-Newton
+ * steps in unknowns without the singularities of the classical angles, the derivatives by
+ * differences of the theory. *tle gives the first guess (myb_tle_from_state makes one), the
+ * epoch and what identifies the object, and receives the result; *rms (may be NULL) the root
+ * mean square of the residuals of the positions (m), *iterations (may be NULL) the steps
+ * taken. options may be NULL (WGS-72, improved mode, no B*). Errors: MYB_E_DOMAIN (fewer than
+ * three positions, invalid options, elements that are no orbit of the theory, unknowns that
+ * the positions do not determine), MYB_E_NOCONV (the budget of steps; *tle holds the best so
+ * far), MYB_E_NOMEM, those of myb_sgp4_propagate. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tle_fit(const double* minutes, const double* positions,
+                                             size_t count, const myb_tle_fit_options* options,
+                                             myb_tle* tle, double* rms, int* iterations);
+
+/* A first guess for the fit: the osculating elements of the TEME state (m, m/s) at the epoch
+ * of the set written as its mean ones — off by the short-period terms of the oblateness, some
+ * kilometres. The epoch, B* and the identification of *tle are left as they are. Errors:
+ * MYB_E_DOMAIN (not an ellipse), those of myb_elements_from_pv. */
+MYB_EXT_API MYB_NODISCARD myb_status myb_tle_from_state(const double r[3], const double v[3],
+                                                    myb_sgp4_gravity gravity, myb_tle* tle);
+
 /* The same in the units of the theory (km, km/s), as printed by its verification program. */
 MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes,
                                                        double r[3], double v[3],

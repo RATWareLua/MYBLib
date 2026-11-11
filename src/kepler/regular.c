@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "core/check.h"
+#include "myb/cmath.h"
 #include "myb/regular.h"
 #include "num/vec3.h"
 
@@ -68,21 +69,24 @@ void myb_ks_to_cartesian(const double y[10], double* t, double x[3], double v[3]
   }
 }
 
-myb_status myb_ks_rhs(void* problem, double s, const double* y, double* dy) {
-  (void)s;
-  MYB_CHECK(problem != NULL && y != NULL && dy != NULL);
-  const myb_regular_problem* p = problem;
+static double dot4(const double a[4], const double b[4]) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+}
+
+/* The equations of u, u' and h at the physical time t; lp receives L(u)^T P. */
+static myb_status ks_motion(const myb_regular_problem* p, double t, const double* y, double* dy,
+                            double lp[4]) {
   const double* u = y;
   const double* up = y + 4;
   const double h = y[8];
-  const double r = u[0] * u[0] + u[1] * u[1] + u[2] * u[2] + u[3] * u[3];
-  double lp[4] = {0.0, 0.0, 0.0, 0.0}; /* L(u)^T P */
+  const double r = dot4(u, u);
+  lp[0] = lp[1] = lp[2] = lp[3] = 0.0;
   if (p->perturbation != NULL && r > 0.0) {
     double x[3];
     double v[3];
     myb_ks_to_cartesian(y, NULL, x, v);
     double a[3];
-    const myb_status st = p->perturbation(p->context, y[9], x, v, a);
+    const myb_status st = p->perturbation(p->context, t, x, v, a);
     if (st != MYB_OK) {
       return st;
     }
@@ -96,7 +100,57 @@ myb_status myb_ks_rhs(void* problem, double s, const double* y, double* dy) {
     hp += up[i] * lp[i];
   }
   dy[8] = -2.0 * hp;
-  dy[9] = r;
+  return MYB_OK;
+}
+
+myb_status myb_ks_rhs(void* problem, double s, const double* y, double* dy) {
+  (void)s;
+  MYB_CHECK(problem != NULL && y != NULL && dy != NULL);
+  double lp[4];
+  const myb_status st = ks_motion(problem, y[9], y, dy, lp);
+  dy[9] = dot4(y, y);
+  return st;
+}
+
+/* ---- The time element ---------------------------------------------------------------------- */
+
+myb_status myb_ks_element_from_cartesian(double mu, double t, const double x[3],
+                                         const double v[3], double y[10]) {
+  myb_ks_from_cartesian(mu, t, x, v, y);
+  if (!(y[8] > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  y[9] = t + dot4(y, y + 4) / y[8];
+  return MYB_OK;
+}
+
+myb_status myb_ks_element_to_cartesian(const double y[10], double* t, double x[3], double v[3]) {
+  myb_ks_to_cartesian(y, NULL, x, v);
+  if (!(y[8] > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  if (t != NULL) {
+    *t = y[9] - dot4(y, y + 4) / y[8];
+  }
+  return MYB_OK;
+}
+
+myb_status myb_ks_element_rhs(void* problem, double s, const double* y, double* dy) {
+  (void)s;
+  MYB_CHECK(problem != NULL && y != NULL && dy != NULL);
+  const myb_regular_problem* p = problem;
+  const double h = y[8];
+  if (!(h > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  const double uup = dot4(y, y + 4);
+  double lp[4];
+  const myb_status st = ks_motion(p, y[9] - uup / h, y, dy, lp);
+  if (st != MYB_OK) {
+    return st;
+  }
+  const double r = dot4(y, y);
+  dy[9] = (0.5 * p->mu + 0.5 * r * dot4(y, lp) + 2.0 * uup * dot4(y + 4, lp) / h) / h;
   return MYB_OK;
 }
 
@@ -108,13 +162,19 @@ myb_status myb_sundman_rhs(void* problem, double s, const double* y, double* dy)
   if (!(r > 0.0)) {
     return MYB_E_DOMAIN;
   }
-  double g = r; /* r^alpha for the supported exponents 1, 3/2, 2 */
+  double g = r; /* r^alpha */
   if (p->alpha == 1.5) {
     g = r * sqrt(r);
   } else if (p->alpha == 2.0) {
     g = r * r;
   } else if (p->alpha != 1.0) {
-    return MYB_E_DOMAIN;
+    if (!(p->alpha >= 0.0) || !isfinite(p->alpha)) {
+      return MYB_E_DOMAIN;
+    }
+    g = p->alpha == 0.0 ? 1.0 : myb_exp(p->alpha * myb_log(r));
+    if (!isfinite(g)) {
+      return MYB_E_DOMAIN;
+    }
   }
   double a[3] = {0.0, 0.0, 0.0};
   if (p->perturbation != NULL) {
@@ -133,14 +193,22 @@ myb_status myb_sundman_rhs(void* problem, double s, const double* y, double* dy)
 }
 
 typedef struct time_event {
-  int index; /* of t in y */
+  myb_regular_kind kind;
   double t1;
 } time_event;
+
+/* The physical time of a state of the form `kind`. */
+static double physical_time(myb_regular_kind kind, const double* y) {
+  if (kind == MYB_REGULAR_SUNDMAN) {
+    return y[6];
+  }
+  return kind == MYB_REGULAR_KS ? y[9] : y[9] - dot4(y, y + 4) / y[8];
+}
 
 static double event_time(void* context, double s, const double* y) {
   (void)s;
   const time_event* e = context;
-  return y[e->index] - e->t1;
+  return physical_time(e->kind, y) - e->t1;
 }
 
 myb_status myb_regular_propagate(myb_regular_kind kind, const myb_regular_problem* problem,
@@ -148,7 +216,9 @@ myb_status myb_regular_propagate(myb_regular_kind kind, const myb_regular_proble
                                  const double v0[3], double t1, double x1[3], double v1[3],
                                  int64_t* evaluations) {
   MYB_CHECK(problem != NULL && options != NULL && x0 != NULL && v0 != NULL && x1 != NULL &&
-            v1 != NULL && (kind == MYB_REGULAR_KS || kind == MYB_REGULAR_SUNDMAN));
+            v1 != NULL &&
+            (kind == MYB_REGULAR_KS || kind == MYB_REGULAR_SUNDMAN ||
+             kind == MYB_REGULAR_KS_ELEMENT));
   if (!(problem->mu > 0.0) || !isfinite(t0) || !isfinite(t1)) {
     return MYB_E_DOMAIN;
   }
@@ -160,12 +230,18 @@ myb_status myb_regular_propagate(myb_regular_kind kind, const myb_regular_proble
     memcpy(v1, v0, 3 * sizeof *v0);
     return MYB_OK;
   }
-  const int n = kind == MYB_REGULAR_KS ? 10 : 7;
+  const int n = kind == MYB_REGULAR_SUNDMAN ? 7 : 10;
   double y0[10];
   myb_ode_function f = NULL;
   if (kind == MYB_REGULAR_KS) {
     myb_ks_from_cartesian(problem->mu, t0, x0, v0, y0);
     f = myb_ks_rhs;
+  } else if (kind == MYB_REGULAR_KS_ELEMENT) {
+    const myb_status bound = myb_ks_element_from_cartesian(problem->mu, t0, x0, v0, y0);
+    if (bound != MYB_OK) {
+      return bound;
+    }
+    f = myb_ks_element_rhs;
   } else {
     memcpy(y0, x0, 3 * sizeof *x0);
     memcpy(y0 + 3, v0, 3 * sizeof *v0);
@@ -179,7 +255,7 @@ myb_status myb_regular_propagate(myb_regular_kind kind, const myb_regular_proble
   }
   st = myb_dop853_start(d, f, (void*)(uintptr_t)problem, 0.0, y0);
   const double direction = t1 > t0 ? 1.0 : -1.0;
-  time_event ev = {.index = n - 1, .t1 = t1};
+  time_event ev = {.kind = kind, .t1 = t1};
   const int64_t budget = options->max_steps > 0 ? options->max_steps : INT64_C(1000000000);
   int found = 0;
   double y[10];
@@ -189,7 +265,7 @@ myb_status myb_regular_propagate(myb_regular_kind kind, const myb_regular_proble
       break;
     }
     const double* ys = myb_dop853_state(d);
-    if ((ys[n - 1] - t1) * direction >= 0.0) {
+    if ((physical_time(kind, ys) - t1) * direction >= 0.0) {
       double s_event;
       st = myb_dop853_locate(d, event_time, &ev, &found, &s_event, y);
       if (st == MYB_OK && !found) {
@@ -203,7 +279,7 @@ myb_status myb_regular_propagate(myb_regular_kind kind, const myb_regular_proble
     st = MYB_E_NOCONV;
   }
   if (st == MYB_OK) {
-    if (kind == MYB_REGULAR_KS) {
+    if (kind != MYB_REGULAR_SUNDMAN) {
       myb_ks_to_cartesian(y, NULL, x1, v1);
     } else {
       memcpy(x1, y, 3 * sizeof *x1);

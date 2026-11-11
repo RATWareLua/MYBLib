@@ -605,6 +605,16 @@ unsafe extern "C" {
     ) -> myb_status;
 }
 unsafe extern "C" {
+    pub fn myb_budget_linear(
+        model: *mut myb_force_model,
+        t0: f64,
+        y0: *const f64,
+        t1: f64,
+        options: *const myb_budget_options,
+        entries: *mut myb_budget_entry,
+    ) -> myb_status;
+}
+unsafe extern "C" {
     pub fn myb_two_sum(a: f64, b: f64, err: *mut f64) -> f64;
 }
 unsafe extern "C" {
@@ -1351,6 +1361,871 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn myb_hypot(x: f64, y: f64) -> f64;
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_spk {
+    _unused: [u8; 0],
+}
+unsafe extern "C" {
+    pub fn myb_spk_create(allocator: *const myb_allocator, spk: *mut *mut myb_spk) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_destroy(spk: *mut myb_spk);
+}
+unsafe extern "C" {
+    pub fn myb_spk_load_file(
+        spk: *mut myb_spk,
+        path: *const ::std::os::raw::c_char,
+        diag: *mut myb_diag,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_load_memory(
+        spk: *mut myb_spk,
+        data: *const ::std::os::raw::c_void,
+        size: usize,
+        diag: *mut myb_diag,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_spk_segment_info {
+    pub target: i32,
+    pub center: i32,
+    pub frame: i32,
+    pub type_: i32,
+    pub start: f64,
+    pub stop: f64,
+    pub file: usize,
+    pub name: [::std::os::raw::c_char; 41usize],
+}
+impl Default for myb_spk_segment_info {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_spk_segment_count(spk: *const myb_spk) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_spk_segment(spk: *const myb_spk, index: usize, info: *mut myb_spk_segment_info);
+}
+unsafe extern "C" {
+    pub fn myb_spk_segment_size(spk: *const myb_spk, index: usize) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_spk_segment_data(
+        spk: *const myb_spk,
+        index: usize,
+        offset: usize,
+        count: usize,
+        values: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_state(
+        spk: *const myb_spk,
+        target: i32,
+        center: i32,
+        t: myb_time,
+        state: *mut f64,
+        frame: *mut i32,
+    ) -> myb_status;
+}
+pub type myb_state_function = ::std::option::Option<
+    unsafe extern "C" fn(
+        context: *mut ::std::os::raw::c_void,
+        t: myb_time,
+        state: *mut f64,
+    ) -> myb_status,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_spk_body {
+    pub spk: *const myb_spk,
+    pub target: i32,
+    pub center: i32,
+    pub frame: i32,
+}
+impl Default for myb_spk_body {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_spk_body_state(
+        body: *mut ::std::os::raw::c_void,
+        t: myb_time,
+        state: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_spk_writer {
+    _unused: [u8; 0],
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_create(
+        internal_name: *const ::std::os::raw::c_char,
+        allocator: *const myb_allocator,
+        writer: *mut *mut myb_spk_writer,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_destroy(writer: *mut myb_spk_writer);
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_spk_segment_header {
+    pub target: i32,
+    pub center: i32,
+    pub frame: i32,
+    pub name: *const ::std::os::raw::c_char,
+}
+impl Default for myb_spk_segment_header {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_add_states(
+        writer: *mut myb_spk_writer,
+        header: *const myb_spk_segment_header,
+        type_: ::std::os::raw::c_int,
+        degree: ::std::os::raw::c_int,
+        epochs: *const f64,
+        states: *const f64,
+        count: usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_add_chebyshev(
+        writer: *mut myb_spk_writer,
+        header: *const myb_spk_segment_header,
+        type_: ::std::os::raw::c_int,
+        state: myb_state_function,
+        context: *mut ::std::os::raw::c_void,
+        start: f64,
+        stop: f64,
+        intervals: usize,
+        degree: ::std::os::raw::c_int,
+        max_error: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_add_raw(
+        writer: *mut myb_spk_writer,
+        header: *const myb_spk_segment_header,
+        type_: ::std::os::raw::c_int,
+        start: f64,
+        stop: f64,
+        words: *const f64,
+        count: usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_size(writer: *const myb_spk_writer) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_write(
+        writer: *const myb_spk_writer,
+        buffer: *mut ::std::os::raw::c_void,
+        size: usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_writer_write_file(
+        writer: *const myb_spk_writer,
+        path: *const ::std::os::raw::c_char,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_sp3 {
+    _unused: [u8; 0],
+}
+unsafe extern "C" {
+    pub fn myb_sp3_load(
+        text: *const ::std::os::raw::c_char,
+        size: usize,
+        allocator: *const myb_allocator,
+        sp3: *mut *mut myb_sp3,
+        diag: *mut myb_diag,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_load_file(
+        path: *const ::std::os::raw::c_char,
+        allocator: *const myb_allocator,
+        sp3: *mut *mut myb_sp3,
+        diag: *mut myb_diag,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_destroy(sp3: *mut myb_sp3);
+}
+unsafe extern "C" {
+    pub fn myb_sp3_satellite_count(sp3: *const myb_sp3) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_satellite(sp3: *const myb_sp3, index: usize) -> *const ::std::os::raw::c_char;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_epoch_count(sp3: *const myb_sp3) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_time_system(sp3: *const myb_sp3) -> *const ::std::os::raw::c_char;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_frame(sp3: *const myb_sp3) -> *const ::std::os::raw::c_char;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_epoch(sp3: *const myb_sp3, epoch: usize, label: *mut myb_calendar);
+}
+unsafe extern "C" {
+    pub fn myb_sp3_state(
+        sp3: *const myb_sp3,
+        satellite: usize,
+        epoch: usize,
+        position: *mut f64,
+        velocity: *mut f64,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_clock(
+        sp3: *const myb_sp3,
+        satellite: usize,
+        epoch: usize,
+        clock: *mut f64,
+        rate: *mut f64,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    pub fn myb_sp3_sigma(sp3: *const myb_sp3, satellite: usize, epoch: usize, sigma: *mut f64);
+}
+unsafe extern "C" {
+    pub fn myb_sp3_accuracy(sp3: *const myb_sp3, satellite: usize) -> f64;
+}
+pub const MYB_SP3_CLOCK_EVENT: _bindgen_ty_6 = 1;
+pub const MYB_SP3_CLOCK_PREDICTED: _bindgen_ty_6 = 2;
+pub const MYB_SP3_MANEUVER: _bindgen_ty_6 = 4;
+pub const MYB_SP3_ORBIT_PREDICTED: _bindgen_ty_6 = 8;
+pub type _bindgen_ty_6 = ::std::os::raw::c_uint;
+unsafe extern "C" {
+    pub fn myb_sp3_flags(
+        sp3: *const myb_sp3,
+        satellite: usize,
+        epoch: usize,
+    ) -> ::std::os::raw::c_uint;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_sp3_data {
+    pub version: ::std::os::raw::c_char,
+    pub file_type: ::std::os::raw::c_char,
+    pub time_system: *const ::std::os::raw::c_char,
+    pub frame: *const ::std::os::raw::c_char,
+    pub orbit_type: *const ::std::os::raw::c_char,
+    pub agency: *const ::std::os::raw::c_char,
+    pub data_used: *const ::std::os::raw::c_char,
+    pub satellite_count: usize,
+    pub satellites: *const *const ::std::os::raw::c_char,
+    pub epoch_count: usize,
+    pub epochs: *const myb_calendar,
+    pub interval: f64,
+    pub positions: *const f64,
+    pub velocities: *const f64,
+    pub clocks: *const f64,
+    pub clock_rates: *const f64,
+    pub accuracy: *const f64,
+    pub sigmas: *const f64,
+    pub flags: *const ::std::os::raw::c_uchar,
+}
+impl Default for myb_sp3_data {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_sp3_write(
+        data: *const myb_sp3_data,
+        buffer: *mut ::std::os::raw::c_char,
+        size: usize,
+        length: *mut usize,
+    ) -> myb_status;
+}
+pub type myb_ode_function = ::std::option::Option<
+    unsafe extern "C" fn(
+        context: *mut ::std::os::raw::c_void,
+        t: f64,
+        y: *const f64,
+        dydt: *mut f64,
+    ) -> myb_status,
+>;
+pub type myb_event_function = ::std::option::Option<
+    unsafe extern "C" fn(context: *mut ::std::os::raw::c_void, t: f64, y: *const f64) -> f64,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_dop853 {
+    _unused: [u8; 0],
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_dop853_options {
+    pub rtol: f64,
+    pub atol: f64,
+    pub h_initial: f64,
+    pub h_max: f64,
+    pub h_min: f64,
+    pub max_steps: i64,
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_dop853_stats {
+    pub accepted: i64,
+    pub rejected: i64,
+    pub evaluations: i64,
+}
+unsafe extern "C" {
+    pub fn myb_dop853_create(
+        n: usize,
+        options: *const myb_dop853_options,
+        allocator: *const myb_allocator,
+        integrator: *mut *mut myb_dop853,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_destroy(integrator: *mut myb_dop853);
+}
+unsafe extern "C" {
+    pub fn myb_dop853_start(
+        integrator: *mut myb_dop853,
+        f: myb_ode_function,
+        context: *mut ::std::os::raw::c_void,
+        t0: f64,
+        y0: *const f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_step(integrator: *mut myb_dop853, t_limit: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_integrate(integrator: *mut myb_dop853, t_end: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_time(integrator: *const myb_dop853) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_state(integrator: *const myb_dop853) -> *const f64;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_statistics(integrator: *const myb_dop853) -> myb_dop853_stats;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_dense(integrator: *mut myb_dop853, t: f64, y: *mut f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_dop853_locate(
+        integrator: *mut myb_dop853,
+        g: myb_event_function,
+        context: *mut ::std::os::raw::c_void,
+        found: *mut ::std::os::raw::c_int,
+        t_event: *mut f64,
+        y_event: *mut f64,
+    ) -> myb_status;
+}
+pub type myb_accel_function = ::std::option::Option<
+    unsafe extern "C" fn(
+        context: *mut ::std::os::raw::c_void,
+        t: f64,
+        x: *const f64,
+        v: *const f64,
+        a: *mut f64,
+    ) -> myb_status,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_ias15 {
+    _unused: [u8; 0],
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_ias15_options {
+    pub epsilon: f64,
+    pub h_initial: f64,
+    pub h_max: f64,
+    pub h_min: f64,
+    pub max_steps: i64,
+    pub block: usize,
+    pub groups: *const usize,
+    pub group_count: usize,
+}
+impl Default for myb_ias15_options {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_ias15_stats {
+    pub accepted: i64,
+    pub rejected: i64,
+    pub evaluations: i64,
+    pub iterations: i64,
+    pub unconverged: i64,
+}
+unsafe extern "C" {
+    pub fn myb_ias15_create(
+        n: usize,
+        options: *const myb_ias15_options,
+        allocator: *const myb_allocator,
+        integrator: *mut *mut myb_ias15,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_destroy(integrator: *mut myb_ias15);
+}
+unsafe extern "C" {
+    pub fn myb_ias15_start(
+        integrator: *mut myb_ias15,
+        a: myb_accel_function,
+        context: *mut ::std::os::raw::c_void,
+        t0: f64,
+        y0: *const f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_step(integrator: *mut myb_ias15, t_limit: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_integrate(integrator: *mut myb_ias15, t_end: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_time(integrator: *const myb_ias15) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_state(integrator: *const myb_ias15) -> *const f64;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_statistics(integrator: *const myb_ias15) -> myb_ias15_stats;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_dense(integrator: *mut myb_ias15, t: f64, y: *mut f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ias15_locate(
+        integrator: *mut myb_ias15,
+        g: myb_event_function,
+        context: *mut ::std::os::raw::c_void,
+        found: *mut ::std::os::raw::c_int,
+        t_event: *mut f64,
+        y_event: *mut f64,
+    ) -> myb_status;
+}
+pub type myb_position_accel_function = ::std::option::Option<
+    unsafe extern "C" fn(
+        context: *mut ::std::os::raw::c_void,
+        t: f64,
+        x: *const f64,
+        a: *mut f64,
+    ) -> myb_status,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_symplectic {
+    _unused: [u8; 0],
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_symplectic_stats {
+    pub steps: i64,
+    pub evaluations: i64,
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_create(
+        n: usize,
+        order: ::std::os::raw::c_int,
+        allocator: *const myb_allocator,
+        integrator: *mut *mut myb_symplectic,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_destroy(integrator: *mut myb_symplectic);
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_start(
+        integrator: *mut myb_symplectic,
+        a: myb_position_accel_function,
+        context: *mut ::std::os::raw::c_void,
+        t0: f64,
+        y0: *const f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_step(integrator: *mut myb_symplectic, h: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_integrate(
+        integrator: *mut myb_symplectic,
+        t_end: f64,
+        h_max: f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_time(integrator: *const myb_symplectic) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_state(integrator: *const myb_symplectic) -> *const f64;
+}
+unsafe extern "C" {
+    pub fn myb_symplectic_statistics(integrator: *const myb_symplectic) -> myb_symplectic_stats;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_rkn12 {
+    _unused: [u8; 0],
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_rkn12_options {
+    pub rtol: f64,
+    pub atol: f64,
+    pub h_initial: f64,
+    pub h_max: f64,
+    pub h_min: f64,
+    pub max_steps: i64,
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_rkn12_stats {
+    pub accepted: i64,
+    pub rejected: i64,
+    pub evaluations: i64,
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_create(
+        n: usize,
+        options: *const myb_rkn12_options,
+        allocator: *const myb_allocator,
+        integrator: *mut *mut myb_rkn12,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_destroy(integrator: *mut myb_rkn12);
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_start(
+        integrator: *mut myb_rkn12,
+        a: myb_position_accel_function,
+        context: *mut ::std::os::raw::c_void,
+        t0: f64,
+        y0: *const f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_step(integrator: *mut myb_rkn12, t_limit: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_integrate(integrator: *mut myb_rkn12, t_end: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_time(integrator: *const myb_rkn12) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_state(integrator: *const myb_rkn12) -> *const f64;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_statistics(integrator: *const myb_rkn12) -> myb_rkn12_stats;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_dense(integrator: *mut myb_rkn12, t: f64, y: *mut f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_rkn12_locate(
+        integrator: *mut myb_rkn12,
+        g: myb_event_function,
+        context: *mut ::std::os::raw::c_void,
+        found: *mut ::std::os::raw::c_int,
+        t_event: *mut f64,
+        y_event: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_gauss_jackson {
+    _unused: [u8; 0],
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_gauss_jackson_options {
+    pub h: f64,
+    pub tolerance: f64,
+    pub max_corrections: ::std::os::raw::c_int,
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_gauss_jackson_stats {
+    pub steps: i64,
+    pub evaluations: i64,
+    pub unconverged: i64,
+    pub max_difference: f64,
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_create(
+        n: usize,
+        options: *const myb_gauss_jackson_options,
+        allocator: *const myb_allocator,
+        integrator: *mut *mut myb_gauss_jackson,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_destroy(integrator: *mut myb_gauss_jackson);
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_start(
+        integrator: *mut myb_gauss_jackson,
+        a: myb_accel_function,
+        context: *mut ::std::os::raw::c_void,
+        t0: f64,
+        y0: *const f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_step(integrator: *mut myb_gauss_jackson) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_integrate(
+        integrator: *mut myb_gauss_jackson,
+        t_end: f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_time(integrator: *const myb_gauss_jackson) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_state(integrator: *const myb_gauss_jackson) -> *const f64;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_statistics(
+        integrator: *const myb_gauss_jackson,
+    ) -> myb_gauss_jackson_stats;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_dense(
+        integrator: *mut myb_gauss_jackson,
+        t: f64,
+        y: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_gauss_jackson_locate(
+        integrator: *mut myb_gauss_jackson,
+        g: myb_event_function,
+        context: *mut ::std::os::raw::c_void,
+        found: *mut ::std::os::raw::c_int,
+        t_event: *mut f64,
+        y_event: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_orbit {
+    _unused: [u8; 0],
+}
+pub const MYB_ORBIT_IAS15: myb_orbit_integrator = 0;
+pub const MYB_ORBIT_DOP853: myb_orbit_integrator = 1;
+pub type myb_orbit_integrator = ::std::os::raw::c_uint;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_orbit_options {
+    pub epsilon: f64,
+    pub h_max: f64,
+    pub max_steps: i64,
+    pub variational: ::std::os::raw::c_int,
+    pub integrator: myb_orbit_integrator,
+    pub rtol: f64,
+    pub atol: f64,
+}
+impl Default for myb_orbit_options {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_orbit_create(
+        model: *mut myb_force_model,
+        options: *const myb_orbit_options,
+        allocator: *const myb_allocator,
+        orbit: *mut *mut myb_orbit,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_destroy(orbit: *mut myb_orbit);
+}
+unsafe extern "C" {
+    pub fn myb_orbit_start(
+        orbit: *mut myb_orbit,
+        t0: f64,
+        y0: *const f64,
+        t_end: f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_time(orbit: *const myb_orbit) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_state(orbit: *mut myb_orbit, t: f64, y: *mut f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_states(
+        orbit: *mut myb_orbit,
+        times: *const f64,
+        count: usize,
+        states: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_partials(
+        orbit: *mut myb_orbit,
+        t: f64,
+        y: *mut f64,
+        phi: *mut f64,
+        sensitivity: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_event(
+        orbit: *mut myb_orbit,
+        g: myb_event_function,
+        context: *mut ::std::os::raw::c_void,
+        t_limit: f64,
+        direction: ::std::os::raw::c_int,
+        found: *mut ::std::os::raw::c_int,
+        t_event: *mut f64,
+        y_event: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_kick(orbit: *mut myb_orbit, dv: *const f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_steps(orbit: *const myb_orbit) -> i64;
+}
+unsafe extern "C" {
+    pub fn myb_orbit_breaks(orbit: *const myb_orbit) -> i64;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_approach {
+    pub t: f64,
+    pub distance: f64,
+    pub position: [f64; 3usize],
+    pub velocity: [f64; 3usize],
+}
+unsafe extern "C" {
+    pub fn myb_approach_find(
+        first: myb_state_function,
+        first_context: *mut ::std::os::raw::c_void,
+        second: myb_state_function,
+        second_context: *mut ::std::os::raw::c_void,
+        t0: f64,
+        t1: f64,
+        step: f64,
+        approaches: *mut myb_approach,
+        capacity: usize,
+        count: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_approach_orbits(
+        first: *mut myb_orbit,
+        second: *mut myb_orbit,
+        t1: f64,
+        step: f64,
+        approaches: *mut myb_approach,
+        capacity: usize,
+        count: *mut usize,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_encounter {
+    pub miss: [f64; 2usize],
+    pub sigma: [f64; 2usize],
+    pub radius: f64,
+}
+unsafe extern "C" {
+    pub fn myb_encounter_plane(
+        position: *const f64,
+        velocity: *const f64,
+        covariance: *const f64,
+        radius: f64,
+        encounter: *mut myb_encounter,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_collision_probability(
+        encounter: *const myb_encounter,
+        probability: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_collision_probability_chan(encounter: *const myb_encounter) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_collision_probability_max(
+        encounter: *const myb_encounter,
+        probability: *mut f64,
+        factor: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_conjunction {
+    pub approach: myb_approach,
+    pub covariance: [f64; 9usize],
+    pub encounter: myb_encounter,
+    pub probability: f64,
+}
+unsafe extern "C" {
+    pub fn myb_conjunction_find(
+        first: *mut myb_orbit,
+        first_covariance: *const f64,
+        second: *mut myb_orbit,
+        second_covariance: *const f64,
+        radius: f64,
+        t1: f64,
+        step: f64,
+        conjunctions: *mut myb_conjunction,
+        capacity: usize,
+        count: *mut usize,
+    ) -> myb_status;
+}
 unsafe extern "C" {
     pub fn myb_cr3bp_acceleration(mu: f64, x: *const f64, v: *const f64, a: *mut f64);
 }
@@ -1469,6 +2344,102 @@ unsafe extern "C" {
         state: *mut f64,
     ) -> myb_status;
 }
+pub const MYB_CR3BP_MAX_PATCHES: _bindgen_ty_7 = 10;
+pub type _bindgen_ty_7 = ::std::os::raw::c_uint;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_cr3bp_orbit {
+    pub patches: usize,
+    pub states: [f64; 60usize],
+    pub period: f64,
+    pub has_tangent: ::std::os::raw::c_int,
+    pub tangent: [f64; 61usize],
+}
+impl Default for myb_cr3bp_orbit {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_cr3bp_orbit_from_state(
+        mu: f64,
+        y0: *const f64,
+        period: f64,
+        patches: usize,
+        orbit: *mut myb_cr3bp_orbit,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_cr3bp_orbit_correct(
+        mu: f64,
+        orbit: *mut myb_cr3bp_orbit,
+        tolerance: f64,
+        max_iterations: ::std::os::raw::c_int,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_cr3bp_orbit_continue(
+        mu: f64,
+        orbit: *mut myb_cr3bp_orbit,
+        step: f64,
+        tolerance: f64,
+        max_iterations: ::std::os::raw::c_int,
+    ) -> myb_status;
+}
+pub const MYB_CR3BP_MAX_CIRCLE: _bindgen_ty_8 = 35;
+pub type _bindgen_ty_8 = ::std::os::raw::c_uint;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_cr3bp_torus {
+    pub points: usize,
+    pub states: [f64; 210usize],
+    pub period: f64,
+    pub rotation: f64,
+    pub defect: f64,
+    pub has_tangent: ::std::os::raw::c_int,
+    pub tangent: [f64; 212usize],
+}
+impl Default for myb_cr3bp_torus {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+pub const MYB_CR3BP_TORUS_JACOBI: myb_cr3bp_torus_family = 0;
+pub const MYB_CR3BP_TORUS_PERIOD: myb_cr3bp_torus_family = 1;
+pub const MYB_CR3BP_TORUS_ROTATION: myb_cr3bp_torus_family = 2;
+pub type myb_cr3bp_torus_family = ::std::os::raw::c_uint;
+unsafe extern "C" {
+    pub fn myb_cr3bp_torus_from_orbit(
+        mu: f64,
+        y0: *const f64,
+        period: f64,
+        points: usize,
+        pair: ::std::os::raw::c_int,
+        size: f64,
+        torus: *mut myb_cr3bp_torus,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_cr3bp_torus_continue(
+        mu: f64,
+        torus: *mut myb_cr3bp_torus,
+        family: myb_cr3bp_torus_family,
+        step: f64,
+        tolerance: f64,
+        max_iterations: ::std::os::raw::c_int,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_cr3bp_torus_state(torus: *const myb_cr3bp_torus, angle: f64, y: *mut f64);
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct myb_pool {
@@ -1577,15 +2548,15 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn myb_rel_proper_time_rate(c: f64, v2: f64, potential: f64) -> f64;
 }
-pub const MYB_PN_1: _bindgen_ty_6 = 1;
-pub const MYB_PN_2: _bindgen_ty_6 = 2;
-pub const MYB_PN_25: _bindgen_ty_6 = 4;
-pub const MYB_PN_3: _bindgen_ty_6 = 8;
-pub const MYB_PN_35: _bindgen_ty_6 = 16;
-pub const MYB_PN_SO: _bindgen_ty_6 = 32;
-pub const MYB_PN_SS: _bindgen_ty_6 = 64;
-pub const MYB_PN_ALL: _bindgen_ty_6 = 127;
-pub type _bindgen_ty_6 = ::std::os::raw::c_uint;
+pub const MYB_PN_1: _bindgen_ty_9 = 1;
+pub const MYB_PN_2: _bindgen_ty_9 = 2;
+pub const MYB_PN_25: _bindgen_ty_9 = 4;
+pub const MYB_PN_3: _bindgen_ty_9 = 8;
+pub const MYB_PN_35: _bindgen_ty_9 = 16;
+pub const MYB_PN_SO: _bindgen_ty_9 = 32;
+pub const MYB_PN_SS: _bindgen_ty_9 = 64;
+pub const MYB_PN_ALL: _bindgen_ty_9 = 127;
+pub type _bindgen_ty_9 = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct myb_pn_binary {
@@ -2420,13 +3391,13 @@ pub struct myb_tide_raiser {
     pub gm: f64,
     pub r: [f64; 3usize],
 }
-pub const MYB_TIDES_SOLID: _bindgen_ty_7 = 1;
-pub const MYB_TIDES_FREQUENCY: _bindgen_ty_7 = 2;
-pub const MYB_TIDES_OCEAN: _bindgen_ty_7 = 4;
-pub const MYB_TIDES_POLE_SOLID: _bindgen_ty_7 = 8;
-pub const MYB_TIDES_POLE_OCEAN: _bindgen_ty_7 = 16;
-pub const MYB_TIDES_ALL: _bindgen_ty_7 = 31;
-pub type _bindgen_ty_7 = ::std::os::raw::c_uint;
+pub const MYB_TIDES_SOLID: _bindgen_ty_10 = 1;
+pub const MYB_TIDES_FREQUENCY: _bindgen_ty_10 = 2;
+pub const MYB_TIDES_OCEAN: _bindgen_ty_10 = 4;
+pub const MYB_TIDES_POLE_SOLID: _bindgen_ty_10 = 8;
+pub const MYB_TIDES_POLE_OCEAN: _bindgen_ty_10 = 16;
+pub const MYB_TIDES_ALL: _bindgen_ty_10 = 31;
+pub type _bindgen_ty_10 = ::std::os::raw::c_uint;
 pub const MYB_PERMANENT_TIDE_AUTO: myb_permanent_tide = 0;
 pub const MYB_PERMANENT_TIDE_KEEP: myb_permanent_tide = 1;
 pub const MYB_PERMANENT_TIDE_REMOVE: myb_permanent_tide = 2;
@@ -2882,8 +3853,8 @@ pub type myb_density_function = ::std::option::Option<
         density: *mut f64,
     ) -> myb_status,
 >;
-pub const MYB_ATMOSPHERE_LAYERS: _bindgen_ty_8 = 32;
-pub type _bindgen_ty_8 = ::std::os::raw::c_uint;
+pub const MYB_ATMOSPHERE_LAYERS: _bindgen_ty_11 = 32;
+pub type _bindgen_ty_11 = ::std::os::raw::c_uint;
 pub type myb_wind_function = ::std::option::Option<
     unsafe extern "C" fn(
         context: *mut ::std::os::raw::c_void,
@@ -3015,320 +3986,11 @@ unsafe extern "C" {
         potential: *mut f64,
     ) -> myb_status;
 }
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_spk {
-    _unused: [u8; 0],
-}
-unsafe extern "C" {
-    pub fn myb_spk_create(allocator: *const myb_allocator, spk: *mut *mut myb_spk) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_destroy(spk: *mut myb_spk);
-}
-unsafe extern "C" {
-    pub fn myb_spk_load_file(
-        spk: *mut myb_spk,
-        path: *const ::std::os::raw::c_char,
-        diag: *mut myb_diag,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_load_memory(
-        spk: *mut myb_spk,
-        data: *const ::std::os::raw::c_void,
-        size: usize,
-        diag: *mut myb_diag,
-    ) -> myb_status;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_spk_segment_info {
-    pub target: i32,
-    pub center: i32,
-    pub frame: i32,
-    pub type_: i32,
-    pub start: f64,
-    pub stop: f64,
-    pub file: usize,
-    pub name: [::std::os::raw::c_char; 41usize],
-}
-impl Default for myb_spk_segment_info {
-    fn default() -> Self {
-        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
-            s.assume_init()
-        }
-    }
-}
-unsafe extern "C" {
-    pub fn myb_spk_segment_count(spk: *const myb_spk) -> usize;
-}
-unsafe extern "C" {
-    pub fn myb_spk_segment(spk: *const myb_spk, index: usize, info: *mut myb_spk_segment_info);
-}
-unsafe extern "C" {
-    pub fn myb_spk_segment_size(spk: *const myb_spk, index: usize) -> usize;
-}
-unsafe extern "C" {
-    pub fn myb_spk_segment_data(
-        spk: *const myb_spk,
-        index: usize,
-        offset: usize,
-        count: usize,
-        values: *mut f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_state(
-        spk: *const myb_spk,
-        target: i32,
-        center: i32,
-        t: myb_time,
-        state: *mut f64,
-        frame: *mut i32,
-    ) -> myb_status;
-}
-pub type myb_state_function = ::std::option::Option<
-    unsafe extern "C" fn(
-        context: *mut ::std::os::raw::c_void,
-        t: myb_time,
-        state: *mut f64,
-    ) -> myb_status,
->;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_spk_body {
-    pub spk: *const myb_spk,
-    pub target: i32,
-    pub center: i32,
-    pub frame: i32,
-}
-impl Default for myb_spk_body {
-    fn default() -> Self {
-        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
-            s.assume_init()
-        }
-    }
-}
-unsafe extern "C" {
-    pub fn myb_spk_body_state(
-        body: *mut ::std::os::raw::c_void,
-        t: myb_time,
-        state: *mut f64,
-    ) -> myb_status;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_spk_writer {
-    _unused: [u8; 0],
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_create(
-        internal_name: *const ::std::os::raw::c_char,
-        allocator: *const myb_allocator,
-        writer: *mut *mut myb_spk_writer,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_destroy(writer: *mut myb_spk_writer);
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_spk_segment_header {
-    pub target: i32,
-    pub center: i32,
-    pub frame: i32,
-    pub name: *const ::std::os::raw::c_char,
-}
-impl Default for myb_spk_segment_header {
-    fn default() -> Self {
-        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
-            s.assume_init()
-        }
-    }
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_add_states(
-        writer: *mut myb_spk_writer,
-        header: *const myb_spk_segment_header,
-        type_: ::std::os::raw::c_int,
-        degree: ::std::os::raw::c_int,
-        epochs: *const f64,
-        states: *const f64,
-        count: usize,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_add_chebyshev(
-        writer: *mut myb_spk_writer,
-        header: *const myb_spk_segment_header,
-        type_: ::std::os::raw::c_int,
-        state: myb_state_function,
-        context: *mut ::std::os::raw::c_void,
-        start: f64,
-        stop: f64,
-        intervals: usize,
-        degree: ::std::os::raw::c_int,
-        max_error: *mut f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_add_raw(
-        writer: *mut myb_spk_writer,
-        header: *const myb_spk_segment_header,
-        type_: ::std::os::raw::c_int,
-        start: f64,
-        stop: f64,
-        words: *const f64,
-        count: usize,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_size(writer: *const myb_spk_writer) -> usize;
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_write(
-        writer: *const myb_spk_writer,
-        buffer: *mut ::std::os::raw::c_void,
-        size: usize,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_spk_writer_write_file(
-        writer: *const myb_spk_writer,
-        path: *const ::std::os::raw::c_char,
-    ) -> myb_status;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_sp3 {
-    _unused: [u8; 0],
-}
-unsafe extern "C" {
-    pub fn myb_sp3_load(
-        text: *const ::std::os::raw::c_char,
-        size: usize,
-        allocator: *const myb_allocator,
-        sp3: *mut *mut myb_sp3,
-        diag: *mut myb_diag,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_load_file(
-        path: *const ::std::os::raw::c_char,
-        allocator: *const myb_allocator,
-        sp3: *mut *mut myb_sp3,
-        diag: *mut myb_diag,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_destroy(sp3: *mut myb_sp3);
-}
-unsafe extern "C" {
-    pub fn myb_sp3_satellite_count(sp3: *const myb_sp3) -> usize;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_satellite(sp3: *const myb_sp3, index: usize) -> *const ::std::os::raw::c_char;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_epoch_count(sp3: *const myb_sp3) -> usize;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_time_system(sp3: *const myb_sp3) -> *const ::std::os::raw::c_char;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_frame(sp3: *const myb_sp3) -> *const ::std::os::raw::c_char;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_epoch(sp3: *const myb_sp3, epoch: usize, label: *mut myb_calendar);
-}
-unsafe extern "C" {
-    pub fn myb_sp3_state(
-        sp3: *const myb_sp3,
-        satellite: usize,
-        epoch: usize,
-        position: *mut f64,
-        velocity: *mut f64,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_clock(
-        sp3: *const myb_sp3,
-        satellite: usize,
-        epoch: usize,
-        clock: *mut f64,
-        rate: *mut f64,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn myb_sp3_sigma(sp3: *const myb_sp3, satellite: usize, epoch: usize, sigma: *mut f64);
-}
-unsafe extern "C" {
-    pub fn myb_sp3_accuracy(sp3: *const myb_sp3, satellite: usize) -> f64;
-}
-pub const MYB_SP3_CLOCK_EVENT: _bindgen_ty_9 = 1;
-pub const MYB_SP3_CLOCK_PREDICTED: _bindgen_ty_9 = 2;
-pub const MYB_SP3_MANEUVER: _bindgen_ty_9 = 4;
-pub const MYB_SP3_ORBIT_PREDICTED: _bindgen_ty_9 = 8;
-pub type _bindgen_ty_9 = ::std::os::raw::c_uint;
-unsafe extern "C" {
-    pub fn myb_sp3_flags(
-        sp3: *const myb_sp3,
-        satellite: usize,
-        epoch: usize,
-    ) -> ::std::os::raw::c_uint;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_sp3_data {
-    pub version: ::std::os::raw::c_char,
-    pub file_type: ::std::os::raw::c_char,
-    pub time_system: *const ::std::os::raw::c_char,
-    pub frame: *const ::std::os::raw::c_char,
-    pub orbit_type: *const ::std::os::raw::c_char,
-    pub agency: *const ::std::os::raw::c_char,
-    pub data_used: *const ::std::os::raw::c_char,
-    pub satellite_count: usize,
-    pub satellites: *const *const ::std::os::raw::c_char,
-    pub epoch_count: usize,
-    pub epochs: *const myb_calendar,
-    pub interval: f64,
-    pub positions: *const f64,
-    pub velocities: *const f64,
-    pub clocks: *const f64,
-    pub clock_rates: *const f64,
-    pub accuracy: *const f64,
-    pub sigmas: *const f64,
-    pub flags: *const ::std::os::raw::c_uchar,
-}
-impl Default for myb_sp3_data {
-    fn default() -> Self {
-        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
-        unsafe {
-            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
-            s.assume_init()
-        }
-    }
-}
-unsafe extern "C" {
-    pub fn myb_sp3_write(
-        data: *const myb_sp3_data,
-        buffer: *mut ::std::os::raw::c_char,
-        size: usize,
-        length: *mut usize,
-    ) -> myb_status;
-}
-pub const MYB_ENV_MAX_BODIES: _bindgen_ty_10 = 32;
-pub const MYB_ENV_MAX_SCALES: _bindgen_ty_10 = 4;
-pub const MYB_ENV_MAX_RAISERS: _bindgen_ty_10 = 8;
-pub const MYB_ENV_MAX_OCCULTERS: _bindgen_ty_10 = 8;
-pub type _bindgen_ty_10 = ::std::os::raw::c_uint;
+pub const MYB_ENV_MAX_BODIES: _bindgen_ty_12 = 32;
+pub const MYB_ENV_MAX_SCALES: _bindgen_ty_12 = 4;
+pub const MYB_ENV_MAX_RAISERS: _bindgen_ty_12 = 8;
+pub const MYB_ENV_MAX_OCCULTERS: _bindgen_ty_12 = 8;
+pub type _bindgen_ty_12 = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct myb_env {
@@ -4164,9 +4826,9 @@ unsafe extern "C" {
         dadv: *mut f64,
     ) -> myb_status;
 }
-pub const MYB_MEASURE_MAX: _bindgen_ty_11 = 6;
-pub const MYB_FIT_MAX_BIASES: _bindgen_ty_11 = 32;
-pub type _bindgen_ty_11 = ::std::os::raw::c_uint;
+pub const MYB_MEASURE_MAX: _bindgen_ty_13 = 6;
+pub const MYB_FIT_MAX_BIASES: _bindgen_ty_13 = 32;
+pub type _bindgen_ty_13 = ::std::os::raw::c_uint;
 pub type myb_measure_function = ::std::option::Option<
     unsafe extern "C" fn(
         context: *mut ::std::os::raw::c_void,
@@ -4649,371 +5311,46 @@ unsafe extern "C" {
         emission: *mut f64,
     ) -> myb_status;
 }
-pub type myb_ode_function = ::std::option::Option<
-    unsafe extern "C" fn(
-        context: *mut ::std::os::raw::c_void,
-        t: f64,
-        y: *const f64,
-        dydt: *mut f64,
-    ) -> myb_status,
->;
-pub type myb_event_function = ::std::option::Option<
-    unsafe extern "C" fn(context: *mut ::std::os::raw::c_void, t: f64, y: *const f64) -> f64,
->;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_dop853 {
-    _unused: [u8; 0],
+unsafe extern "C" {
+    pub fn myb_iod_gibbs(
+        mu: f64,
+        r1: *const f64,
+        r2: *const f64,
+        r3: *const f64,
+        v2: *mut f64,
+        out_of_plane: *mut f64,
+    ) -> myb_status;
 }
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_dop853_options {
-    pub rtol: f64,
-    pub atol: f64,
-    pub h_initial: f64,
-    pub h_max: f64,
-    pub h_min: f64,
-    pub max_steps: i64,
+unsafe extern "C" {
+    pub fn myb_iod_herrick_gibbs(
+        mu: f64,
+        r1: *const f64,
+        t1: f64,
+        r2: *const f64,
+        t2: f64,
+        r3: *const f64,
+        t3: f64,
+        v2: *mut f64,
+    ) -> myb_status;
 }
+pub const MYB_IOD_MAX_SOLUTIONS: _bindgen_ty_14 = 3;
+pub type _bindgen_ty_14 = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
-pub struct myb_dop853_stats {
-    pub accepted: i64,
-    pub rejected: i64,
-    pub evaluations: i64,
+pub struct myb_iod_solution {
+    pub r: [f64; 3usize],
+    pub v: [f64; 3usize],
+    pub range: [f64; 3usize],
+    pub iterations: ::std::os::raw::c_int,
 }
 unsafe extern "C" {
-    pub fn myb_dop853_create(
-        n: usize,
-        options: *const myb_dop853_options,
-        allocator: *const myb_allocator,
-        integrator: *mut *mut myb_dop853,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_destroy(integrator: *mut myb_dop853);
-}
-unsafe extern "C" {
-    pub fn myb_dop853_start(
-        integrator: *mut myb_dop853,
-        f: myb_ode_function,
-        context: *mut ::std::os::raw::c_void,
-        t0: f64,
-        y0: *const f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_step(integrator: *mut myb_dop853, t_limit: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_integrate(integrator: *mut myb_dop853, t_end: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_time(integrator: *const myb_dop853) -> f64;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_state(integrator: *const myb_dop853) -> *const f64;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_statistics(integrator: *const myb_dop853) -> myb_dop853_stats;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_dense(integrator: *mut myb_dop853, t: f64, y: *mut f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_dop853_locate(
-        integrator: *mut myb_dop853,
-        g: myb_event_function,
-        context: *mut ::std::os::raw::c_void,
-        found: *mut ::std::os::raw::c_int,
-        t_event: *mut f64,
-        y_event: *mut f64,
-    ) -> myb_status;
-}
-pub type myb_accel_function = ::std::option::Option<
-    unsafe extern "C" fn(
-        context: *mut ::std::os::raw::c_void,
-        t: f64,
-        x: *const f64,
-        v: *const f64,
-        a: *mut f64,
-    ) -> myb_status,
->;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_ias15 {
-    _unused: [u8; 0],
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_ias15_options {
-    pub epsilon: f64,
-    pub h_initial: f64,
-    pub h_max: f64,
-    pub h_min: f64,
-    pub max_steps: i64,
-    pub block: usize,
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_ias15_stats {
-    pub accepted: i64,
-    pub rejected: i64,
-    pub evaluations: i64,
-    pub iterations: i64,
-    pub unconverged: i64,
-}
-unsafe extern "C" {
-    pub fn myb_ias15_create(
-        n: usize,
-        options: *const myb_ias15_options,
-        allocator: *const myb_allocator,
-        integrator: *mut *mut myb_ias15,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_destroy(integrator: *mut myb_ias15);
-}
-unsafe extern "C" {
-    pub fn myb_ias15_start(
-        integrator: *mut myb_ias15,
-        a: myb_accel_function,
-        context: *mut ::std::os::raw::c_void,
-        t0: f64,
-        y0: *const f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_step(integrator: *mut myb_ias15, t_limit: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_integrate(integrator: *mut myb_ias15, t_end: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_time(integrator: *const myb_ias15) -> f64;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_state(integrator: *const myb_ias15) -> *const f64;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_statistics(integrator: *const myb_ias15) -> myb_ias15_stats;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_dense(integrator: *mut myb_ias15, t: f64, y: *mut f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_ias15_locate(
-        integrator: *mut myb_ias15,
-        g: myb_event_function,
-        context: *mut ::std::os::raw::c_void,
-        found: *mut ::std::os::raw::c_int,
-        t_event: *mut f64,
-        y_event: *mut f64,
-    ) -> myb_status;
-}
-pub type myb_position_accel_function = ::std::option::Option<
-    unsafe extern "C" fn(
-        context: *mut ::std::os::raw::c_void,
-        t: f64,
-        x: *const f64,
-        a: *mut f64,
-    ) -> myb_status,
->;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_symplectic {
-    _unused: [u8; 0],
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_symplectic_stats {
-    pub steps: i64,
-    pub evaluations: i64,
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_create(
-        n: usize,
-        order: ::std::os::raw::c_int,
-        allocator: *const myb_allocator,
-        integrator: *mut *mut myb_symplectic,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_destroy(integrator: *mut myb_symplectic);
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_start(
-        integrator: *mut myb_symplectic,
-        a: myb_position_accel_function,
-        context: *mut ::std::os::raw::c_void,
-        t0: f64,
-        y0: *const f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_step(integrator: *mut myb_symplectic, h: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_integrate(
-        integrator: *mut myb_symplectic,
-        t_end: f64,
-        h_max: f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_time(integrator: *const myb_symplectic) -> f64;
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_state(integrator: *const myb_symplectic) -> *const f64;
-}
-unsafe extern "C" {
-    pub fn myb_symplectic_statistics(integrator: *const myb_symplectic) -> myb_symplectic_stats;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_rkn12 {
-    _unused: [u8; 0],
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_rkn12_options {
-    pub rtol: f64,
-    pub atol: f64,
-    pub h_initial: f64,
-    pub h_max: f64,
-    pub h_min: f64,
-    pub max_steps: i64,
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_rkn12_stats {
-    pub accepted: i64,
-    pub rejected: i64,
-    pub evaluations: i64,
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_create(
-        n: usize,
-        options: *const myb_rkn12_options,
-        allocator: *const myb_allocator,
-        integrator: *mut *mut myb_rkn12,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_destroy(integrator: *mut myb_rkn12);
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_start(
-        integrator: *mut myb_rkn12,
-        a: myb_position_accel_function,
-        context: *mut ::std::os::raw::c_void,
-        t0: f64,
-        y0: *const f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_step(integrator: *mut myb_rkn12, t_limit: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_integrate(integrator: *mut myb_rkn12, t_end: f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_time(integrator: *const myb_rkn12) -> f64;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_state(integrator: *const myb_rkn12) -> *const f64;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_statistics(integrator: *const myb_rkn12) -> myb_rkn12_stats;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_dense(integrator: *mut myb_rkn12, t: f64, y: *mut f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_rkn12_locate(
-        integrator: *mut myb_rkn12,
-        g: myb_event_function,
-        context: *mut ::std::os::raw::c_void,
-        found: *mut ::std::os::raw::c_int,
-        t_event: *mut f64,
-        y_event: *mut f64,
-    ) -> myb_status;
-}
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_gauss_jackson {
-    _unused: [u8; 0],
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_gauss_jackson_options {
-    pub h: f64,
-    pub tolerance: f64,
-    pub max_corrections: ::std::os::raw::c_int,
-}
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
-pub struct myb_gauss_jackson_stats {
-    pub steps: i64,
-    pub evaluations: i64,
-    pub unconverged: i64,
-    pub max_difference: f64,
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_create(
-        n: usize,
-        options: *const myb_gauss_jackson_options,
-        allocator: *const myb_allocator,
-        integrator: *mut *mut myb_gauss_jackson,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_destroy(integrator: *mut myb_gauss_jackson);
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_start(
-        integrator: *mut myb_gauss_jackson,
-        a: myb_accel_function,
-        context: *mut ::std::os::raw::c_void,
-        t0: f64,
-        y0: *const f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_step(integrator: *mut myb_gauss_jackson) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_integrate(
-        integrator: *mut myb_gauss_jackson,
-        t_end: f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_time(integrator: *const myb_gauss_jackson) -> f64;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_state(integrator: *const myb_gauss_jackson) -> *const f64;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_statistics(
-        integrator: *const myb_gauss_jackson,
-    ) -> myb_gauss_jackson_stats;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_dense(
-        integrator: *mut myb_gauss_jackson,
-        t: f64,
-        y: *mut f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_gauss_jackson_locate(
-        integrator: *mut myb_gauss_jackson,
-        g: myb_event_function,
-        context: *mut ::std::os::raw::c_void,
-        found: *mut ::std::os::raw::c_int,
-        t_event: *mut f64,
-        y_event: *mut f64,
+    pub fn myb_iod_gauss(
+        mu: f64,
+        t: *const f64,
+        observer: *const [f64; 3usize],
+        sight: *const [f64; 3usize],
+        solutions: *mut myb_iod_solution,
+        count: *mut usize,
     ) -> myb_status;
 }
 #[repr(C)]
@@ -5127,6 +5464,27 @@ unsafe extern "C" {
         mu: f64,
         elements: *const myb_equinoctial,
         pv: *mut myb_pv,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_mean_elements {
+    pub a: f64,
+    pub f: f64,
+    pub g: f64,
+    pub h: f64,
+    pub k: f64,
+    pub lambda: f64,
+    pub rate: f64,
+    pub epoch: f64,
+}
+unsafe extern "C" {
+    pub fn myb_mean_elements_average(
+        mu: f64,
+        times: *const f64,
+        states: *const f64,
+        count: usize,
+        mean: *mut myb_mean_elements,
     ) -> myb_status;
 }
 unsafe extern "C" {
@@ -5270,8 +5628,8 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn myb_plasma_group_delay(column: f64, frequency: f64, e: f64, m_e: f64, eps0: f64) -> f64;
 }
-pub const MYB_PLASMA_TERMS: _bindgen_ty_12 = 8;
-pub type _bindgen_ty_12 = ::std::os::raw::c_uint;
+pub const MYB_PLASMA_TERMS: _bindgen_ty_15 = 8;
+pub type _bindgen_ty_15 = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct myb_plasma_profile {
@@ -5288,26 +5646,27 @@ unsafe extern "C" {
         column: *mut f64,
     ) -> myb_status;
 }
+pub const MYB_INDIRECT_FUEL: myb_indirect_goal = 0;
+pub const MYB_INDIRECT_TIME: myb_indirect_goal = 1;
+pub type myb_indirect_goal = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct myb_orbit {
-    _unused: [u8; 0],
+pub struct myb_indirect_problem {
+    pub mu: f64,
+    pub field: *mut myb_force_model,
+    pub thrust: f64,
+    pub exhaust: f64,
+    pub t0: f64,
+    pub start: [f64; 6usize],
+    pub mass0: f64,
+    pub t1: f64,
+    pub target: [f64; 6usize],
+    pub goal: myb_indirect_goal,
+    pub smoothing: f64,
+    pub tolerance: f64,
+    pub tries: ::std::os::raw::c_int,
 }
-pub const MYB_ORBIT_IAS15: myb_orbit_integrator = 0;
-pub const MYB_ORBIT_DOP853: myb_orbit_integrator = 1;
-pub type myb_orbit_integrator = ::std::os::raw::c_uint;
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct myb_orbit_options {
-    pub epsilon: f64,
-    pub h_max: f64,
-    pub max_steps: i64,
-    pub variational: ::std::os::raw::c_int,
-    pub integrator: myb_orbit_integrator,
-    pub rtol: f64,
-    pub atol: f64,
-}
-impl Default for myb_orbit_options {
+impl Default for myb_indirect_problem {
     fn default() -> Self {
         let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
         unsafe {
@@ -5316,68 +5675,144 @@ impl Default for myb_orbit_options {
         }
     }
 }
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_indirect_solution {
+    pub costate: [f64; 8usize],
+    pub t1: f64,
+    pub mass1: f64,
+    pub smoothing: f64,
+    pub residual: f64,
+    pub tries: ::std::os::raw::c_int,
+    pub stages: ::std::os::raw::c_int,
+}
 unsafe extern "C" {
-    pub fn myb_orbit_create(
-        model: *mut myb_force_model,
-        options: *const myb_orbit_options,
+    pub fn myb_indirect_solve(
+        problem: *const myb_indirect_problem,
+        guess: *const f64,
         allocator: *const myb_allocator,
-        orbit: *mut *mut myb_orbit,
+        solution: *mut myb_indirect_solution,
     ) -> myb_status;
 }
-unsafe extern "C" {
-    pub fn myb_orbit_destroy(orbit: *mut myb_orbit);
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_indirect_point {
+    pub y: [f64; 7usize],
+    pub direction: [f64; 3usize],
+    pub throttle: f64,
+    pub switching: f64,
+    pub hamiltonian: f64,
 }
 unsafe extern "C" {
-    pub fn myb_orbit_start(
-        orbit: *mut myb_orbit,
-        t0: f64,
-        y0: *const f64,
-        t_end: f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_orbit_time(orbit: *const myb_orbit) -> f64;
-}
-unsafe extern "C" {
-    pub fn myb_orbit_state(orbit: *mut myb_orbit, t: f64, y: *mut f64) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_orbit_states(
-        orbit: *mut myb_orbit,
+    pub fn myb_indirect_sample(
+        problem: *const myb_indirect_problem,
+        solution: *const myb_indirect_solution,
         times: *const f64,
         count: usize,
-        states: *mut f64,
+        allocator: *const myb_allocator,
+        points: *mut myb_indirect_point,
     ) -> myb_status;
 }
-unsafe extern "C" {
-    pub fn myb_orbit_partials(
-        orbit: *mut myb_orbit,
-        t: f64,
-        y: *mut f64,
-        phi: *mut f64,
-        sensitivity: *mut f64,
-    ) -> myb_status;
-}
-unsafe extern "C" {
-    pub fn myb_orbit_event(
-        orbit: *mut myb_orbit,
-        g: myb_event_function,
+pub const MYB_NLP_MAX_UNKNOWNS: _bindgen_ty_16 = 256;
+pub const MYB_NLP_MAX_CONSTRAINTS: _bindgen_ty_16 = 256;
+pub type _bindgen_ty_16 = ::std::os::raw::c_uint;
+pub type myb_nlp_function = ::std::option::Option<
+    unsafe extern "C" fn(
         context: *mut ::std::os::raw::c_void,
-        t_limit: f64,
-        direction: ::std::os::raw::c_int,
-        found: *mut ::std::os::raw::c_int,
-        t_event: *mut f64,
-        y_event: *mut f64,
+        x: *const f64,
+        f: *mut f64,
+        c: *mut f64,
+        gradient: *mut f64,
+        jacobian: *mut f64,
+    ) -> myb_status,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_nlp_problem {
+    pub n: usize,
+    pub equalities: usize,
+    pub inequalities: usize,
+    pub lower: *const f64,
+    pub upper: *const f64,
+    pub function: myb_nlp_function,
+    pub context: *mut ::std::os::raw::c_void,
+}
+impl Default for myb_nlp_problem {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_nlp_options {
+    pub feasibility: f64,
+    pub optimality: f64,
+    pub max_outer: ::std::os::raw::c_int,
+    pub max_inner: ::std::os::raw::c_int,
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_nlp_result {
+    pub objective: f64,
+    pub violation: f64,
+    pub stationarity: f64,
+    pub outer: ::std::os::raw::c_int,
+    pub inner: ::std::os::raw::c_int,
+    pub evaluations: ::std::os::raw::c_int,
+}
+unsafe extern "C" {
+    pub fn myb_nlp_solve(
+        problem: *const myb_nlp_problem,
+        options: *const myb_nlp_options,
+        x: *mut f64,
+        multipliers: *mut f64,
+        allocator: *const myb_allocator,
+        result: *mut myb_nlp_result,
     ) -> myb_status;
 }
-unsafe extern "C" {
-    pub fn myb_orbit_kick(orbit: *mut myb_orbit, dv: *const f64) -> myb_status;
+pub const MYB_SIMS_FLANAGAN_MAX_SEGMENTS: _bindgen_ty_17 = 64;
+pub type _bindgen_ty_17 = ::std::os::raw::c_uint;
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_sims_flanagan {
+    pub mu: f64,
+    pub thrust: f64,
+    pub exhaust: f64,
+    pub t0: f64,
+    pub start: [f64; 6usize],
+    pub mass0: f64,
+    pub t1: f64,
+    pub target: [f64; 6usize],
+    pub segments: usize,
 }
 unsafe extern "C" {
-    pub fn myb_orbit_steps(orbit: *const myb_orbit) -> i64;
+    pub fn myb_sims_flanagan_mismatch(
+        leg: *const myb_sims_flanagan,
+        throttles: *const f64,
+        mismatch: *mut f64,
+        mass1: *mut f64,
+        jacobian: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_sims_flanagan_result {
+    pub mass1: f64,
+    pub mismatch: [f64; 6usize],
+    pub nlp: myb_nlp_result,
 }
 unsafe extern "C" {
-    pub fn myb_orbit_breaks(orbit: *const myb_orbit) -> i64;
+    pub fn myb_sims_flanagan_solve(
+        leg: *const myb_sims_flanagan,
+        options: *const myb_nlp_options,
+        throttles: *mut f64,
+        allocator: *const myb_allocator,
+        result: *mut myb_sims_flanagan_result,
+    ) -> myb_status;
 }
 pub type myb_perturbation_function = ::std::option::Option<
     unsafe extern "C" fn(
@@ -5420,6 +5855,31 @@ unsafe extern "C" {
     ) -> myb_status;
 }
 unsafe extern "C" {
+    pub fn myb_ks_element_from_cartesian(
+        mu: f64,
+        t: f64,
+        x: *const f64,
+        v: *const f64,
+        y: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ks_element_to_cartesian(
+        y: *const f64,
+        t: *mut f64,
+        x: *mut f64,
+        v: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ks_element_rhs(
+        problem: *mut ::std::os::raw::c_void,
+        s: f64,
+        y: *const f64,
+        dy: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
     pub fn myb_sundman_rhs(
         problem: *mut ::std::os::raw::c_void,
         s: f64,
@@ -5429,6 +5889,7 @@ unsafe extern "C" {
 }
 pub const MYB_REGULAR_KS: myb_regular_kind = 0;
 pub const MYB_REGULAR_SUNDMAN: myb_regular_kind = 1;
+pub const MYB_REGULAR_KS_ELEMENT: myb_regular_kind = 2;
 pub type myb_regular_kind = ::std::os::raw::c_uint;
 unsafe extern "C" {
     pub fn myb_regular_propagate(
@@ -5442,6 +5903,364 @@ unsafe extern "C" {
         x1: *mut f64,
         v1: *mut f64,
         evaluations: *mut i64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_relative_from_inertial(
+        chief: *const myb_pv,
+        deputy: *const myb_pv,
+        relative: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_relative_to_inertial(
+        chief: *const myb_pv,
+        relative: *const f64,
+        deputy: *mut myb_pv,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_relative_stm(mu: f64, chief: *const myb_pv, dt: f64, phi: *mut f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_cw_stm(n: f64, dt: f64, phi: *mut f64);
+}
+unsafe extern "C" {
+    pub fn myb_relative_rendezvous(
+        mu: f64,
+        chief: *const myb_pv,
+        dt: f64,
+        relative: *const f64,
+        target: *const f64,
+        target_velocity: *const f64,
+        dv0: *mut f64,
+        dv1: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_roe_from_states(
+        mu: f64,
+        chief: *const myb_pv,
+        deputy: *const myb_pv,
+        roe: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_roe_to_position(a: f64, u: f64, roe: *const f64, position: *mut f64);
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_system {
+    _unused: [u8; 0],
+}
+pub const MYB_SYSTEM_MAX_ROTATIONS: _bindgen_ty_18 = 16;
+pub const MYB_SYSTEM_MAX_FIELDS: _bindgen_ty_18 = 256;
+pub const MYB_SYSTEM_MAX_FIGURES: _bindgen_ty_18 = 32;
+pub const MYB_SYSTEM_MAX_TIDES: _bindgen_ty_18 = 64;
+pub const MYB_SYSTEM_MAX_DISTORTIONS: _bindgen_ty_18 = 32;
+pub const MYB_SYSTEM_MAX_PN_PAIRS: _bindgen_ty_18 = 16;
+pub const MYB_SYSTEM_MAX_ACTIONS: _bindgen_ty_18 = 64;
+pub type _bindgen_ty_18 = ::std::os::raw::c_uint;
+unsafe extern "C" {
+    pub fn myb_system_create(
+        bodies: usize,
+        gm: *const f64,
+        allocator: *const myb_allocator,
+        system: *mut *mut myb_system,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_destroy(system: *mut myb_system);
+}
+unsafe extern "C" {
+    pub fn myb_system_bodies(system: *const myb_system) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_system_nbody(system: *mut myb_system) -> *mut myb_nbody;
+}
+unsafe extern "C" {
+    pub fn myb_system_set_orientation(
+        system: *mut myb_system,
+        body: usize,
+        orientation: myb_orientation_function,
+        context: *mut ::std::os::raw::c_void,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_set_field(
+        system: *mut myb_system,
+        body: usize,
+        field: *const myb_gravity_field,
+        degree: ::std::os::raw::c_int,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_system_rotation {
+    pub moments: [f64; 3usize],
+    pub radius: f64,
+    pub k2: f64,
+    pub lag: f64,
+    pub mean_motion: f64,
+    pub core: [f64; 2usize],
+    pub core_friction: f64,
+}
+unsafe extern "C" {
+    pub fn myb_system_set_rotation(
+        system: *mut myb_system,
+        body: usize,
+        rotation: *const myb_system_rotation,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_system_tide {
+    pub radius: f64,
+    pub k2: [f64; 3usize],
+    pub orbital_lag: [f64; 3usize],
+    pub rotation_lag: [f64; 3usize],
+    pub rotation_rate: f64,
+}
+unsafe extern "C" {
+    pub fn myb_system_set_tide(
+        system: *mut myb_system,
+        body: usize,
+        tide: *const myb_system_tide,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_add_field(system: *mut myb_system, body: usize, point: usize) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_add_figures(system: *mut myb_system, a: usize, b: usize) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_add_tide(
+        system: *mut myb_system,
+        body: usize,
+        raiser: usize,
+        point: usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_add_distortion(
+        system: *mut myb_system,
+        body: usize,
+        raiser: usize,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_system_pn_pair {
+    pub orders: ::std::os::raw::c_uint,
+    pub c: f64,
+    pub r0: f64,
+    pub kappa1: f64,
+    pub kappa2: f64,
+}
+unsafe extern "C" {
+    pub fn myb_system_add_pn_pair(
+        system: *mut myb_system,
+        a: usize,
+        b: usize,
+        pair: *const myb_system_pn_pair,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_system_view {
+    pub body: usize,
+    pub bodies: usize,
+    pub x: *const f64,
+    pub v: *const f64,
+    pub gm: *const f64,
+    pub frame: *const f64,
+}
+impl Default for myb_system_view {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+pub type myb_system_action = ::std::option::Option<
+    unsafe extern "C" fn(
+        context: *mut ::std::os::raw::c_void,
+        t: f64,
+        view: *const myb_system_view,
+        acceleration: *mut f64,
+        torque: *mut f64,
+    ) -> myb_status,
+>;
+unsafe extern "C" {
+    pub fn myb_system_add_action(
+        system: *mut myb_system,
+        body: usize,
+        action: myb_system_action,
+        context: *mut ::std::os::raw::c_void,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_system_light {
+    pub source: usize,
+    pub shape: *const myb_polyhedron,
+    pub surface: myb_plate,
+    pub flux: f64,
+    pub distance: f64,
+    pub c: f64,
+    pub mass: f64,
+    pub shadows: ::std::os::raw::c_int,
+}
+impl Default for myb_system_light {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_system_light_action(
+        light: *mut ::std::os::raw::c_void,
+        t: f64,
+        view: *const myb_system_view,
+        acceleration: *mut f64,
+        torque: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_coordinates(system: *const myb_system) -> usize;
+}
+unsafe extern "C" {
+    pub fn myb_system_pack_rotation(
+        system: *const myb_system,
+        body: usize,
+        q: *const f64,
+        omega: *const f64,
+        omega_core: *const f64,
+        y: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_unpack_rotation(
+        system: *const myb_system,
+        body: usize,
+        y: *const f64,
+        q: *mut f64,
+        omega: *mut f64,
+        omega_core: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_pack_spins(
+        system: *const myb_system,
+        pair: usize,
+        chi1: *const f64,
+        chi2: *const f64,
+        y: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_unpack_spins(
+        system: *const myb_system,
+        pair: usize,
+        y: *const f64,
+        chi1: *mut f64,
+        chi2: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_integrator(
+        system: *const myb_system,
+        options: *const myb_ias15_options,
+        allocator: *const myb_allocator,
+        integrator: *mut *mut myb_ias15,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_acceleration(
+        system: *mut ::std::os::raw::c_void,
+        t: f64,
+        x: *const f64,
+        v: *const f64,
+        a: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_inertia(
+        system: *mut myb_system,
+        body: usize,
+        t: f64,
+        y: *const f64,
+        inertia: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_set_radius(system: *mut myb_system, body: usize, radius: f64) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_radius(system: *const myb_system, body: usize) -> f64;
+}
+unsafe extern "C" {
+    pub fn myb_system_present(system: *const myb_system, body: usize) -> ::std::os::raw::c_int;
+}
+pub const MYB_SYSTEM_ARRIVED: myb_system_event_kind = 0;
+pub const MYB_SYSTEM_CONTACT: myb_system_event_kind = 1;
+pub const MYB_SYSTEM_APPROACH: myb_system_event_kind = 2;
+pub type myb_system_event_kind = ::std::os::raw::c_uint;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_system_event {
+    pub kind: myb_system_event_kind,
+    pub a: usize,
+    pub b: usize,
+    pub t: f64,
+    pub distance: f64,
+}
+impl Default for myb_system_event {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_system_advance(
+        system: *mut myb_system,
+        integrator: *mut myb_ias15,
+        t_end: f64,
+        watch: f64,
+        event: *mut myb_system_event,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_system_merger {
+    pub energy: f64,
+    pub angular_momentum: [f64; 3usize],
+}
+unsafe extern "C" {
+    pub fn myb_system_merge(
+        system: *mut myb_system,
+        integrator: *mut myb_ias15,
+        a: usize,
+        b: usize,
+        merger: *mut myb_system_merger,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_bounce(
+        system: *mut myb_system,
+        integrator: *mut myb_ias15,
+        a: usize,
+        b: usize,
+        restitution: f64,
     ) -> myb_status;
 }
 pub const MYB_STEER_VELOCITY: myb_steering = 0;
@@ -5472,8 +6291,8 @@ impl Default for myb_thrust_arc {
         }
     }
 }
-pub const MYB_THRUST_MAX_ARCS: _bindgen_ty_13 = 16;
-pub type _bindgen_ty_13 = ::std::os::raw::c_uint;
+pub const MYB_THRUST_MAX_ARCS: _bindgen_ty_19 = 16;
+pub type _bindgen_ty_19 = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct myb_thrust {
@@ -5535,6 +6354,104 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn myb_edelbaum_state(v0: f64, beta0: f64, dv: f64, v: *mut f64, di: *mut f64);
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_qlaw {
+    pub mu: f64,
+    pub target: [f64; 5usize],
+    pub weight: [f64; 5usize],
+    pub rp_min: f64,
+    pub rp_weight: f64,
+}
+unsafe extern "C" {
+    pub fn myb_qlaw_direction(
+        law: *const myb_qlaw,
+        now: *const myb_elements,
+        direction: *mut f64,
+        q: *mut f64,
+        q_rate: *mut f64,
+        effectivity: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_qlaw_arrived(
+        law: *const myb_qlaw,
+        now: *const myb_elements,
+        tolerance: *const f64,
+    ) -> ::std::os::raw::c_int;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_qlaw_term {
+    pub law: *const myb_qlaw,
+    pub thrust: f64,
+    pub exhaust: f64,
+    pub mass0: f64,
+    pub t0: f64,
+    pub tolerance: [f64; 5usize],
+    pub effectivity: f64,
+}
+impl Default for myb_qlaw_term {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_term_qlaw(
+        term: *mut ::std::os::raw::c_void,
+        t: f64,
+        x: *const f64,
+        v: *const f64,
+        a: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct myb_qlaw_flight {
+    pub engine: *const myb_qlaw_term,
+    pub field: *mut myb_force_model,
+    pub rtol: f64,
+    pub atol: f64,
+}
+impl Default for myb_qlaw_flight {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn myb_qlaw_flight_rhs(
+        flight: *mut ::std::os::raw::c_void,
+        t: f64,
+        y: *const f64,
+        dydt: *mut f64,
+    ) -> myb_status;
+}
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct myb_qlaw_arrival {
+    pub t: f64,
+    pub y: [f64; 7usize],
+    pub arrived: ::std::os::raw::c_int,
+}
+unsafe extern "C" {
+    pub fn myb_qlaw_fly(
+        flight: *const myb_qlaw_flight,
+        t0: f64,
+        y0: *const f64,
+        t_limit: f64,
+        step: f64,
+        allocator: *const myb_allocator,
+        arrival: *mut myb_qlaw_arrival,
+    ) -> myb_status;
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]

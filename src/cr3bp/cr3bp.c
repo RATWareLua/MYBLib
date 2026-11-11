@@ -4,11 +4,13 @@
 #include <math.h>
 #include <string.h>
 
+#include "core/alloc.h"
 #include "core/base.h"
 #include "myb/cmath.h"
 #include "myb/cr3bp.h"
 #include "myb/model.h"
 #include "myb/num.h"
+#include "myb/transfer.h"
 #include "myb/uncert.h"
 
 static const double pi = 3.141592653589793;
@@ -599,6 +601,313 @@ myb_status myb_cr3bp_to_ephemeris(const double body1[6], const double body2[6], 
   for (int i = 0; i < 3; ++i) {
     state[i] = f.origin[i] + f.e[i] * p[0] + f.e[3 + i] * p[1] + f.e[6 + i] * p[2];
     state[3 + i] = f.origin[3 + i] + f.e[i] * q[0] + f.e[3 + i] * q[1] + f.e[6 + i] * q[2];
+  }
+  return MYB_OK;
+}
+
+/* ---- Multiple shooting and continuation -------------------------------------------------------- */
+
+enum { MAX_UNKNOWNS = 6 * MYB_CR3BP_MAX_PATCHES + 1 };
+
+typedef struct shooting {
+  propagator p;
+  size_t patches;
+  int dropped;           /* the component of the closing condition left to the integral */
+  double reference[6];   /* the first state the phase is counted from */
+  double flow[6];        /* the flow there */
+  int arclength;         /* the last condition: (u - predicted) . tangent = 0 */
+  const double* tangent;
+  const double* predicted;
+} shooting;
+
+static void flow_at(double mu, const double y[6], double f[6]) {
+  f[0] = y[3];
+  f[1] = y[4];
+  f[2] = y[5];
+  myb_cr3bp_acceleration(mu, y, y + 3, f + 3);
+}
+
+/* The conditions and their Jacobian for u = (states, period): 6 patches equations, one more
+ * with the arclength. */
+static myb_status shooting_residual(void* context, const double* u, double* f, double* jacobian) {
+  shooting* s = context;
+  const size_t patches = s->patches;
+  const size_t n = 6 * patches + 1;
+  const size_t m = 6 * patches + (s->arclength ? 1u : 0u);
+  const double period = u[n - 1];
+  if (!(period > 0.0) || !isfinite(period)) {
+    return MYB_E_DOMAIN;
+  }
+  const double part = period / (double)patches;
+  if (jacobian != NULL) {
+    memset(jacobian, 0, m * n * sizeof *jacobian);
+  }
+  size_t row = 0;
+  for (size_t k = 0; k < patches; ++k) {
+    const double* start = u + 6 * k;
+    const size_t next = k + 1 < patches ? k + 1 : 0;
+    double end[6];
+    double phi[36];
+    myb_status st = myb_variational_start(s->p.var, 0.0, start);
+    if (st == MYB_OK) {
+      st = myb_variational_integrate(s->p.var, part);
+    }
+    if (st != MYB_OK) {
+      return st;
+    }
+    myb_variational_get(s->p.var, end, phi, NULL);
+    double rate[6];
+    flow_at(s->p.mu, end, rate);
+    for (int i = 0; i < 6; ++i) {
+      if (next == 0 && i == s->dropped) {
+        continue;
+      }
+      f[row] = end[i] - u[6 * next + (size_t)i];
+      if (jacobian != NULL) {
+        double* line = jacobian + row * n;
+        for (int j = 0; j < 6; ++j) {
+          line[6 * k + (size_t)j] += phi[6 * i + j];
+        }
+        line[6 * next + (size_t)i] -= 1.0;
+        line[n - 1] = rate[i] / (double)patches;
+      }
+      ++row;
+    }
+  }
+  /* the phase */
+  f[row] = 0.0;
+  for (int i = 0; i < 6; ++i) {
+    f[row] += (u[i] - s->reference[i]) * s->flow[i];
+    if (jacobian != NULL) {
+      jacobian[row * n + (size_t)i] = s->flow[i];
+    }
+  }
+  ++row;
+  if (s->arclength) {
+    f[row] = 0.0;
+    for (size_t j = 0; j < n; ++j) {
+      f[row] += (u[j] - s->predicted[j]) * s->tangent[j];
+      if (jacobian != NULL) {
+        jacobian[row * n + j] = s->tangent[j];
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+static int orbit_valid(double mu, const myb_cr3bp_orbit* orbit) {
+  if (!(mu > 0.0 && mu <= 0.5) || orbit->patches < 1 || orbit->patches > MYB_CR3BP_MAX_PATCHES ||
+      !(orbit->period > 0.0) || !isfinite(orbit->period)) {
+    return 0;
+  }
+  for (size_t i = 0; i < 6 * orbit->patches; ++i) {
+    if (!isfinite(orbit->states[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static void shooting_setup(shooting* s, double mu, const myb_cr3bp_orbit* orbit) {
+  s->patches = orbit->patches;
+  memcpy(s->reference, orbit->states, sizeof s->reference);
+  flow_at(mu, orbit->states, s->flow);
+  /* the largest velocity component at the first cut is left to the Jacobi integral */
+  s->dropped = 3;
+  for (int i = 4; i < 6; ++i) {
+    if (fabs(orbit->states[i]) > fabs(orbit->states[s->dropped])) {
+      s->dropped = i;
+    }
+  }
+  s->arclength = 0;
+  s->tangent = NULL;
+  s->predicted = NULL;
+}
+
+/* The tangent of the family at the solution u: J t = 0 with `previous` . t = 1, made unit.
+ * `work` holds (n + 1) n doubles. 0 if no row closes the system. */
+static int family_tangent(shooting* s, const double* u, const double* previous, double* work,
+                          double* tangent) {
+  const size_t n = 6 * s->patches + 1;
+  const size_t m = n - 1;
+  double f[MAX_UNKNOWNS];
+  /* rows to close the system with: the previous tangent, or the period, then coordinates */
+  const size_t candidates[4] = {n - 1, 0, 2, 4};
+  const int tries = previous != NULL ? 1 : 4;
+  for (int attempt = 0; attempt < tries; ++attempt) {
+    s->arclength = 0;
+    if (shooting_residual(s, u, f, work) != MYB_OK) {
+      return 0;
+    }
+    double* last = work + m * n;
+    double rhs[MAX_UNKNOWNS];
+    memset(rhs, 0, sizeof rhs);
+    rhs[n - 1] = 1.0;
+    if (previous != NULL) {
+      memcpy(last, previous, n * sizeof *last);
+    } else {
+      memset(last, 0, n * sizeof *last);
+      last[candidates[attempt]] = 1.0;
+    }
+    if (myb_lu_solve(n, work, rhs, 1) != MYB_OK) {
+      continue;
+    }
+    double norm = 0.0;
+    for (size_t j = 0; j < n; ++j) {
+      norm += rhs[j] * rhs[j];
+    }
+    norm = sqrt(norm);
+    if (!(norm > 0.0) || !isfinite(norm) || norm > 1e12) {
+      continue; /* the row chosen is across the tangent */
+    }
+    for (size_t j = 0; j < n; ++j) {
+      tangent[j] = rhs[j] / norm;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+myb_status myb_cr3bp_orbit_from_state(double mu, const double y0[6], double period,
+                                      size_t patches, myb_cr3bp_orbit* orbit) {
+  MYB_CHECK(y0 != NULL && orbit != NULL);
+  if (!(mu > 0.0 && mu <= 0.5) || patches < 1 || patches > MYB_CR3BP_MAX_PATCHES ||
+      !(period > 0.0) || !isfinite(period)) {
+    return MYB_E_DOMAIN;
+  }
+  memset(orbit, 0, sizeof *orbit);
+  orbit->patches = patches;
+  orbit->period = period;
+  memcpy(orbit->states, y0, 6 * sizeof *y0);
+  propagator p;
+  myb_status st = propagator_open(&p, mu);
+  if (st == MYB_OK) {
+    st = myb_variational_start(p.var, 0.0, y0);
+  }
+  for (size_t k = 1; k < patches && st == MYB_OK; ++k) {
+    st = myb_variational_integrate(p.var, period * (double)k / (double)patches);
+    if (st == MYB_OK) {
+      myb_variational_get(p.var, orbit->states + 6 * k, NULL, NULL);
+    }
+  }
+  propagator_close(&p);
+  return st;
+}
+
+/* Newton on the conditions of s for the unknowns u (n of them, m conditions), then the
+ * tangent of the family. */
+static myb_status shooting_solve(shooting* s, double* u, const double* previous_tangent,
+                                 double tolerance, int max_iterations, double* tangent,
+                                 int* has_tangent) {
+  const size_t n = 6 * s->patches + 1;
+  const size_t m = 6 * s->patches + (s->arclength ? 1u : 0u);
+  const myb_allocator a = myb_internal_allocator(NULL);
+  const size_t shoot_size = myb_shoot_work_size(n, m);
+  const size_t tangent_size = (n + 1) * n;
+  void* block = NULL;
+  myb_status st = myb_internal_alloc_array(&a, shoot_size + tangent_size, sizeof(double), &block);
+  if (st != MYB_OK) {
+    return st;
+  }
+  double* work = block;
+  const myb_shoot_options options = {.tolerance = tolerance > 0.0 ? tolerance : 1e-11,
+                                     .max_iterations = max_iterations > 0 ? max_iterations : 30};
+  st = myb_shoot(shooting_residual, s, n, m, u, &options, work, NULL, NULL);
+  if (st == MYB_OK) {
+    *has_tangent = family_tangent(s, u, previous_tangent, work + shoot_size, tangent);
+  }
+  myb_internal_release(&a, block);
+  return st;
+}
+
+myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_orbit* orbit, double tolerance,
+                                   int max_iterations) {
+  MYB_CHECK(orbit != NULL);
+  if (!orbit_valid(mu, orbit) || !(tolerance >= 0.0) || max_iterations < 0) {
+    return MYB_E_DOMAIN;
+  }
+  shooting s;
+  myb_status st = propagator_open(&s.p, mu);
+  if (st != MYB_OK) {
+    propagator_close(&s.p);
+    return st;
+  }
+  shooting_setup(&s, mu, orbit);
+  const size_t n = 6 * orbit->patches + 1;
+  double u[MAX_UNKNOWNS];
+  memcpy(u, orbit->states, (n - 1) * sizeof *u);
+  u[n - 1] = orbit->period;
+  double tangent[MAX_UNKNOWNS];
+  int has_tangent = 0;
+  st = shooting_solve(&s, u, orbit->has_tangent ? orbit->tangent : NULL, tolerance,
+                      max_iterations, tangent, &has_tangent);
+  propagator_close(&s.p);
+  if (st != MYB_OK) {
+    return st;
+  }
+  memcpy(orbit->states, u, (n - 1) * sizeof *u);
+  orbit->period = u[n - 1];
+  if (has_tangent) {
+    /* the sense: as before, or towards a longer period, or a larger first coordinate */
+    double along = 0.0;
+    if (orbit->has_tangent) {
+      for (size_t j = 0; j < n; ++j) {
+        along += tangent[j] * orbit->tangent[j];
+      }
+    } else {
+      along = tangent[n - 1] != 0.0 ? tangent[n - 1] : tangent[0];
+    }
+    for (size_t j = 0; j < n; ++j) {
+      orbit->tangent[j] = along < 0.0 ? -tangent[j] : tangent[j];
+    }
+  }
+  orbit->has_tangent = has_tangent;
+  return MYB_OK;
+}
+
+myb_status myb_cr3bp_orbit_continue(double mu, myb_cr3bp_orbit* orbit, double step,
+                                    double tolerance, int max_iterations) {
+  MYB_CHECK(orbit != NULL);
+  if (!orbit_valid(mu, orbit) || !orbit->has_tangent || !isfinite(step) || step == 0.0 ||
+      !(tolerance >= 0.0) || max_iterations < 0) {
+    return MYB_E_DOMAIN;
+  }
+  shooting s;
+  myb_status st = propagator_open(&s.p, mu);
+  if (st != MYB_OK) {
+    propagator_close(&s.p);
+    return st;
+  }
+  shooting_setup(&s, mu, orbit);
+  const size_t n = 6 * orbit->patches + 1;
+  double predicted[MAX_UNKNOWNS];
+  double u[MAX_UNKNOWNS];
+  for (size_t j = 0; j < n - 1; ++j) {
+    predicted[j] = orbit->states[j] + step * orbit->tangent[j];
+  }
+  predicted[n - 1] = orbit->period + step * orbit->tangent[n - 1];
+  memcpy(u, predicted, n * sizeof *u);
+  s.arclength = 1;
+  s.tangent = orbit->tangent;
+  s.predicted = predicted;
+  double tangent[MAX_UNKNOWNS];
+  int has_tangent = 0;
+  st = shooting_solve(&s, u, orbit->tangent, tolerance, max_iterations, tangent, &has_tangent);
+  propagator_close(&s.p);
+  if (st != MYB_OK) {
+    return st;
+  }
+  if (!has_tangent) {
+    return MYB_E_NOCONV;
+  }
+  double along = 0.0;
+  for (size_t j = 0; j < n; ++j) {
+    along += tangent[j] * orbit->tangent[j];
+  }
+  memcpy(orbit->states, u, (n - 1) * sizeof *u);
+  orbit->period = u[n - 1];
+  for (size_t j = 0; j < n; ++j) {
+    orbit->tangent[j] = along < 0.0 ? -tangent[j] : tangent[j];
   }
   return MYB_OK;
 }

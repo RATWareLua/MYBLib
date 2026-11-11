@@ -19,6 +19,8 @@
 #ifndef MYB_CR3BP_H_
 #define MYB_CR3BP_H_
 
+#include <stddef.h>
+
 #include "myb/core.h"
 
 #ifdef __cplusplus
@@ -99,6 +101,126 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_to_ephemeris(const double body1[6],
                                                         const double body2[6], double gm1,
                                                         double gm2, const double rotating[6],
                                                         double state[6]);
+
+/* ---- Periodic orbits of any shape, and their families -----------------------------------------
+ * Multiple shooting: the orbit is cut into `patches` equal parts in time; the unknowns are
+ * the states at the cuts and the period; the conditions are that every part ends where the
+ * next begins and the last where the first begins — all components but one, which the Jacobi
+ * integral gives: the velocity component that is largest at the first cut — and that the
+ * first state stays in the plane across the flow where it started (a phase). That is one
+ * condition less than the unknowns: periodic orbits come in one-parameter families. The
+ * correction takes minimum-norm Newton steps (myb_shoot of myb/transfer.h), the transition
+ * matrices of the parts from the variational equations: the member of the family nearest to
+ * the guess, with no symmetry assumed.
+ *
+ * Continuation by pseudo-arclength (H. B. Keller, 1977; E. J. Doedel et al.): from an orbit
+ * and the tangent of its family — the null vector of the Jacobian of the conditions — the
+ * next is predicted a step along the tangent and corrected in the plane across it. The
+ * family is followed through its turning points in the period or in any coordinate. */
+
+enum { MYB_CR3BP_MAX_PATCHES = 10 };
+
+typedef struct myb_cr3bp_orbit {
+  size_t patches;                            /* 1 .. MYB_CR3BP_MAX_PATCHES */
+  double states[6 * MYB_CR3BP_MAX_PATCHES];  /* at the times k period / patches */
+  double period;
+  int has_tangent;                           /* the tangent below is that of this orbit */
+  double tangent[6 * MYB_CR3BP_MAX_PATCHES + 1]; /* unit, in (states, period) */
+} myb_cr3bp_orbit;
+
+/* The cuts of the orbit through y0 with the given period, by propagation. Errors:
+ * MYB_E_DOMAIN (mu outside (0, 0.5], the number of patches, period <= 0), those of the
+ * propagation. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_from_state(double mu, const double y0[6],
+                                                            double period, size_t patches,
+                                                            myb_cr3bp_orbit* orbit);
+
+/* Corrects the orbit in place until every condition holds to `tolerance` (0: 1e-11), in at
+ * most max_iterations steps (0: 30); its tangent is found as well. Errors: MYB_E_DOMAIN,
+ * MYB_E_NOCONV, MYB_E_NOMEM, those of the propagation. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_orbit* orbit,
+                                                         double tolerance, int max_iterations);
+
+/* The next orbit of the family, a distance `step` along the tangent in the space of the
+ * unknowns (positive: the way the tangent of the orbit points; the tangent of a corrected
+ * orbit keeps its sense from one step to the next, the first one points towards a longer
+ * period, or towards a larger first coordinate where the period does not change). The orbit
+ * must have been corrected. Errors: as myb_cr3bp_orbit_correct; MYB_E_DOMAIN also for an
+ * orbit without a tangent; on MYB_E_NOCONV the orbit is left as it was: take a shorter step. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_continue(double mu, myb_cr3bp_orbit* orbit,
+                                                          double step, double tolerance,
+                                                          int max_iterations);
+
+/* ---- Quasi-periodic orbits ----------------------------------------------------------------------
+ * About a periodic orbit whose monodromy matrix has a pair of eigenvalues exp(+-i rho) on the
+ * unit circle the motion winds on two-dimensional tori — Lissajous orbits about the planar
+ * and vertical Lyapunov orbits, quasi-halo orbits, quasi-periodic distant retrograde orbits.
+ * A torus is found as an invariant circle of the flow over a time T (G. Gomez, J. M. Mondelo,
+ * Physica D 157, 283, 2001; Z. P. Olikara, D. J. Scheeres, AAS 12-361, 2012): the curve that
+ * the flow carries in the time T onto itself turned by the angle rho,
+ *   R(-rho) phi_T(u) - u = 0,
+ * u the curve at `points` equal angles, R the turn of its trigonometric interpolant. T is the
+ * time of one turn along the orbit, rho the turn across it in that time.
+ *
+ * The tori of the problem form families of two parameters, and the equation above has two
+ * conditions fewer than it seems: the flow keeps the Jacobi integral and the action of a
+ * closed curve, the integral of p . dq round it. Two multipliers take the place of what the
+ * two invariants leave undetermined; they vanish at a solution, and what is left of them —
+ * `defect` — measures how far the points resolve the circle. Two phase conditions hold the
+ * points in place along the circle and along the flow; one condition picks a family of one
+ * parameter (the Jacobi constant, the time T or the turn rho kept), and along that family
+ * the tori are followed by pseudo-arclength as the periodic orbits above are. Newton's
+ * method on all of it, the transition matrices of the points from the variational
+ * equations. */
+
+enum { MYB_CR3BP_MAX_CIRCLE = 35 };
+
+typedef struct myb_cr3bp_torus {
+  size_t points;                             /* odd, 5 .. MYB_CR3BP_MAX_CIRCLE */
+  double states[6 * MYB_CR3BP_MAX_CIRCLE];   /* the circle at the angles 2 pi k / points */
+  double period;                             /* T */
+  double rotation;                           /* rho (rad) */
+  double defect;                             /* the larger of the two multipliers left */
+  int has_tangent;
+  double tangent[6 * MYB_CR3BP_MAX_CIRCLE + 2]; /* of the family, in (states, T, rho) */
+} myb_cr3bp_torus;
+
+typedef enum myb_cr3bp_torus_family {
+  MYB_CR3BP_TORUS_JACOBI = 0,  /* the mean Jacobi constant of the circle is kept */
+  MYB_CR3BP_TORUS_PERIOD = 1,  /* T is kept */
+  MYB_CR3BP_TORUS_ROTATION = 2 /* rho is kept */
+} myb_cr3bp_torus_family;
+
+/* The smallest torus about the periodic orbit through y0: the circle of the linear motion,
+ * y0 + size (a cos theta - b sin theta), a + i b the eigenvector of the monodromy matrix for
+ * exp(i rho), scaled so that `size` is the root mean square distance of the circle from y0
+ * (positions and velocities together, in the units of the problem). `pair` picks among the
+ * pairs on the unit circle, in the order of rho from 0 to pi (0: the first); the pair at 1
+ * that every periodic orbit has does not count. The circle is exact to the order of size^2:
+ * myb_cr3bp_torus_continue with a step of 0 corrects it, with a positive one moves outwards.
+ * Errors: MYB_E_DOMAIN (mu, the period, the points, size <= 0, no such pair), MYB_E_NOCONV
+ * (the eigenvector), those of the propagation. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_from_orbit(double mu, const double y0[6],
+                                                            double period, size_t points,
+                                                            int pair, double size,
+                                                            myb_cr3bp_torus* torus);
+
+/* The torus of the family a distance `step` along its tangent — the root mean square
+ * displacement of the circle, with the changes of T and rho — corrected across the tangent
+ * until the conditions hold to `tolerance` (0: 1e-10) in at most max_iterations steps (0:
+ * 20); a step of 0 corrects the torus where it is. The value the family keeps is that of the
+ * torus on entry. The tangent kept in the torus is that of the family of the last step: to
+ * change the family take a step of 0 in the new one first, which turns the tangent to it.
+ * Errors: MYB_E_DOMAIN (an invalid torus or one without a tangent),
+ * MYB_E_NOCONV (the torus is left as it was: take a shorter step, or more points),
+ * MYB_E_NOMEM, those of the propagation. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_continue(double mu, myb_cr3bp_torus* torus,
+                                                          myb_cr3bp_torus_family family,
+                                                          double step, double tolerance,
+                                                          int max_iterations);
+
+/* The point of the circle at any angle (rad), by its trigonometric interpolant. */
+MYB_API void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[6]);
 
 #ifdef __cplusplus
 }

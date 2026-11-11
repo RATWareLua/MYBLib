@@ -563,6 +563,113 @@ static const char oem_xml[] =
     "  </body>\n"
     "</oem>\n";
 
+/* The same message as a document with a type declaration (an internal subset whose comment,
+ * entity values and processing instruction hold every character that could end it early) and
+ * values given as CDATA sections. */
+#define OEM_XML_HEAD                                                                             \
+  "<?xml version=\"1.0\"?>\n"                                                                    \
+  "<!DOCTYPE oem SYSTEM \"oem.dtd\" [\n"                                                         \
+  "  <!-- it's a comment with ] and > and \" -->\n"                                              \
+  "  <!ENTITY agency \"NASA > JPL ]\">\n"                                                        \
+  "  <!ENTITY trap '<ORIGINATOR>WRONG</ORIGINATOR>'>\n"                                          \
+  "  <?note ]> is not the end ?>\n"                                                             \
+  "]>\n"                                                                                        \
+  "<oem id=\"CCSDS_OEM_VERS\" version=\"2.0\">\n"                                               \
+  "  <header>\n"                                                                                \
+  "    <CREATION_DATE><![CDATA[1996-11-04T17:22:31]]></CREATION_DATE>\n"
+#define OEM_XML_TAIL                                                                             \
+  "  </header>\n"                                                                               \
+  "  <body><segment>\n"                                                                         \
+  "    <metadata>\n"                                                                            \
+  "      <OBJECT_NAME>\n        <![CDATA[ MGS <1> &amp; ]]>\n      </OBJECT_NAME>\n"             \
+  "      <OBJECT_ID>1996-062A</OBJECT_ID>\n"                                                    \
+  "      <CENTER_NAME>MARS &agency;</CENTER_NAME>\n"                                            \
+  "      <REF_FRAME>EME2000</REF_FRAME>\n"                                                      \
+  "      <TIME_SYSTEM><![CDATA[UTC]]></TIME_SYSTEM>\n"                                          \
+  "      <START_TIME>1996-12-18T12:00:00.331</START_TIME>\n"                                    \
+  "      <STOP_TIME>1996-12-18T12:01:00.331</STOP_TIME>\n"                                      \
+  "    </metadata>\n"                                                                           \
+  "    <data>\n"                                                                                \
+  "      <![CDATA[ between the elements: <stateVector> nothing reads it ]]>\n"                  \
+  "      <stateVector>\n"                                                                       \
+  "        <EPOCH><![CDATA[1996-12-18T12:00:00.331]]></EPOCH>\n"                                \
+  "        <X><![CDATA[2789.619]]></X><Y> <![CDATA[ -280.045 ]]> </Y><Z>-1746.755</Z>\n"        \
+  "        <X_DOT>4.73372</X_DOT><Y_DOT>-2.49586</Y_DOT><Z_DOT><![CDATA[-1.04195]]></Z_DOT>\n"  \
+  "      </stateVector>\n"                                                                      \
+  "    </data>\n"                                                                               \
+  "  </segment></body>\n"                                                                       \
+  "</oem>\n"
+
+static void test_xml_sections(void) {
+  myb_diag diag = {0};
+  myb_oem* oem = NULL;
+  static const char good[] =
+      OEM_XML_HEAD "    <ORIGINATOR><![CDATA[A <b> &amp; C]]></ORIGINATOR>\n" OEM_XML_TAIL;
+  MT_CHECK(myb_oem_load(good, sizeof good - 1, NULL, &oem, &diag) == MYB_OK);
+  if (oem != NULL) {
+    /* a section is taken as written: no entity in it, and its blanks at the ends dropped */
+    MT_CHECK(strcmp(myb_oem_header(oem, "ORIGINATOR"), "A <b> &amp; C") == 0);
+    MT_CHECK(strcmp(myb_oem_header(oem, "CREATION_DATE"), "1996-11-04T17:22:31") == 0);
+    MT_CHECK(strcmp(myb_oem_meta(oem, 0, "OBJECT_NAME"), "MGS <1> &amp;") == 0);
+    MT_CHECK(strcmp(myb_oem_meta(oem, 0, "TIME_SYSTEM"), "UTC") == 0);
+    /* an entity of the internal subset is not known: as written */
+    MT_CHECK(strcmp(myb_oem_meta(oem, 0, "CENTER_NAME"), "MARS &agency;") == 0);
+    MT_CHECK(myb_oem_segment_count(oem) == 1 && myb_oem_state_count(oem, 0) == 1);
+    myb_calendar epoch;
+    double y[6];
+    double unused[3];
+    MT_CHECK(myb_oem_state(oem, 0, 0, &epoch, y, unused) == 1);
+    MT_CHECK_SAME(epoch.second, 0.331);
+    MT_CHECK_SAME(y[0], 2789.619 * 1000.0);
+    MT_CHECK_SAME(y[1], -280.045 * 1000.0);
+    MT_CHECK_SAME(y[5], -1.04195 * 1000.0);
+    myb_oem_destroy(oem);
+  } else {
+    fprintf(stderr, "line %ld: %s\n", diag.line, diag.message);
+  }
+  /* a section among other characters, two sections, a section that does not end: no value */
+  static const char* const bad[4] = {
+      OEM_XML_HEAD "    <ORIGINATOR>A<![CDATA[B]]></ORIGINATOR>\n" OEM_XML_TAIL,
+      OEM_XML_HEAD "    <ORIGINATOR><![CDATA[B]]>C</ORIGINATOR>\n" OEM_XML_TAIL,
+      OEM_XML_HEAD "    <ORIGINATOR><![CDATA[A]]><![CDATA[B]]></ORIGINATOR>\n" OEM_XML_TAIL,
+      OEM_XML_HEAD "    <ORIGINATOR><![CDATA[A</ORIGINATOR>\n" OEM_XML_TAIL};
+  for (int k = 0; k < 4; ++k) {
+    oem = NULL;
+    MT_CHECK(myb_oem_load(bad[k], strlen(bad[k]), NULL, &oem, &diag) == MYB_E_FORMAT);
+    MT_CHECK(oem == NULL);
+    if (k < 3) {
+      MT_CHECK(diag.line == 11); /* the line of the element */
+    }
+  }
+  /* a line of data of the comprehensive message as one section */
+  static const char ocm_text[] =
+      "<?xml version=\"1.0\"?>\n"
+      "<!DOCTYPE ocm [ <!ENTITY x \"]>\"> ]>\n"
+      "<ocm id=\"CCSDS_OCM_VERS\" version=\"3.0\">\n"
+      "<header><CREATION_DATE>2022-11-06T09:23:57</CREATION_DATE>"
+      "<ORIGINATOR><![CDATA[A&B]]></ORIGINATOR></header>\n"
+      "<body><segment><metadata><TIME_SYSTEM>UTC</TIME_SYSTEM>"
+      "<EPOCH_TZERO>2022-12-18T14:28:15.1172</EPOCH_TZERO></metadata>\n"
+      "<data><traj><CENTER_NAME>EARTH</CENTER_NAME><TRAJ_REF_FRAME>ICRF</TRAJ_REF_FRAME>"
+      "<TRAJ_TYPE>CARTPV</TRAJ_TYPE>\n"
+      "<trajLine> <![CDATA[ 0.0 2789.6 -280.0 -1746.8 4.73 -2.50 -1.04 ]]> </trajLine>\n"
+      "<trajLine>10.0 2836.0 -305.0 -1757.2 4.72 -2.51 -1.05</trajLine>\n"
+      "</traj></data></segment></body></ocm>\n";
+  myb_ocm* ocm = NULL;
+  MT_CHECK(myb_ocm_load(ocm_text, sizeof ocm_text - 1, NULL, &ocm, &diag) == MYB_OK);
+  if (ocm != NULL) {
+    MT_CHECK(strcmp(myb_ocm_header(ocm, "ORIGINATOR"), "A&B") == 0);
+    MT_CHECK(myb_ocm_block_count(ocm, MYB_OCM_TRAJ) == 1 &&
+             myb_ocm_line_count(ocm, MYB_OCM_TRAJ, 0) == 2);
+    MT_CHECK(strcmp(myb_ocm_line_text(ocm, MYB_OCM_TRAJ, 0, 0),
+                    "0.0 2789.6 -280.0 -1746.8 4.73 -2.50 -1.04") == 0);
+    myb_ocm_destroy(ocm);
+  } else {
+    fprintf(stderr, "line %ld: %s\n", diag.line, diag.message);
+  }
+  printf("XML: values as CDATA sections, a document type with an internal subset\n");
+}
+
 static void test_covariance_and_xml(void) {
   myb_diag diag = {0};
   /* the covariances of the sample: the figure of the standard and one of whole numbers */
@@ -1029,6 +1136,7 @@ int main(void) {
   test_opm();
   test_omm();
   test_covariance_and_xml();
+  test_xml_sections();
   test_ocm();
   return mt_finish("test_ccsds");
 }
