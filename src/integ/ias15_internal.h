@@ -22,4 +22,12 @@
 double myb_internal_ias15_planned_step(const myb_ias15* integrator);
 void myb_internal_ias15_plan_step(myb_ias15* integrator, double h);
 
+/* Bounds of the position coordinate `coordinate` (0 .. n-1) over the whole last step: the
+ * step's own polynomial (degree 9 in the fraction of the step) written in the basis of
+ * Bernstein, whose coefficients enclose it, widened by their rounding. MYB_E_RANGE before a
+ * step. */
+[[nodiscard]] myb_status myb_internal_ias15_position_box(const myb_ias15* integrator,
+                                                         size_t coordinate, double* lo,
+                                                         double* hi);
+
 #endif /* MYB_SRC_INTEG_IAS15_INTERNAL_H_ */

@@ -583,6 +583,72 @@ static void test_dop853(const problem* p) {
   myb_orbit_destroy(orbit);
 }
 
+/* RKN12 with its interpolant: the same answers; a model with a term that may depend on the
+ * velocity is refused. */
+static void test_rkn12(const problem* p) {
+  const myb_orbit_options options = {.integrator = MYB_ORBIT_RKN12, .rtol = 1e-14, .atol = 1e-6};
+  myb_orbit* orbit = NULL;
+  MT_CHECK(myb_orbit_create(p->model, &options, NULL, &orbit) == MYB_OK);
+  const double t_end = 5.0 * p->period;
+  /* the central term is not declared yet */
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_E_DOMAIN);
+  myb_force_model_set_position_only(p->model, 0, 1);
+  MT_CHECK(myb_force_model_position_only(p->model));
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_OK);
+  double y[6];
+  double ref[6];
+  double worst_x = 0.0;
+  double worst_v = 0.0;
+  for (int k = 1; k <= 200; ++k) {
+    const double t = t_end * k / 200.0;
+    MT_CHECK(myb_orbit_state(orbit, t, y) == MYB_OK);
+    kepler(p, t, ref);
+    double dv = 0.0;
+    worst_x = fmax(worst_x, difference(y, ref, &dv));
+    worst_v = fmax(worst_v, dv);
+  }
+  printf("RKN12, two bodies, 5 revolutions: %.1e m, %.1e m/s from the closed form, %lld steps\n",
+         worst_x, worst_v, (long long)myb_orbit_steps(orbit));
+  MT_CHECK(worst_x < 1e-4 && worst_v < 1e-7);
+  /* the state at a time is the same whatever else was asked */
+  double alone[6];
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_OK);
+  MT_CHECK(myb_orbit_state(orbit, 0.37 * t_end, alone) == MYB_OK);
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_OK);
+  for (int k = 1; k <= 300; ++k) {
+    MT_CHECK(myb_orbit_state(orbit, 0.37 * t_end * k / 300.0, y) == MYB_OK);
+  }
+  MT_CHECK(memcmp(y, alone, sizeof y) == 0);
+  /* events: the pericentres of the five revolutions */
+  MT_CHECK(myb_orbit_start(orbit, 0.0, p->y0, t_end) == MYB_OK);
+  double worst_event = 0.0;
+  for (int k = 0; k < 5; ++k) {
+    int found = 0;
+    double t_event = 0.0;
+    MT_CHECK(myb_orbit_event(orbit, apsis, NULL, t_end, +1, &found, &t_event, y) == MYB_OK);
+    const double expected = ((double)(k + 1) * two_pi - p->mean_anomaly0) / p->mean_motion;
+    MT_CHECK(found);
+    worst_event = fmax(worst_event, fabs(t_event - expected));
+  }
+  printf("  five pericentres to %.1e s\n", worst_event);
+  MT_CHECK(worst_event < 1e-8);
+  /* an impulse, then on */
+  const double dv[3] = {0.0, 5.0, 0.0};
+  double at[6];
+  MT_CHECK(myb_orbit_state(orbit, myb_orbit_time(orbit), at) == MYB_OK);
+  MT_CHECK(myb_orbit_kick(orbit, dv) == MYB_OK);
+  double kicked[6];
+  MT_CHECK(myb_orbit_state(orbit, myb_orbit_time(orbit), kicked) == MYB_OK);
+  MT_CHECK(kicked[4] == at[4] + 5.0 && kicked[0] == at[0]);
+  MT_CHECK(myb_orbit_state(orbit, t_end, y) == MYB_OK);
+  MT_CHECK(myb_orbit_partials(orbit, t_end, y, NULL, NULL) == MYB_E_DOMAIN);
+  myb_orbit_destroy(orbit);
+  myb_force_model_set_position_only(p->model, 0, 0);
+  /* no variational equations with it */
+  const myb_orbit_options both = {.integrator = MYB_ORBIT_RKN12, .variational = 1};
+  MT_CHECK(myb_orbit_create(p->model, &both, NULL, &orbit) == MYB_E_DOMAIN);
+}
+
 int main(void) {
   problem p;
   problem_init(&p);
@@ -593,6 +659,7 @@ int main(void) {
   test_field_partials();
   test_decay();
   test_dop853(&p);
+  test_rkn12(&p);
   myb_force_model_destroy(p.model);
   return mt_finish("test_orbit");
 }

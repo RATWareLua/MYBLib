@@ -148,10 +148,10 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 | NRLMSISE-00 (C port) | public domain | in `ext/` |
 | fdlibm (FreeBSD msun) | SunPro (permissive, retain the notice) | ported: erf, erfc (`src/num/erf.c`) |
 | IERS Conventions software | custom, not BSD | do not port; equations — from the papers, tables — as data, examples — for cross-checking |
-| NRLMSIS 2.1 | Open Source Academic Research License (NRL): derived works are returned to NRL, commercial use is separate | not ported; the user's own copy through `myb_thermosphere_point_at` |
+| NRLMSIS 2.1 | Open Source Academic Research License (NRL): derived works are returned to NRL, commercial use is separate | not in the repository; by the user's decision (2026-11-12) translated only on the user's machine, outside git, and checked there |
 | JB2008 | the SET licence: the code may not be modified or translated | not ported; a clean implementation from the papers — phase 22 |
-| DTM2020 | CNES: academic non-commercial use only, no redistribution | not ported; the user's own copy |
-| HWM14 | no licence | not ported; the user's own copy as a `myb_wind_function` |
+| DTM2020 | CNES: academic non-commercial use only, no modification and no redistribution | not in the repository; a local translation outside git by the user's decision (2026-11-12) |
+| HWM14 | no licence | not in the repository; a local translation outside git by the user's decision (2026-11-12) |
 | VMF3, GPT3 (TU Wien) | an open-access paper; the routines are © TU Wien with no licence terms | written from the paper; the tables and the grid are data; the routines serve for comparison |
 | Orekit, GMAT | Apache-2.0 | do not copy; algorithms — from the papers, the projects — for cross-checking |
 | REBOUND | GPL-3 | cross-checking only |
@@ -176,6 +176,12 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 
 ## 12. Roadmap
 
+The order of the last phases (the user's decision of 2026-11-12): phase 22 follows 20 and
+phase 21 comes last, so that the bindings, the passports of the models, fuzzing and the
+benchmarks of phase 21 are written once over the final interface. The numbers of the phases
+do not change. The release tag and the full run of CI come only after the last phase (21);
+until the tag every phase is committed to `main`.
+
 | Phase | Content | Completion criterion | Status |
 |---|---|---|---|
 | 0 | CMake skeleton (Clang only), `core`, `num`, `cmath` (fma, sin, cos), reproducibility tests | everything below is green on Windows and Gentoo | Windows, Gentoo: done |
@@ -199,8 +205,8 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 | 18 | N bodies and the body model: levels of the graph (harmonics, figure–figure, tides — the lagged tides of the Earth and the Moon among them), coupled translation and rotation (with the derivative of the rotational deformation), close encounters, collisions and mergers, PN binaries among N bodies | re-integration of DE440 by the library's own means (the Moon with its librations) | Windows and Gentoo: done (DE440 again with the librations of the Moon, from JD 2440400.5: the Moon 1.1 cm after 30 days, 8.8 cm after a year, **19 cm after 5 years** (54 m without the tides of the Earth); the attitude of the Moon 0.003″, 0.041″ and 0.16″; Mercury 0.77 m and Venus 0.56 m after a year; the rest is the small bodies of DE440 that are missing; a free top 3·10⁻¹³; the contact of two spheres 10⁻¹² of the closed form) |
 | 19 | applications: initial orbit determination, relative motion, the approach of two objects and the probability of collision, mean elements and TLE fitting, multiple shooting, pseudo-arclength continuation of families and quasi-periodic orbits, variational equations with DOP853 in `myb_orbit`, optimal low thrust | Vallado, the JPL catalogue | Windows and Gentoo: done (orbit determination — the examples 7-3 and 7-4 of Vallado to six digits, Gauss — the orbit to 10⁻¹⁴; relative motion; closest approaches and the probability of collision, the covariances carried by the orbits themselves — 2.5·10⁻⁹ of the closed transition matrix; mean elements and TLE fitting — elements to 10⁻¹⁵; multiple shooting and families — a member closes to 4·10⁻¹³; **quasi-periodic orbits** — the circle of a torus returns onto itself over 20 turns to 3.7·10⁻¹¹; the variational equations with DOP853; low thrust: the Q-law — 1234.3 m/s against Edelbaum's 1232.6, the **indirect method** — the Hamiltonian constant to 10⁻¹², at high thrust 486.84 m/s against Hohmann's 486.82, **Sims–Flanagan** — 0.11 % of the propellant from the indirect method with 30 segments) |
 | 20 | files and frames: CK and SCLK (read and written), a graph of frames (SPK across frames), SPK type 15, nutation grid, TDB−TT from the ephemeris, space weather; bodies of a system whose motion is given (a provider) and the small bodies of DE440 from their SPK; the ground station: station displacements (IERS ch. 7), the admittance of the secondary waves of the ocean tide and the atmospheric S1/S2, VMF3/GPT3 and the APG gradients, three-dimensional ionosphere maps and the higher orders of the ionosphere, light time in the measurements; `ext/`: NRLMSISE-00 adapter, JB2008, DTM2020, NRLMSIS 2.1, HWM14 (after the licence checks) | CSPICE; references of the models | Windows and Gentoo: done (SPK type 15 — 9·10⁻¹⁶ of its rule in 60 digits; the graph of frames against CSPICE 1.3·10⁻¹⁵; CK — 1302 requests equal to CSPICE, the matrix 7·10⁻¹⁶, CSPICE reads the file written; the nutation table 4·10⁻¹⁶ rad; TDB−TT of DE440t to 1.4·10⁻¹⁶ of its rate; DE440 with the 373 small bodies after 5 years — Mercury 2.1 cm, Venus 1.0 cm, Mars 1.3 cm, the Moon 4.9 cm; site displacements — 1.1·10⁻⁷ m from the arithmetic of the IERS routine, ocean loading 5·10⁻⁷ m from HARDISP; secondary waves: LAGEOS 2.05 → 1.57 cm; light time in the measurements ≤ 1.4·10⁻⁸ m; GPT3 6·10⁻¹³ and VMF3 1.3·10⁻¹⁵ from the routines of TU Wien; the ionosphere integrals 1.3·10⁻⁹). The licences of JB2008, DTM2020, NRLMSIS 2.1 and HWM14 do not allow porting — a common input for the user's own copies of the models is there; the evaluation of CK types 4–6, three-dimensional IONEX maps from files and JB2008 from the papers are in phase 22 |
-| 21 | engineering: fuzzing of the parsers, benchmarks, coverage, model passports `docs/models/`, ARM64 and macOS in CI, consumers built with MSVC; bindings: the upper layers for the rest of the interface, array forms of the calls in C, Go and Haskell, tests under the sanitizers; the edge of a shadow without withdrawing the step (a speed-up, judged by measurement); vcpkg, Conan, PyPI and crates.io packages (they need a tagged release) | CI green on every target; the orbit of the example from every binding bit for bit with the C calls | — |
-| 22 | the tails of the models and what §4 and §5 kept outside the first version: optimal low thrust beyond the rendezvous — insertion into an orbit with a free phase and the field of a model in Sims–Flanagan, chains of legs with flybys; the stability and the manifolds of tori; 4PN with the hereditary tail, higher-order spin-orbit terms and the radiation reaction of spins; secondary emission and the limit a ≫ λ_D in charging; compositions with smaller error constants (7 and 15 stages) and a dense output of RKN12(10) for `myb_orbit`; orbit determination by the double-r iteration and the methods of Laplace and Gooding; the probability of a long encounter; atmospheric entry — continuum hypersonic aerodynamics and ablation; contact and landing; random impacts of micrometeoroids; FMM as an approximate level of the graph and a neighbour search for the encounters of many bodies; in the system of bodies — mergers of rotating bodies, derivatives with respect to the state and the parameters; thermal inertia in the torque of light at the moment; from phase 20 — the evaluation of CK types 4, 5, 6, reading three-dimensional IONEX maps, a clean implementation of JB2008 from the papers with readers of its indices, a reader of the S1/S2 loading grids, the turning of the body in the velocity of an offset point for attitude laws that follow the velocity | own references from the papers | — |
+| 21 | (last) engineering: fuzzing of the parsers, benchmarks, coverage, model passports `docs/models/`, ARM64 and macOS in CI, consumers built with MSVC; bindings: the upper layers for the rest of the interface, array forms of the calls in C, Go and Haskell, tests under the sanitizers; the edge of a shadow without withdrawing the step (a speed-up, judged by measurement); what phase 22 left (its decisions: tori, chains, spin terms, the FMM over threads, sticking friction, variational equations of the system). The vcpkg, Conan, PyPI and crates.io packages are cancelled (the user's decision of 2026-11-12): the library is distributed through GitHub only | CI green on every target; the orbit of the example from every binding bit for bit with the C calls | — |
+| 22 | (before 21) the tails of the models and what §4 and §5 kept outside the first version: optimal low thrust beyond the rendezvous — insertion into an orbit with a free phase and the field of a model in Sims–Flanagan, chains of legs with flybys; the stability and the manifolds of tori; 4PN with the hereditary tail, higher-order spin-orbit terms and the radiation reaction of spins; secondary emission and the limit a ≫ λ_D in charging; compositions with smaller error constants (7 and 15 stages) and a dense output of RKN12(10) for `myb_orbit`; orbit determination by the double-r iteration and the methods of Laplace and Gooding; the probability of a long encounter; atmospheric entry — continuum hypersonic aerodynamics and ablation; contact and landing; random impacts of micrometeoroids; FMM as an approximate level of the graph and a neighbour search for the encounters of many bodies; in the system of bodies — mergers of rotating bodies, derivatives with respect to the state and the parameters; thermal inertia in the torque of light at the moment; from phase 20 — the evaluation of CK types 4, 5, 6, reading three-dimensional IONEX maps, a clean implementation of JB2008 from the papers with readers of its indices, a reader of the S1/S2 loading grids, the turning of the body in the velocity of an offset point for attitude laws that follow the velocity | own references from the papers | Windows and Gentoo: done (CK types 4–6 against CSPICE — the same answers to 3842 requests, the matrix 4.4·10⁻¹⁶; JB2008 from the papers against the program of the authors — T∞ 1.1·10⁻⁶ K, log ρ 8.9·10⁻⁴; Gooding over 3.3 turns 2·10⁻¹⁵; compositions of 7 and 15 stages refined at 512 bits; a long encounter against Monte Carlo 1.3σ; a thin sheath at Bohm's potential to 10⁻¹²; 4PN energy of circles to 0.035 of −54.92; the multiplier of a torus as the square of its size; a flyby of Venus saves 103 kg; FMM to the rounding of the direct sum at p = 16; contact restitution 3.5·10⁻¹³). What it left went to phase 21 |
 
 ### Completion after 1.1 (phases 12–22)
 
@@ -220,6 +226,247 @@ closed at once; what is harder now gets the phase where it will cost least or gi
 the final phase 22); an item is dropped only by the user's decision. The leftovers of phases
 3–11 that belonged to no phase were sorted by this rule too: the section "Old debts (phases
 3–11) and the bindings" below.
+
+### Phase 22 decisions
+
+The phase is closed: done and checked on Windows and Gentoo. Windows — 116/116 (-O2), the
+affected tests at -O0 (37, with the stack budget and the ban on libm) and under UBSan (31);
+Gentoo — linux-release 116 with the same golden value of the reproducibility test
+(test_de440_time skipped: its file de440t.bsp comes only with -DLARGE=ON, and the phase does
+not touch it), linux-asan on the 31 affected tests. Phase 22 came before
+phase 21 (the user's decision of 2026-11-12); what did not go in, and where it went, is at the
+end of the section.
+
+- **CK types 4, 5, 6** — evaluated and written (`myb_ck_writer_add_chebyshev`,
+  `myb_ck_writer_add_packets`, `myb_ck_writer_add_minisegments`): type 4 — Chebyshev packets on
+  intervals in a generic segment, type 5 — a sliding window of Hermite or Lagrange polynomials
+  (four subtypes, intervals), type 6 — mini-segments with their own windows and gaps. The rules
+  were taken from the description of the format; the choice between two equally near records
+  differs by type (1–3 the later, 4 and 5 the earlier, 6 the earlier unless a gap is nearer to
+  the next mini-segment), and the library follows each. Against CSPICE N0067: a type 5 file
+  written by `ckw05_c` (four subtypes, six segments, intervals of a single pointing, a segment
+  without angular velocities) — 1043 requests found and 287 refused, the same as CSPICE, the
+  matrix **4.4·10⁻¹⁶**, the angular velocity 6.5·10⁻¹⁷ rad/s; files of types 4, 5, 6 written by
+  the library and read by CSPICE — 1953 and 559, the same, the matrix 4.4·10⁻¹⁶. Two errors of
+  CSPICE were found on the way: its reader of type 5 keeps the interval of the previous request
+  and after a request that moved on remembers a wrong boundary (the answer depends on what was
+  asked before; the library keeps no state), and its reader of type 6, on the way from a gap to
+  the next mini-segment, rounds the rate of the clock to a whole number (at a rate of 2.5 the
+  angular velocity comes out divided by 3; shown on four requests).
+- **The velocity of an offset point** for attitude laws that follow the velocity: the field
+  `gm` of `myb_offset_measure` lets the states half a step before and after come from a Kepler
+  step about a point mass (gm = 0 keeps the old behaviour). An arm of 37 m along the velocity:
+  the velocity of the point against a difference of the true orbit — **5.7·10⁻⁹ m/s** (without
+  gm 3.4·10⁻² m/s).
+- **The atmospheric S1/S2 loading from files**: `myb_site_atmosphere_load` reads the files of
+  the GGFC calculator and the station files of TU Wien, `myb_site_atmosphere_grid_load` — the
+  grids of TU Wien (s1_s2_s3_cm_noib_grid.dat: one degree, 18 values a node) into a station
+  grid. The grid of TU Wien at WETTZELL, ALGOPARK, AIRA, AGGO against the values of the same
+  centre for these stations — **4.9·10⁻⁷ m** of up to 8.3·10⁻⁴ m.
+- **Three-dimensional IONEX maps** (MAP DIMENSION 3): the densities are the values over DHGT,
+  the vertical content their sum, `myb_ionex_density_grid` gives a grid of densities for the
+  ray integrals; grids that close on themselves (−180…180) go round, a missing value refuses
+  only the requests that need it. On a made field with changes of the exponent: at the nodes
+  and between them **2.2·10⁻¹⁵**, between the maps and across the date line 1.6·10⁻¹² (the
+  resolution of a date in MJD).
+- **JB2008 from the papers** (`ext/jb2008`): a clean implementation from the publications of
+  Bowman et al. (2008), Jacchia (1970, 1971) and the JB2006 paper, with readers of the index
+  files SOLFSMY and DTCFILE (their lags from the files' own headers) and an adapter to an
+  environment (the Sun of the Almanac, GMST 1982 on UTC). The program of the authors may not be
+  changed or translated (the licence of SET), so no line of it was read: what the papers leave
+  open was settled by running the program unchanged as a black box on the Gentoo VM. Against
+  the program over 655 inputs from 90 to 6000 km: T∞ to **1.1·10⁻⁶ K**, T(z) to 2·10⁻⁵ K,
+  log₁₀ ρ to 8.9·10⁻⁴ (rms; at worst 4.8·10⁻³ — the integration of the program is coarser);
+  the static model against Table 5 of Jacchia 1970 — T 0.049 K, log ρ 1.1·10⁻³. The index files
+  of SET may not be redistributed: the library reads the user's copies; the outputs of the
+  program used in the test are kept outside the repository (the test runs on them when the file
+  is there).
+- **Orbit determination**: the method of **Laplace** (`myb_iod_laplace`; the same polynomial of
+  degree 8, the derivatives from the quadratic through three sights) — 4·10⁻¹⁶…1.6·10⁻¹⁴ on the
+  five arcs of Gauss's tests; the **double-r iteration** (`myb_iod_double_r`) and **Gooding's
+  method** (`myb_iod_gooding`, with turns and branches of Lambert) on arcs where Gauss finds
+  nothing (a third, half, two thirds of a turn) — 10⁻¹⁶…3·10⁻¹⁵; Gooding over 1.85, 2.7 and
+  3.3 turns — 2·10⁻¹⁶…2·10⁻¹⁵. All end in the six-condition refinement of Gauss's method. Over
+  two thirds of a turn three sights also lie on another orbit: from guesses 5 % off both
+  methods may settle on it (documented, the test checks the sights), from 1 % on the true one.
+- **Compositions of 7 and 15 stages** (`MYB_SYMPLECTIC_6_S7` — Yoshida's solution A,
+  `MYB_SYMPLECTIC_8_S15` — the 15-stage method of order 8 of Hairer, Lubich and Wanner,
+  Kahan and Li). The coefficients were refined at 512 bits from the conditions of order derived
+  in the free Lie algebra (55 words to weight 8): 2⁻⁵⁰⁹ and 2⁻⁵¹⁰, the doubles equal bit for bit
+  (`tests/mpfr/test_mpfr_compositions.c`). On a Kepler orbit with e = 0.3: orders 6.00 and
+  8.00; for the same work the error of the triple jump is **1.75 times** (order 6) and **196
+  times** (order 8) larger.
+- **A dense output of RKN12(10) and the pair in `myb_orbit`**: `options.interpolant` builds an
+  interpolant of the step — the acceleration of degree 12 on the Chebyshev–Lobatto nodes,
+  integrated twice and refined by Picard's iteration from the quintic of Hermite of the ends —
+  as accurate inside the steps as at their ends (Kepler e = 0.6, rtol 10⁻¹⁴: 1.9·10⁻¹¹ s
+  inside against 2.2·10⁻¹¹ s at the ends); it costs 44–49 evaluations a step, after that every
+  request is free. Off by default: the old dense output (one more step of the pair, 16
+  evaluations a request) stays bit for bit. (The plan spoke of conditions of order solved in
+  MPFR; this construction has none to solve, and it was checked against the exact Kepler
+  motion instead.) `MYB_ORBIT_RKN12` integrates the force models whose
+  terms all depend on the position only (`myb_force_model_set_position_only`): two bodies over
+  five revolutions — 3.8·10⁻⁷ m, five pericentres to 5.1·10⁻¹¹ s; two days with the edges of
+  the shadow — 1.08 mm from IAS15 (DOP853 0.81 mm).
+- **The probability of a long encounter** (`myb_collision_rate`,
+  `myb_collision_probability_long`, `myb_conjunction_long`): the rate of entering the sphere is
+  the flux of the Gaussian of the relative state through it (Coppola 2012, Hall 2018) with the
+  velocity conditioned on the place, integrated in time by Gauss–Kronrod. Straight lines with a
+  certain velocity — the probability of a short encounter to **3.7·10⁻¹⁵**; two orbits crossing
+  at 8.4 km/s — 4.5·10⁻⁸ of it; a slow encounter (5 cm/s, the velocity as uncertain as itself)
+  — 1.584·10⁻² against 1.572·10⁻² ± 8.8·10⁻⁵ of Monte Carlo with 2·10⁶ lines (1.3σ), where the
+  short formula gives 8.65·10⁻³.
+- **Charging: secondary emission and a thin sheath**: the Sternglass yield
+  (`myb_secondary_emission`) with impact energies weighted by the kind of the orbit — repelled,
+  attracted in OML, attracted through a thin sheath; the thin sheath (a ≫ λ_D) limits the
+  attracted species to their random current and gives the ions at least the flux of Bohm;
+  `myb_charging_equilibria` returns all the stable roots. Against a trapezoid of 4·10⁵ steps
+  from −60 to +60 V — 6.9·10⁻⁹; the floating potential of a thin sheath **−3.338775 kT/e** —
+  that of Bohm and Boltzmann to 10⁻¹²; a strong emitter turns positive from Te = 14.2 eV. No
+  bistability was found for Maxwellian plasmas, and none is claimed.
+- **Thermal inertia in the torque of light at the moment**
+  (`myb_force_radiation_mesh_lagged`, the fields `theta`, `spin_axis`, `phases` of
+  `myb_system_light`): the re-emission of every face answers late, by the kernel of the
+  conduction over the phases of a steady turn (the same transfer function as `myb_force_yorp`).
+  θ = 0 — the instantaneous mesh to 1.5·10⁻¹⁵; the mean over a turn — `myb_force_yorp` to
+  **3.5·10⁻¹⁶** at θ = 0, 0.7 and 3.
+- **Mergers of rotating bodies**: the remnant keeps the attitude and the shape of the body that
+  rotates (scaled to its new radius) and spins with the angular momentum of the orbit and of
+  the spins brought — integrated rotations and the spins of PN pairs; pairs that named the
+  merged bodies end. A spinning body hit off-centre: the total angular momentum is kept to
+  **1.4·10⁻¹⁶**; a PN pair with spins merges with exactly the momentum of the orbit and the
+  spins (`myb_system_merger.spin`).
+- **Neighbours for the encounters of many bodies**: every step the boxes of the bodies over the
+  step are taken from the step's own polynomial of the position (its Bernstein hull, so the
+  box surely holds the path), swept along x and checked in y and z; only the pairs whose boxes
+  meet are examined, in the same order as before, so the events are those of the loop over all
+  pairs. 300 spheres in straight lines: the first five contacts and bounces are those of the
+  billiard computed pair by pair, the times to 5.6·10⁻¹³ s. With 1500 spheres the same
+events come 3.5 times faster than through the loop over all pairs (7.3 s against 22.8 s for the
+test; what remains is the direct sum of the gravity, O(N²) without the FMM).
+- **Derivatives of the system** (`myb_system_partials`): with respect to the state and to the
+  gravitational parameters, for the system with every level, by central differences of whole
+  propagations. Two bodies over 4000 s: against the closed transition matrix — **1.8·10⁻¹¹**
+  of the largest element; with respect to gm — 6·10⁻¹¹.
+- **Atmospheric entry**: Newtonian continuum aerodynamics of plates and meshes
+  (`myb_force_newtonian_plates`, `myb_force_newtonian_mesh`; the field `continuum` of
+  `myb_surface_drag_term`; shadowing as in the radiation), the stagnation coefficient of
+  Rayleigh (`myb_newtonian_cp_max`, against NACA 1135 to its digits), the heating of
+  Sutton–Graves and ablation (`myb_ablation_*`). A sphere of plates — C_D = Cp_max/2 to
+  4.4·10⁻¹⁶; a cone — 2.2·10⁻¹⁶; the analytic Jacobian against Richardson differences
+  5.2·10⁻⁶; a meteor against the closed solution of ablation — 1.9·10⁻¹⁴.
+- **Contact and landing** (the new `myb/contact.h`): the normal force of Hunt and Crossley,
+  k dⁿ (1 + χ ḋ) — zero at both ends of a contact, never pulling — whose restitution has a
+  closed form independent of k and n (Marhefka and Orin 1999; `myb_contact_restitution`,
+  `myb_contact_damping`); a smooth Coulomb friction, −μ f_n u / √(|u|² + v_s²), since the
+  forces are functions of the state alone (below the angle of friction a body creeps, at a speed
+  with a closed form, in place of sticking). Surfaces: a plane, an ellipsoid, a closed mesh
+  (`myb_polyhedron_nearest`); contact points are spheres fixed in the body; as a term of a force
+  model (`myb_term_contact`, the gap `myb_event_contact` for events and breaks) and as a level
+  of the system (`myb_system_add_contact`: the ground is pushed back by the ratio of the masses,
+  the torques go to the integrated rotations). Contact problems are integrated with DOP853: at
+  every touch the acceleration passes through zero, and IAS15 stops there. Measured: the
+  restitution against the closed form **3.5·10⁻¹³**; a ball dropped 0.2 m on the Moon — 24
+  bounces, at rest at the depth of the closed form to 2·10⁻¹⁶ m, the energy never grows by more
+  than 10⁻¹⁶ m²/s²; a block sliding with μ = 0.4 — the closed form of the smooth law to
+  2·10⁻¹⁵ s (0.509685 m against Coulomb's 0.509684 m); a cube of facets — the rebound from a
+  face equals that from a plane to 5·10⁻¹³; a lander on four legs on a slope of 15°, μ = 0.6 —
+  creeps at the closed speed to 6·10⁻¹³, its legs carry its weight to 10⁻⁹; on 40° it slides at
+  g(sin α − μ cos α) to 9·10⁻⁸; a spinning ball off a turning ellipsoid in the system — the
+  momentum kept to 2·10⁻¹⁶, the angular momentum to 1.2·10⁻¹³. On the way
+  `myb_ellipsoid_nearest` stopped refusing points just off a sphere (its Newton steps fell
+  below the resolution and the budget ran out); every value it returned before is the same.
+- **Random impacts of micrometeoroids** (the new `myb/meteoroid.h`): the interplanetary flux of
+  Grün et al. (1985, eq. A3), the rate 4 A F for the mean cross-section A, scaled with the
+  distance from the Sun by the caller's exponent; masses drawn from the distribution of the
+  flux, speeds and directions fixed or by the caller's functions, the momentum with an
+  enhancement β; `myb_meteoroid_propagate` gives the kicks to a `myb_orbit`. Against `pow`
+  6·10⁻¹⁵; the count of impacts — 50085 against 50000 (0.4σ), 2000 runs: the mean 0.6σ, the
+  variance −1.2σ; the masses — Kolmogorov–Smirnov √n·D = 1.17 (the bound at 0.001 is 1.95);
+  the impulse 0.3σ; 310 kicks on a free orbit — the free motion with the kicks to 7·10⁻¹⁶; the
+  same seed gives the same impacts bit for bit.
+- **The stability and the manifolds of tori** (`myb_cr3bp_torus_stability`,
+  `myb_cr3bp_torus_manifold`, `myb_cr3bp_propagate` with a surface of section): the linearised
+  map of the invariant circle — the transition matrices of its points over the period, turned
+  back by the rotation number — and all its 6n eigenvalues. Asking whether an eigenvalue lies on
+  the unit circle is not enough: the high frequencies of the circle give spurious ones (up to
+  5.6 % off the circle on a large stable torus), so the eigenvalues are grouped into circles
+  of members that are turns of each other by ±ρ, and only a group holding more than half the
+  points counts; the group of 1 is trivial, the others elliptic or hyperbolic, the spurious ones
+  are reported as unresolved. Tori about the L1 Lyapunov orbit (25 points): the multiplier
+  tends to that of the orbit as the square of the size (the ratios 3.997 and 3.988), λ·(1/λ) = 1
+  to 4·10⁻¹⁰, the eigenvectors against the map computed by another integrator 3.7·10⁻⁶; 35
+  points give the same λ to 1.7·10⁻¹⁴; quasi-halo tori about L2 — the multiplier of the halo to
+  3.5·10⁻⁶; a torus about a distant retrograde orbit — all elliptic, the request of a manifold
+  refused. The manifolds grow by λ a turn (to 3.4·10⁻⁶), the stable one is the mirror image of
+  the unstable one, carried to the section x = 1 − μ they cross where the manifolds of the
+  Lyapunov orbit do, the offset falling as the square of the size in the plane and as the size
+  out of it; the Jacobi constant is kept to 4·10⁻¹⁵.
+- **The fast multipole method as an approximate level** (`myb_nbody_set_approximation`,
+  `myb_nbody_approximation`; marked APPROXIMATE, off by default — a system never given an
+  approximation computes the same bits): solid-harmonic expansions to the order p (the
+  normalisation of White and Head-Gordon and of Dehnen, built by recurrences, no libm), the
+  dual tree walk of Dehnen with the criterion r_A + r_B < θ |z_A − z_B| and mutual
+  interactions of cells, an octree built breadth-first, a fixed order of operations (the same
+  input, the same bits). The bodies with an excluded source keep their direct sums, the 1PN
+  terms stay direct. The relative force error (rms over 10⁴ bodies) falls like θᵖ: at θ = 0.5
+  4.3·10⁻⁴, 4.3·10⁻⁶, 9.7·10⁻⁸, 1.4·10⁻⁹ for p = 4, 8, 12, 16 in a uniform cube (a Plummer
+  sphere 2.7·10⁻³ … 3·10⁻¹⁰), down to the rounding of the direct sum at p = 16, θ = 0.3 —
+  where a Barnes–Hut tree, kept out of the library for its 10⁻³…10⁻⁴, is p = 2…4. The momentum
+  is kept to rounding (|Σ GM a| / Σ GM |a| ≤ 10⁻¹⁶); the energy the expansions inject over six
+  dynamical times — 4·10⁻⁷ of |E| at p = 8. The cost at p = 8, θ = 0.5: 10–16 µs a body for
+  10⁴ bodies against 55–65 µs of the direct sum, 17–25 µs for 10⁵ against about 600 µs (the
+  time per body grows 1.6–1.7 times from 10⁴ to 10⁵ bodies, the direct sum's 10 times). The
+  Wisdom–Holman integrators refuse a system with an approximation: their splitting subtracts
+  the central force, to which the error is relative.
+- **4PN with the hereditary tail, higher spin-orbit terms, the radiation reaction of spins**
+  (new bits of `myb_pn_binary.orders`; `MYB_PN_ALL` keeps its value): `MYB_PN_4` — the
+  instantaneous 4PN terms of Bernard et al. (2018) and the conservative tail, `MYB_PN_4RR` —
+  the dissipative tail, `MYB_PN_SO25` and `MYB_PN_SO35` — the spin-orbit terms at the next and
+  the next-to-next order with the matching corrections of the precession (Bohé et al. 2013, in
+  the spins of constant norm the library integrates), `MYB_PN_SORR` — the spin-orbit radiation
+  reaction of Will (2005). Every block was transcribed by machine from the LaTeX source of the
+  papers, and the transcription checked before the C: the energy and the angular momentum of the
+  4PN paper are conserved identically through 1/c⁸ along its own equations. The tail is taken on
+  the osculating Newtonian orbit (an error of 5PN) as the paper's Fourier series over the mean
+  anomaly — exact on circles, to 2·10⁻¹³ of itself on eccentric orbits against an independent
+  evaluation in mpmath; it refuses unbound orbits and e above about 0.83. Against the published
+  results, from integrated orbits: the 4PN coefficient of the energy of circular orbits to 0.035
+  (without the tail it would be off by 50), the 4PN coefficient of the periastron advance to
+  about 1 of 237.5 (the tail's share is 32), the energy lost to the tail over a period of an
+  orbit with e = 0.5 — the flux to 2.4·10⁻⁶; the spin-orbit coefficients of the energy 1.38111456
+  (exact), 2.967553 (2.967556), 5.0703 (5.0671); the flux of the spin-orbit radiation reaction on
+  circles — Kidder's factor −0.2610081306 to 2·10⁻⁹.
+- **Low thrust beyond the rendezvous.** *Insertion with a free phase* in the indirect method
+  (`myb_indirect_problem.arrival = MYB_INDIRECT_ORBIT`): the place on the target orbit is free,
+  and the condition of transversality replaces the three of the phase. From 7000 km into a
+  circle of 8000 km tilted by 0.06 rad in 4500 s the method arrives 4.3546 rad along the circle
+  with 783.920 kg left — more than any rendezvous at a fixed place (780.076 kg at 4.4 rad,
+  744.5–777.8 kg within 0.3 rad), and a rendezvous at the place found gives the same mass to
+  1.9·10⁻⁷ kg; the transversality from the costates sampled holds to 2.6·10⁻¹², the Hamiltonian
+  to 2.2·10⁻¹¹; the least time into the orbit is 3011.759 s against 3633.451 s to a moving
+  target. *The field of a force model in Sims–Flanagan* (`myb_sims_flanagan.field`): the coasts
+  between the impulses are integrated in the model with their transition matrices; a point
+  mass as a model gives the conics to 7.8·10⁻¹⁶, with J₂ the least propellant moves from
+  220.176 to 219.892 kg and the halves of the leg meet to 3.9 mm; the Jacobian against
+  differences 1.5·10⁻⁷. *Chains of legs with flybys* (`myb_chain_*`, up to 8 legs): legs of
+  Sims–Flanagan joined at unpowered flybys (equal excess speeds, the turn no larger than the
+  least periapsis allows), the dates free within their bounds, solved in two passes by the
+  library's solver. Earth–Venus–Mars with 1 N on 1000 kg: by Venus 834.470 kg arrive, the same
+  chain kept 10⁶ km from Venus — 731.350 kg (from two starts): the flyby saves 103 kg; the
+  derivatives of the program against differences 1.4·10⁻⁸.
+- **NRLMSIS 2.1, DTM2020, HWM14** were ported for a local check only (the user's decision of
+  2026-11-12): bit for bit with the originals in double precision with a correctly rounded
+  libm; their code is not in the repository.
+
+Not done in the phase: the normal rotation of elliptic tori and the tori about vertical Lyapunov orbits;
+a powered flyby in the chains, and the floor of stationarity of the solver on its bounds
+(changing its tolerance moves the golden results); the spin-orbit terms of the tail, the
+spin-orbit radiation reaction beyond the leading order, spin-spin terms beyond the leading order
+and the tail on unbound orbits; the FMM over threads; friction that sticks (a law with a state
+of its own) and contact under IAS15, which stops at a touch (contact goes with DOP853); the
+variational equations of the whole system (its derivatives are differences of propagations).
+All of them go to phase 21, the last (by the rule of 2026-11-11 nothing is dropped).
 
 ### Phase 20 decisions
 
@@ -876,8 +1123,10 @@ binding, gives the times of the nodes and the final state **bit for bit** with t
 - **The upper layers for the rest of the interface** (phase 21): N bodies, estimation,
   CR3BP, targeting, attitude, observables, the writers of files — in all the bindings at
   once, when phases 18–20 have finished changing those parts.
-- **Publication** (phase 21, after the tag): PyPI and crates.io, with vcpkg and Conan; they
-  need the user's accounts.
+- **Publication** — cancelled (the user's decision of 2026-11-12): neither PyPI and
+  crates.io nor vcpkg and Conan; the library and the bindings stay on GitHub only and are
+  built from the sources (`find_package(myb)`, pkg-config, `pip install bindings/python`, a
+  path to the crate in Cargo).
 - **What the bindings do not check yet** (phase 21): consumers built with MSVC — the C++
   header under `cl` and the MSVC toolchain of Rust through the DLL (it needs the import
   library `myb.lib`; the development machine has no MSVC linker); macOS; the tests of Python
@@ -952,7 +1201,7 @@ closed or has a phase; nothing is dropped (the user's decision of 2026-11-11).
 | DTM2020 | 7 | 20 | next to JB2008 and NRLMSIS 2.1: the same space-weather indices as input |
 | CK reader, nutation grid, SPK across frames, SPK type 15, TDB−TT | 5, 7, 9 | 20 | already there |
 | The derivative of a measurement of an offset point through the attitude that follows the orbit (a part offset/distance, `myb_measure_offset`) | debts 12–17 | 20 | the measurement model is rewritten there for the light time; the attitude laws are differentiated already (`src/force/surface.c`) |
-| Upper layers of the bindings for the rest of the interface, Go, Haskell, publication of the packages, MSVC, macOS, sanitizers | bindings | 21 | see "Bindings: what is ahead" |
+| Upper layers of the bindings for the rest of the interface, Go, Haskell, MSVC, macOS, sanitizers (publication of the packages cancelled 2026-11-12) | bindings | 21 | see "Bindings: what is ahead" |
 | The edge of a shadow without withdrawing the step | debts 12–17 | 21 | a speed-up, judged by measurement, and the benchmarks come with this phase; see below |
 | 4PN with the tail, higher-order spin-orbit terms, the radiation reaction of spins | 11 | 22 | no phase opens this part again; the formulas are long (hundreds of terms), the reference is the coefficients of Blanchet's review |
 | Secondary emission and the limit a ≫ λ_D in charging | 11 | 22 | the same: nothing else touches charging; a model of the electron yield of materials has to be chosen |
@@ -962,6 +1211,12 @@ closed or has a phase; nothing is dropped (the user's decision of 2026-11-11).
 | Contact and landing | §4 | 22 | rests on the coupled translation and rotation of phase 18 |
 | Random impacts of micrometeoroids | §4 | 22 | no phase makes them cheaper: the generator and the impulses are there already |
 | FMM | §5 | 22 | attaches to the levels of the graph that phase 18 introduces |
+| The normal rotation of elliptic tori; tori about vertical Lyapunov orbits | 22 | 21 | needs the complex eigenvectors of the whole map; the last phase |
+| A powered flyby in chains of legs; the floor of stationarity of the solver on its bounds | 22 | 21 | the tolerance on the bounds moves the golden results: changed once, at the last phase |
+| Spin-orbit tail, spin-orbit radiation reaction and spin-spin terms beyond the leading order; the tail on unbound orbits | 22 | 21 | long formulas from the same papers, read by the same machine transcription |
+| The FMM over threads | 22 | 21 | judged by the benchmarks of that phase |
+| Friction that sticks; contact under IAS15 | 22 | 21 | a law with a state of its own does not fit forces that are functions of the state; contact goes with DOP853 meanwhile |
+| Variational equations of the whole system (with every level) | 22 | 21 | the derivatives are differences of propagations (10⁻¹¹) meanwhile |
 
 **The user's decision of 2026-11-11: nothing is dropped**
 
@@ -1228,7 +1483,8 @@ done, how it was checked and what moved on, with the reason.
   `myb_troposphere.pc`, `myb_ionosphere.pc` (`Requires: myb`).
 - Moved to phase 21: vcpkg and Conan packages — a port of a registry refers to the archive
   of a release by its hash, and 1.2 has no tag yet; a recipe that its own manager has not
-  built would be unverified. macOS likewise.
+  built would be unverified. macOS likewise. (The packages were later cancelled by the
+  user's decision of 2026-11-12.)
 
 **Reproducibility**: a workload of the debts (forces, shadows, a mesh, geometry, DOP853,
 files and messages in both notations, the Jacobians of the surface terms and of the
@@ -1561,7 +1817,7 @@ Yarkovsky term); golden value `0xb76153a8dca45827` at -O0 and -O2;
   installation check gets the install directories from the build instead of assuming `lib`.
 - **Not done**: vcpkg and Conan packages; ELF symbol versions; pkg-config files for the
   libraries of `ext/`; macOS (phase 21). Closed later: see "Debts of phases 12–17". The vcpkg and Conan packages
-  moved to phase 21.
+  moved to phase 21 (then cancelled, 2026-11-12).
 
 ### Phase 12 decisions
 

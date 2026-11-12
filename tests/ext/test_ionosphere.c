@@ -100,6 +100,136 @@ static void test_ionex(void) {
   free(text);
 }
 
+/* The density of the made three-dimensional maps (tests/data/ionosphere/synthetic3d.inx) at
+ * map m, height k, latitude j and longitude p (in steps of the grid; p between nodes): linear
+ * between the nodes, as the grid interpolates. */
+static double made_density(double m, double k, double j, double p) {
+  return (1000.0 + 300.0 * k + 40.0 * j + 50.0 * m + 7.0 * fmin(p, 12.0 - p)) * 1e9;
+}
+
+/* A place at a geocentric latitude and longitude (degrees) and a height above 6371 km (m). */
+static void above(double latitude, double longitude, double height, double r[3]) {
+  const double d = 6371000.0 + height;
+  r[0] = d * myb_cos(latitude * DEG) * myb_cos(longitude * DEG);
+  r[1] = d * myb_cos(latitude * DEG) * myb_sin(longitude * DEG);
+  r[2] = d * myb_sin(latitude * DEG);
+}
+
+/* Three-dimensional maps: the densities of the file at the nodes and between them, in time
+ * with the maps rotated, across the date line of a closed grid; the content of a column; a
+ * missing value; a height off the grid. */
+static void test_ionex_3d(void) {
+  size_t size = 0;
+  char* text = read_file(MYB_TEST_DATA_DIR "/ionosphere/synthetic3d.inx", &size);
+  MT_CHECK(text != NULL);
+  if (text == NULL) {
+    return;
+  }
+  myb_ionex* maps = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_ionex_load(text, size, NULL, &maps, &diag) == MYB_OK);
+  if (maps == NULL) {
+    printf("%ld: %s\n", diag.line, diag.message);
+    free(text);
+    return;
+  }
+  MT_CHECK(myb_ionex_dimension(maps) == 3);
+  double radius = 0.0;
+  double height = 0.0;
+  myb_ionex_shell(maps, &radius, &height);
+  MT_CHECK(radius == 6371000.0 && height == 200000.0);
+  myb_iono_grid grid;
+  MT_CHECK(myb_ionex_density_grid(maps, &grid) == MYB_OK);
+  MT_CHECK(grid.heights == 3 && grid.latitudes == 3 && grid.longitudes == 13 && grid.maps == 2);
+  const double t0 = 60310.0;
+  const double hour = 1.0 / 24.0;
+  static const struct {
+    double hours, latitude, longitude, height; /* deg, deg, m */
+    double m, k, j, p;                         /* the expected place in the grid */
+  } cases[5] = {
+      {0.0, 5.0, 0.0, 300e3, 0.0, 1.0, 1.0, 6.0},     /* a node, exponent -2 */
+      {0.0, 2.5, 15.0, 250e3, 0.0, 0.5, 1.5, 6.5},    /* between nodes */
+      {2.0, 10.0, -90.0, 200e3, 1.0, 0.0, 0.0, 3.0},  /* a node of the second map */
+      {1.0, 5.0, 0.0, 300e3, 0.5, 1.0, 1.0, 5.5},     /* half way: 6.5 and 5.5, mean 38.5 */
+      {1.0, 6.0, 175.0, 350e3, 0.5, 1.5, 0.8, 0.0}};  /* across the date line, see below */
+  double worst = 0.0;      /* at the epochs of the maps */
+  double worst_time = 0.0; /* between them */
+  for (int c = 0; c < 5; ++c) {
+    double r[3];
+    above(cases[c].latitude, cases[c].longitude, cases[c].height, r);
+    double n = 0.0;
+    MT_CHECK(myb_iono_grid_density(&grid, t0 + cases[c].hours * hour, r, &n) == MYB_OK);
+    double expected = made_density(cases[c].m, cases[c].k, cases[c].j, cases[c].p);
+    if (c == 3) {
+      /* the first map at 15 degrees (p 6.5), the second at -15 (p 5.5) */
+      expected = 0.5 * (made_density(0.0, 1.0, 1.0, 6.5) + made_density(1.0, 1.0, 1.0, 5.5));
+    } else if (c == 4) {
+      /* the first map at 190 = -170 degrees (p 1/3), the second at 160 (p 11 + 1/3) */
+      expected = 0.5 * (made_density(0.0, 1.5, 0.8, 1.0 / 3.0) +
+                        made_density(1.0, 1.5, 0.8, 34.0 / 3.0));
+    }
+    if (c < 3) {
+      worst = fmax(worst, fabs(n - expected) / expected);
+    } else {
+      worst_time = fmax(worst_time, fabs(n - expected) / expected);
+    }
+  }
+  /* outside the heights: nothing */
+  double r[3];
+  double n = 1.0;
+  above(5.0, 0.0, 150e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, t0, r, &n) == MYB_OK && n == 0.0);
+  above(5.0, 0.0, 450e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, t0, r, &n) == MYB_OK && n == 0.0);
+  /* the missing value of the second map (height 400 km, latitude 0, longitude 150): needed at
+   * its epoch, not at the epoch of the first map */
+  above(0.5, 172.0, 390e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, t0 + 2.0 * hour, r, &n) == MYB_E_RANGE);
+  MT_CHECK(myb_iono_grid_density(&grid, t0, r, &n) == MYB_OK);
+  /* the content of a column: the sum of density times DHGT */
+  double vtec = 0.0;
+  MT_CHECK(myb_ionex_vtec(maps, t0, 5.0 * DEG, 0.0, &vtec) == MYB_OK);
+  const double column = (made_density(0.0, 0.0, 1.0, 6.0) + made_density(0.0, 1.0, 1.0, 6.0) +
+                         made_density(0.0, 2.0, 1.0, 6.0)) *
+                        100e3;
+  MT_CHECK(fabs(vtec - column) <= 1e-15 * column);
+  MT_CHECK(myb_ionex_vtec(maps, t0 + 2.0 * hour, 0.0, 150.0 * DEG, &vtec) == MYB_E_RANGE);
+  printf("IONEX three-dimensional maps against the made field: densities at the nodes and between "
+         "them %.1e, between the maps and across the date line %.1e; the content of a column "
+         "%.3f TECU\n",
+         worst, worst_time, column / 1e16);
+  /* between the maps the date, a double MJD of resolution 7e-12 day, rotates them by 2.6e-9
+   * degree: 1e-12 of this steep field */
+  MT_CHECK(worst < 1e-14 && worst_time < 5e-12);
+  myb_ionex_destroy(maps);
+  /* a height off the grid */
+  char* bad = malloc(size + 1);
+  MT_CHECK(bad != NULL);
+  if (bad != NULL) {
+    memcpy(bad, text, size);
+    bad[size] = '\0';
+    char* record = strstr(bad, "   5.0-180.0 180.0  30.0 300.0");
+    MT_CHECK(record != NULL);
+    if (record != NULL) {
+      memcpy(record + 25, "350.0", 5);
+      maps = NULL;
+      MT_CHECK(myb_ionex_load(bad, size, NULL, &maps, &diag) == MYB_E_FORMAT && maps == NULL);
+    }
+    free(bad);
+  }
+  /* two-dimensional maps are no grid of densities */
+  free(text);
+  text = read_file(MYB_TEST_DATA_DIR "/ionosphere/synthetic.inx", &size);
+  maps = NULL;
+  MT_CHECK(text != NULL && myb_ionex_load(text, size, NULL, &maps, &diag) == MYB_OK);
+  if (maps != NULL) {
+    MT_CHECK(myb_ionex_dimension(maps) == 2);
+    MT_CHECK(myb_ionex_density_grid(maps, &grid) == MYB_E_DOMAIN);
+    myb_ionex_destroy(maps);
+  }
+  free(text);
+}
+
 static void test_pierce_point(void) {
   const double r = 6371000.0;
   const double h = 450000.0;
@@ -456,6 +586,7 @@ static void test_orders(void) {
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_ionex();
+  test_ionex_3d();
   test_orders();
   test_pierce_point();
   return mt_finish("test_ionosphere");

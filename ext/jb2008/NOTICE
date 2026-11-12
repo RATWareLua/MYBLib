@@ -1,0 +1,25 @@
+JB2008 in myb (ext/jb2008)
+
+This module is a clean implementation of the Jacchia-Bowman 2008 model of the thermosphere,
+written from the published papers:
+
+  B. R. Bowman, W. K. Tobiska, F. A. Marcos, C. Y. Huang, C. S. Lin, W. J. Burke, "A New
+  Empirical Thermospheric Density Model JB2008 Using New Solar and Geomagnetic Indices",
+  AIAA 2008-6438;
+  B. R. Bowman, W. K. Tobiska, F. A. Marcos, C. Valladares, "The JB2006 empirical
+  thermospheric density model", J. Atmos. Solar-Terr. Phys. 70, 774-793 (2008);
+  L. G. Jacchia, "New Static Models of the Thermosphere and Exosphere with Empirical Temperature
+  Profiles", SAO Special Report 313 (1970), and "Revised Static Models of the Thermosphere and
+  Exosphere with Empirical Temperature Profiles", SAO Special Report 332 (1971).
+
+It contains no code of the JB2008 program of Space Environment Technologies (SpaceWx), whose
+licence forbids modifying or translating that program. The choices the papers leave open were
+settled by running that program unchanged, as a black box, under its licence, and comparing its
+outputs; its source was not read beyond the description of its arguments. The comparison and
+its numbers are in docs/PLAN.en.md (phase 22).
+
+The files of indices (SOLFSMY.TXT, DTCFILE.TXT) belong to SET and are not part of myb; obtain
+them from SET under their terms. This module reads them by their published formats.
+
+The module is under myb's BSD-3-Clause licence. It is not endorsed by, nor affiliated with,
+Space Environment Technologies or the authors of the model.

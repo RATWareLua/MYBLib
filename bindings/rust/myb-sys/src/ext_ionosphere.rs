@@ -38,6 +38,9 @@ unsafe extern "C" {
     pub fn myb_ionex_shell(maps: *const myb_ionex, radius: *mut f64, height: *mut f64);
 }
 unsafe extern "C" {
+    pub fn myb_ionex_dimension(maps: *const myb_ionex) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
     pub fn myb_ionex_vtec(
         maps: *const myb_ionex,
         mjd: f64,
@@ -111,6 +114,9 @@ unsafe extern "C" {
         r: *const f64,
         density: *mut f64,
     ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_ionex_density_grid(maps: *const myb_ionex, grid: *mut myb_iono_grid) -> myb_status;
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]

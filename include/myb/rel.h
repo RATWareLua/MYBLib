@@ -129,9 +129,25 @@ MYB_API double myb_rel_proper_time_rate(double c, double v2, double potential);
  *        physics — gauge-invariant quantities such as Omega_phi / Omega_r do not depend on it),
  *   A7/2, B7/2: radiation reaction at the first relative order (Iyer & Will 1993-1995 in the
  *        harmonic gauge),
- * the terms of order k divided by c^(2k). Not included: the 4PN terms (with the hereditary tail
- * integral) and beyond. In general relativity only (beta = gamma = 1). The 1PN part is the
- * two-body limit of the EIH equations (myb/dyn.h).
+ *   A4, B4: the instantaneous 4PN terms (L. Bernard, L. Blanchet, A. Bohe, G. Faye, S. Marsat,
+ *        Phys. Rev. D 97, 044037, 2018, eqs. 2.2-2.4: quartic in nu, with pi^2 and the
+ *        logarithms of the two gauge constants r'_0, r''_0, here both r0, i.e. r'_1 = r'_2 = r0),
+ * the terms of order k divided by c^(2k). At 4PN the conservative dynamics is not local in
+ * time: the gravitational-wave tail adds (same paper, eq. 4.4)
+ *   a_tail = -(4 G^2 m / 5 c^8) x^j Pf_{2r/c} int dt' I6_ij(t') / |t - t'| + (instantaneous
+ *            terms from the time-dependent Hadamard scale 2 r / c),
+ * an integral over the whole orbit of the sixth derivative of the quadrupole I_ij = mu x^<i x^j>.
+ * myb evaluates it on the osculating Newtonian orbit through the current state (the error of
+ * that is 5PN), as the Fourier series of eq. 4.13 in the mean anomaly: exact for circular orbits
+ * (it gives Omega^2 its term (128/5) nu gamma^4 [ln(16 gamma) + 2 gamma_E + 1/2] G m / r^3,
+ * gamma = G m / (r c^2)) and for eccentric ones to 1e-13 of the tail (to 1e-13 of its periapsis
+ * value where it is much smaller, near the apoapsis of a very eccentric orbit). The dissipative
+ * part of the same tail (eq. 6.2) is the 4PN radiation reaction: on a circular orbit it
+ * multiplies the damping by 1 + 4 pi x^(3/2). Both need a bound osculating orbit with e below
+ * about 0.83 (up to 1024 harmonics, about the square of their number in operations: 25
+ * harmonics and 0.05 ms per evaluation for e = 0.1, 132 and 0.5 ms for e = 0.5, 360 and 3 ms for
+ * e = 0.7, 900 and 18 ms for e = 0.82, on one core of the Windows host). In general relativity
+ * only (beta = gamma = 1). The 1PN part is the two-body limit of the EIH equations (myb/dyn.h).
  *
  * Spins (Kidder 1995, eq. 2.2c, 2.2e, 2.4; covariant spin supplementary condition) enter as
  * dimensionless vectors chi_A = c S_A / (G m_A^2) (|chi| <= 1 for black holes):
@@ -147,18 +163,37 @@ MYB_API double myb_rel_proper_time_rate(double c, double v2, double potential);
  *   Omega_1 = (G / (c^2 r^3)) { (2 + 3 m2 / (2 m1)) mu x x v - S2 + 3 (n.S2) n
  *             + 3 kappa_1 (m2 / m1) (n.S1) n }   (and 1 <-> 2),
  * so |chi_A| is constant. The first term is the geodetic precession (Barker & O'Connell 1975):
- * averaged over an orbit, (2 + 3 m2 / (2 m1)) G mu n_orbit / (c^2 a (1 - e^2)). Not included:
- * the spin-orbit terms of higher order (2.5PN and beyond), radiation reaction by the spins. */
+ * averaged over an orbit, (2 + 3 m2 / (2 m1)) G mu n_orbit / (c^2 a (1 - e^2)).
+ *
+ * The spin-orbit terms of higher order (A. Bohe, S. Marsat, G. Faye, L. Blanchet, Class. Quantum
+ * Grav. 30, 075017, 2013, eqs. 3.5 and 3.8-3.10, centre-of-mass frame, for the spin variables
+ * of conserved norm used here; the leading order of that paper is Kidder's above): the
+ * acceleration at next-to-leading order (1/c^5 with S = c S_true; 2.5PN for maximal spins) and
+ * at next-to-next-to-leading order (1/c^7, 3.5PN), each with its correction of the precession,
+ *   Omega_1 += (n x v) [alpha_2PN / c^4 + alpha_3PN / c^6]   (Omega_2: m1 <-> m2),
+ * polynomials in n.v, v^2, G m / r, nu and (m1 - m2) / m. The spin-orbit radiation reaction
+ * (C. M. Will, Phys. Rev. D 71, 084027, 2005, eq. B3b, harmonic gauge, covariant spin
+ * supplementary condition), 1/c^8, at the leading order: with the Burke-Thorne term of A5/2,
+ * B5/2 it loses the energy and angular momentum of Kidder's spin-orbit fluxes (on a circular
+ * orbit dE/dt has the factor 1 + x^(3/2) (-4 S_l - 5/4 (dm/m) Sigma_l) / (G m^2)); it leaves the
+ * spins alone (Will, eq. 1.6: radiation reaction moves neither their norm nor their direction at
+ * this order). Not included: the spin-orbit tail and the higher spin-orbit radiation reaction,
+ * the spin-spin terms beyond the leading order. */
 
 enum {
-  MYB_PN_1 = 1,    /* 1PN, conservative */
-  MYB_PN_2 = 2,    /* 2PN, conservative */
-  MYB_PN_25 = 4,   /* 2.5PN, radiation reaction */
-  MYB_PN_3 = 8,    /* 3PN, conservative (needs the gauge length r0) */
-  MYB_PN_35 = 16,  /* 3.5PN, radiation reaction */
-  MYB_PN_SO = 32,  /* spin-orbit coupling and geodetic precession of the spins */
-  MYB_PN_SS = 64,  /* spin-spin coupling and spin-induced quadrupoles, with their precession */
-  MYB_PN_ALL = 127 /* every term above */
+  MYB_PN_1 = 1,       /* 1PN, conservative */
+  MYB_PN_2 = 2,       /* 2PN, conservative */
+  MYB_PN_25 = 4,      /* 2.5PN, radiation reaction */
+  MYB_PN_3 = 8,       /* 3PN, conservative (needs the gauge length r0) */
+  MYB_PN_35 = 16,     /* 3.5PN, radiation reaction */
+  MYB_PN_SO = 32,     /* spin-orbit coupling and geodetic precession of the spins */
+  MYB_PN_SS = 64,     /* spin-spin coupling and spin-induced quadrupoles, with their precession */
+  MYB_PN_ALL = 127,   /* every term above (the higher terms below are asked for by name) */
+  MYB_PN_4 = 128,     /* 4PN, conservative, with the tail (needs r0 and a bound orbit) */
+  MYB_PN_4RR = 256,   /* 4PN radiation reaction: the dissipative tail (needs a bound orbit) */
+  MYB_PN_SO25 = 512,  /* spin-orbit at next-to-leading order, 2PN precession */
+  MYB_PN_SO35 = 1024, /* spin-orbit at next-to-next-to-leading order, 3PN precession */
+  MYB_PN_SORR = 2048  /* spin-orbit radiation reaction */
 };
 
 typedef struct myb_pn_binary {
@@ -166,7 +201,7 @@ typedef struct myb_pn_binary {
   double gm2;      /* G m2 */
   double c;        /* speed of light (m/s) */
   unsigned orders; /* MYB_PN_* terms added to the Newtonian acceleration */
-  double r0;       /* gauge length r0' of the 3PN logarithms (m, > 0; needed with MYB_PN_3) */
+  double r0;       /* gauge length r0' of the logarithms (m, > 0; with MYB_PN_3, MYB_PN_4) */
   double kappa1;   /* spin-induced quadrupole constants (>= 0; 0 omits the quadrupoles) */
   double kappa2;
 } myb_pn_binary;
@@ -174,16 +209,17 @@ typedef struct myb_pn_binary {
 /* Relative acceleration a (m/s^2) of body 1 with respect to body 2 for the relative position x
  * (m) and velocity v (m/s), and the rates (1/s) of the dimensionless spins chi1, chi2. chi1,
  * chi2 may be NULL (no spin); dchi1, dchi2 may be NULL (not wanted). Errors: MYB_E_DOMAIN
- * (r = 0, gm1 or gm2 <= 0, c <= 0, non-finite input, unknown bits in orders, MYB_PN_3 without
- * r0 > 0, MYB_PN_SS with a negative kappa). */
+ * (r = 0, gm1 or gm2 <= 0, c <= 0, non-finite input, unknown bits in orders, MYB_PN_3 or
+ * MYB_PN_4 without r0 > 0, MYB_PN_SS with a negative kappa, MYB_PN_4 or MYB_PN_4RR when the
+ * osculating Newtonian orbit is unbound or has e above about 0.83). */
 MYB_API MYB_NODISCARD myb_status myb_pn_binary_evaluate(const myb_pn_binary* binary,
                                                         const double x[3], const double v[3],
                                                         const double chi1[3],
                                                         const double chi2[3], double a[3],
                                                         double dchi1[3], double dchi2[3]);
 
-/* The same without spins and without the 3PN terms (which need r0): myb_pn_binary_evaluate
- * with r0 unset. Errors: those of myb_pn_binary_evaluate. */
+/* The same without spins and without the 3PN and 4PN terms (which need r0):
+ * myb_pn_binary_evaluate with r0 unset. Errors: those of myb_pn_binary_evaluate. */
 MYB_API MYB_NODISCARD myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c,
                                                             unsigned orders, const double x[3],
                                                             const double v[3], double a[3]);

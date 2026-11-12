@@ -55,22 +55,32 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_iono_pierce_point(double latitude, doub
 
 typedef struct myb_ionex myb_ionex;
 
-/* Reads the two-dimensional TEC maps of an IONEX file (text of `size` bytes; RMS and height maps
- * are skipped). Errors: MYB_E_FORMAT (with the line in diag), MYB_E_NOMEM, MYB_E_DOMAIN
- * (three-dimensional maps). */
+/* Reads the TEC maps of an IONEX file (text of `size` bytes; RMS and height maps are skipped):
+ * two-dimensional, or three-dimensional (MAP DIMENSION 3: a map for each height of HGT1 /
+ * HGT2 / DHGT, the height in each LAT/LON1/LON2/DLON/H record; an EXPONENT holds until the
+ * next one). The values of three-dimensional maps are the densities at the nodes times DHGT
+ * (IONEX 1.0, table 2): the reader keeps the densities, value / DHGT. Errors: MYB_E_FORMAT
+ * (with the line in diag; a dimension other than 2 and 3, a height off the grid),
+ * MYB_E_NOMEM. */
 MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_load(const char* text, size_t size,
                                                 const myb_allocator* allocator,
                                                 myb_ionex** maps, myb_diag* diag);
 MYB_EXT_API void myb_ionex_destroy(myb_ionex* maps); /* NULL is allowed */
 
-/* Base radius and shell height of the maps (m). */
+/* Base radius and shell height of the maps (m); for three-dimensional maps the height is HGT1,
+ * the lowest of the grid. */
 MYB_EXT_API void myb_ionex_shell(const myb_ionex* maps, double* radius, double* height);
+
+/* The dimension of the maps: 2 or 3. */
+MYB_EXT_API int myb_ionex_dimension(const myb_ionex* maps);
 
 /* Vertical total electron content (electrons/m^2) at the modified Julian date (UT), geodetic
  * latitude and longitude of the shell: bilinear in latitude and longitude, linear in time
  * between the maps rotated with the Sun (the recommended interpolation of the IONEX
- * description, eq. 3: E_i at longitude + (t - T_i) 360 deg / day). Errors: MYB_E_RANGE (time
- * outside the maps, latitude outside the grid, a missing value of the map). */
+ * description, eq. 3: E_i at longitude + (t - T_i) 360 deg / day). Of three-dimensional maps
+ * the content of the column: the sum over the heights of density times DHGT, as the file
+ * gives it. Errors: MYB_E_RANGE (time outside the maps, latitude outside the grid, a missing
+ * value of the map). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
                                                 double latitude, double longitude, double* vtec);
 
@@ -102,16 +112,19 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_iono_layer_density(void* layer, double 
  * (rad), the height above a sphere (m) and at given epochs — three-dimensional maps, in
  * arrays of the caller: linear between the eight nodes around the place and between the two
  * epochs around the date, each rotated with the Sun as the maps of myb_ionex_vtec; nothing
- * below the lowest and above the highest node. myb_iono_grid_density is a
- * myb_electron_density (context: const myb_iono_grid*). Errors: MYB_E_RANGE (the date or the
- * latitude outside the grid), MYB_E_DOMAIN (a grid that is none). */
+ * below the lowest and above the highest node. The grid goes round the body when its
+ * longitudes span a turn, or a turn and a step with the last column the first again (the
+ * global maps of IONEX). myb_iono_grid_density is a myb_electron_density (context: const
+ * myb_iono_grid*). Errors: MYB_E_RANGE (the date or the latitude outside the grid, a node
+ * around the place that is not a number — a missing value), MYB_E_DOMAIN (a grid that is
+ * none). */
 typedef struct myb_iono_grid {
   double radius;         /* of the sphere the heights are counted from, m */
   double latitude;       /* of the first node, and the step (either sign) */
   double latitude_step;
   int latitudes;         /* >= 2 */
   double longitude;
-  double longitude_step; /* > 0; the grid goes round when longitudes * step is a turn */
+  double longitude_step; /* > 0 */
   int longitudes;        /* >= 2 */
   double height;
   double height_step;    /* > 0 */
@@ -123,6 +136,12 @@ typedef struct myb_iono_grid {
 
 MYB_EXT_API MYB_NODISCARD myb_status myb_iono_grid_density(void* grid, double mjd,
                                                        const double r[3], double* density);
+
+/* The three-dimensional maps of an IONEX file as a grid of densities: the grid points into the
+ * maps and serves as long as they live. Errors: MYB_E_DOMAIN (two-dimensional maps, or
+ * longitudes that fall). */
+MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_density_grid(const myb_ionex* maps,
+                                                        myb_iono_grid* grid);
 
 /* ---- The integrals along a ray and the orders of the delay ---------------------------------- */
 

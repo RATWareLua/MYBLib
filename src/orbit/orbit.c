@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/* Propagation of one object under a force model: IAS15 with its own steps, every state from
- * the dense output of the step that contains its time.
+/* Propagation of one object under a force model: IAS15 (or DOP853, or RKN12) with its own
+ * steps, every state from the dense output of the step that contains its time.
  *
  * Breaks of the model (myb_force_model_add_break): after a step the break functions are
  * examined on its dense output as events are. A step that contains a sign change is
@@ -33,8 +33,9 @@ struct myb_orbit {
   myb_force_model* model;
   myb_ias15* ias;       /* without the variational equations */
   myb_variational* var; /* with them */
-  myb_dop853* dop;      /* the other integrator */
-  int approaching;      /* DOP853: a step that held a break is being redone up to it */
+  myb_dop853* dop;      /* the other integrators: of one step each */
+  myb_rkn12* rkn;
+  int approaching;      /* DOP853, RKN12: a step that held a break is being redone up to it */
   double break_time;
   int64_t max_steps;
   int started;
@@ -69,6 +70,7 @@ void myb_orbit_destroy(myb_orbit* orbit) {
   myb_ias15_destroy(orbit->ias);
   myb_variational_destroy(orbit->var);
   myb_dop853_destroy(orbit->dop);
+  myb_rkn12_destroy(orbit->rkn);
   myb_internal_release(&a, orbit->wide_start);
   myb_internal_release(&a, orbit);
 }
@@ -81,7 +83,9 @@ myb_status myb_orbit_create(myb_force_model* model, const myb_orbit_options* opt
   if (!(opt->epsilon >= 0.0) || !(opt->h_max >= 0.0) || opt->max_steps < 0 ||
       !isfinite(opt->epsilon) || !isfinite(opt->h_max) || !(opt->rtol >= 0.0) ||
       !(opt->atol >= 0.0) || !isfinite(opt->rtol) || !isfinite(opt->atol) ||
-      (opt->integrator != MYB_ORBIT_IAS15 && opt->integrator != MYB_ORBIT_DOP853)) {
+      (opt->integrator != MYB_ORBIT_IAS15 && opt->integrator != MYB_ORBIT_DOP853 &&
+       opt->integrator != MYB_ORBIT_RKN12) ||
+      (opt->integrator == MYB_ORBIT_RKN12 && opt->variational)) {
     return MYB_E_DOMAIN;
   }
   const myb_allocator a = myb_internal_allocator(allocator);
@@ -116,6 +120,12 @@ myb_status myb_orbit_create(myb_force_model* model, const myb_orbit_options* opt
     if (status == MYB_OK) {
       status = myb_dop853_create(n, &options853, allocator, &o->dop);
     }
+  } else if (opt->integrator == MYB_ORBIT_RKN12) {
+    const myb_rkn12_options options12 = {.rtol = opt->rtol > 0.0 ? opt->rtol : 1e-12,
+                                         .atol = opt->atol > 0.0 ? opt->atol : 1e-9,
+                                         .h_max = opt->h_max,
+                                         .interpolant = 1};
+    status = myb_rkn12_create(3, &options12, allocator, &o->rkn);
   } else if (opt->variational) {
     const myb_variational_options vo = {.epsilon = epsilon, .h_max = opt->h_max};
     status = myb_variational_create(model, &vo, allocator, &o->var);
@@ -194,12 +204,35 @@ static void unpack_wide(const myb_orbit* o, const double* wide, double y[6], dou
   }
 }
 
+/* The acceleration for RKN12 (context = the model): the terms do not depend on the velocity
+ * (checked at the start), so it is not known and not needed. */
+static myb_status position_only(void* model, double t, const double* x, double* a) {
+  static const double unused[3] = {0.0, 0.0, 0.0};
+  return myb_force_model_acceleration(model, t, x, unused, a);
+}
+
 /* (Re)starts DOP853 from o->wide_start, or from the six numbers y without the variations. */
 static myb_status start_dop853(myb_orbit* o, double t, const double* y) {
+  if (o->rkn != NULL) {
+    return myb_rkn12_start(o->rkn, position_only, o->model, t, y);
+  }
   if (o->wide == 0) {
     return myb_dop853_start(o->dop, first_order, o->model, t, y);
   }
   return myb_dop853_start(o->dop, first_order_wide, o, t, o->wide_start);
+}
+
+/* The integrators of one step (DOP853, RKN12) through one door. */
+static myb_status single_step(myb_orbit* o, double t_limit) {
+  return o->rkn != NULL ? myb_rkn12_step(o->rkn, t_limit) : myb_dop853_step(o->dop, t_limit);
+}
+
+static double single_time(const myb_orbit* o) {
+  return o->rkn != NULL ? myb_rkn12_time(o->rkn) : myb_dop853_time(o->dop);
+}
+
+static const double* single_state(const myb_orbit* o) {
+  return o->rkn != NULL ? myb_rkn12_state(o->rkn) : myb_dop853_state(o->dop);
 }
 
 static signed char sign_of(double g) {
@@ -218,6 +251,9 @@ myb_status myb_orbit_start(myb_orbit* orbit, double t0, const double y0[6], doub
       return MYB_E_DOMAIN;
     }
   }
+  if (o->rkn != NULL && !myb_force_model_position_only(o->model)) {
+    return MYB_E_DOMAIN;
+  }
   if (o->wide != 0) { /* the state, the unit matrix, no sensitivity yet */
     memset(o->wide_start, 0, o->wide * sizeof(double));
     memcpy(o->wide_start, y0, 6 * sizeof(double));
@@ -226,9 +262,9 @@ myb_status myb_orbit_start(myb_orbit* orbit, double t0, const double y0[6], doub
     }
   }
   const myb_status status =
-      o->dop != NULL   ? start_dop853(o, t0, y0)
-      : o->var != NULL ? myb_variational_start(o->var, t0, y0)
-                       : myb_ias15_start(o->ias, myb_force_model_accel, o->model, t0, y0);
+      o->dop != NULL || o->rkn != NULL ? start_dop853(o, t0, y0)
+      : o->var != NULL                 ? myb_variational_start(o->var, t0, y0)
+                                       : myb_ias15_start(o->ias, myb_force_model_accel, o->model, t0, y0);
   if (status != MYB_OK) {
     return status;
   }
@@ -269,8 +305,8 @@ int64_t myb_orbit_breaks(const myb_orbit* orbit) {
 }
 
 static double integrator_time(const myb_orbit* o) {
-  if (o->dop != NULL) {
-    return myb_dop853_time(o->dop);
+  if (o->dop != NULL || o->rkn != NULL) {
+    return single_time(o);
   }
   return o->var != NULL ? myb_variational_time(o->var) : myb_ias15_time(o->ias);
 }
@@ -290,6 +326,9 @@ static myb_status dense(myb_orbit* o, double t, double y[6]) {
   }
   if (o->dop != NULL) {
     return myb_dop853_dense(o->dop, t, y);
+  }
+  if (o->rkn != NULL) {
+    return myb_rkn12_dense(o->rkn, t, y);
   }
   return o->var != NULL ? myb_variational_dense(o->var, t, y, NULL, NULL)
                         : myb_ias15_dense(o->ias, t, y);
@@ -362,23 +401,23 @@ static myb_status first_break(myb_orbit* o, size_t count, double ta, const doubl
   return MYB_OK;
 }
 
-/* The same for DOP853. A method of one step has nothing to carry over: the step that held a
- * break is taken again from its beginning — in as many steps as the integrator likes — up to
- * the break, and the next one starts there. */
+/* The same for DOP853 and RKN12. A method of one step has nothing to carry over: the step that
+ * held a break is taken again from its beginning — in as many steps as the integrator likes —
+ * up to the break, and the next one starts there. */
 static myb_status advance_dop853(myb_orbit* o) {
   const size_t count = o->approaching ? 0 : myb_force_model_break_count(o->model);
-  const double before = myb_dop853_time(o->dop);
+  const double before = single_time(o);
   if (count > 0) {
-    memcpy(o->y_begin, myb_dop853_state(o->dop), sizeof o->y_begin);
+    memcpy(o->y_begin, single_state(o), sizeof o->y_begin);
     if (o->wide != 0) {
       memcpy(o->wide_begin, myb_dop853_state(o->dop), o->wide * sizeof(double));
     }
   }
-  myb_status status = myb_dop853_step(o->dop, o->approaching ? o->break_time : o->t_end);
+  myb_status status = single_step(o, o->approaching ? o->break_time : o->t_end);
   if (status != MYB_OK) {
     return status;
   }
-  double after = myb_dop853_time(o->dop);
+  double after = single_time(o);
   if (after == before) {
     return MYB_OK;
   }
@@ -409,12 +448,12 @@ static myb_status advance_dop853(myb_orbit* o) {
   }
   status = start_dop853(o, before, o->y_begin);
   if (status == MYB_OK) {
-    status = myb_dop853_step(o->dop, t_break);
+    status = single_step(o, t_break);
   }
   if (status != MYB_OK) {
     return status;
   }
-  after = myb_dop853_time(o->dop);
+  after = single_time(o);
   o->step_end = after;
   o->have_step = 1;
   o->approaching = after != t_break;
@@ -424,7 +463,7 @@ static myb_status advance_dop853(myb_orbit* o) {
 
 /* One step of the integrator towards t_end, ended at the first break of the model in it. */
 static myb_status advance(myb_orbit* o) {
-  if (o->dop != NULL) {
+  if (o->dop != NULL || o->rkn != NULL) {
     return advance_dop853(o);
   }
   const size_t count = myb_force_model_break_count(o->model);
@@ -608,7 +647,7 @@ myb_status myb_orbit_kick(myb_orbit* orbit, const double dv[3]) {
       }
       memcpy(o->wide_start, y, 6 * sizeof(double));
     }
-    status = o->dop != NULL
+    status = o->dop != NULL || o->rkn != NULL
                  ? start_dop853(o, t, y)
                  : myb_ias15_start(o->ias, myb_force_model_accel, o->model, t, y);
     o->approaching = 0;

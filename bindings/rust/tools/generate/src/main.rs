@@ -61,7 +61,7 @@ fn main() -> ExitCode {
     };
     let source = root.join("bindings/rust/myb-sys/src");
     let mut files = vec![("bindings.rs".to_string(), core(&root))];
-    for name in ["ionosphere", "nrlmsise00", "sgp4", "troposphere"] {
+    for name in ["ionosphere", "jb2008", "nrlmsise00", "sgp4", "troposphere"] {
         files.push((format!("ext_{name}.rs"), extension(&root, name)));
     }
     let mut stale = Vec::new();

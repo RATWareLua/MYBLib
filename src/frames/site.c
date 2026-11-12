@@ -661,6 +661,90 @@ myb_status myb_ocean_loading_load_file(const myb_site_tides* tides, const char* 
   return loaded;
 }
 
+/* ---- The load of the atmospheric tides ------------------------------------------------------ */
+
+myb_status myb_site_atmosphere_load(const char* text, size_t size, const char* site,
+                                    double coefficients[12], myb_diag* diag) {
+  MYB_CHECK((text != NULL || size == 0) && site != NULL && coefficients != NULL);
+  myb_internal_diag_clear(diag);
+  double rows[3][4];
+  int row = -1; /* -1: looking for the name; then the rows read */
+  size_t at = 0;
+  long number = 0;
+  const char* line = NULL;
+  size_t length = 0;
+  while (row < 3 && next_line(text, size, &at, &line, &length)) { /* bound: the lines */
+    ++number;
+    if (length == 0 || (length >= 2 && line[0] == '$' && line[1] == '$')) {
+      continue;
+    }
+    if (row < 0) {
+      size_t word = 0;
+      while (word < length && line[word] != ' ' && line[word] != '\t') { /* bound: the line */
+        ++word;
+      }
+      if (!same_word(line, word, site)) {
+        continue;
+      }
+      if (word == length) {
+        row = 0; /* the name on its line: three rows follow */
+        continue;
+      }
+      /* the name and 18 numbers: radial, east, north of S1, S2, S3 */
+      double numbers[18];
+      if (line_numbers(line + word, length - word, numbers, 18) != 18) {
+        myb_internal_diag(diag, number, "expected the name and 18 numbers of the point '%s'",
+                          site);
+        return MYB_E_FORMAT;
+      }
+      for (int c = 0; c < 3; ++c) {
+        for (int k = 0; k < 4; ++k) {
+          coefficients[4 * c + k] = 1e-3 * numbers[6 * c + k];
+        }
+      }
+      return MYB_OK;
+    }
+    if (line_numbers(line, length, rows[row], 4) != 4) {
+      myb_internal_diag(diag, number, "expected 4 numbers of the point '%s'", site);
+      return MYB_E_FORMAT;
+    }
+    ++row;
+  }
+  if (row < 0) {
+    myb_internal_diag(diag, 0, "no point '%s'", site);
+    return MYB_E_NOT_FOUND;
+  }
+  if (row < 3) {
+    myb_internal_diag(diag, number, "the record of '%s' ends after %d of 3 rows", site, row);
+    return MYB_E_FORMAT;
+  }
+  /* radial, north-south, east-west -> up, east, north; millimetres -> metres */
+  static const int from[3] = {0, 2, 1};
+  for (int c = 0; c < 3; ++c) {
+    for (int k = 0; k < 4; ++k) {
+      coefficients[4 * c + k] = 1e-3 * rows[from[c]][k];
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status myb_site_atmosphere_load_file(const char* path, const char* site,
+                                         double coefficients[12], myb_diag* diag) {
+  MYB_CHECK(path != NULL);
+  myb_internal_diag_clear(diag);
+  const myb_allocator a = myb_internal_allocator(NULL);
+  myb_platform_mapping map = {0};
+  const myb_status status = myb_platform_map_file(path, &a, &map);
+  if (status != MYB_OK) {
+    myb_internal_diag(diag, 0, "cannot map '%s'", path);
+    return status;
+  }
+  const myb_status loaded =
+      myb_site_atmosphere_load((const char*)map.data, map.size, site, coefficients, diag);
+  myb_platform_unmap_file(&map);
+  return loaded;
+}
+
 /* ---- A grid of coefficients ------------------------------------------------------------------ */
 
 void myb_site_grid_destroy(myb_site_grid* grid) {
@@ -793,6 +877,139 @@ myb_status myb_site_grid_load_file(const char* path, const myb_allocator* alloca
   }
   const myb_status loaded =
       myb_site_grid_load((const char*)map.data, map.size, allocator, grid, diag);
+  myb_platform_unmap_file(&map);
+  return loaded;
+}
+
+/* ---- The grid of the atmospheric tides -------------------------------------------------------- */
+
+/* latitude, longitude, then (radial, east, north) x (S1, S2, S3) x (cos, sin) */
+enum { TIDAL_COLUMNS = 20 };
+
+static myb_status tidal_rows(const char* text, size_t size, myb_site_grid* g, myb_diag* diag) {
+  size_t at = 0;
+  long number = 0;
+  const char* line = NULL;
+  size_t length = 0;
+  double row[TIDAL_COLUMNS];
+  size_t node = 0;
+  const size_t nodes = g->longitudes * g->latitudes;
+  while (node < nodes && next_line(text, size, &at, &line, &length)) { /* bound: the lines */
+    ++number;
+    if (length == 0) {
+      continue;
+    }
+    if (line_numbers(line, length, row, TIDAL_COLUMNS) != TIDAL_COLUMNS) {
+      myb_internal_diag(diag, number, "expected %d numbers", (int)TIDAL_COLUMNS);
+      return MYB_E_FORMAT;
+    }
+    const double latitude = g->first_latitude + (double)(node / g->longitudes) * g->latitude_step;
+    const double longitude =
+        g->first_longitude + (double)(node % g->longitudes) * g->longitude_step;
+    if (fabs(row[0] - latitude) > 1e-6 || fabs(row[1] - longitude) > 1e-6) {
+      myb_internal_diag(diag, number, "a row that is not the next node of the grid");
+      return MYB_E_FORMAT;
+    }
+    double* values = g->data + node * g->values;
+    for (int c = 0; c < 3; ++c) { /* millimetres -> metres; S3 left */
+      for (int k = 0; k < 4; ++k) {
+        values[4 * c + k] = 1e-3 * row[2 + 6 * c + k];
+      }
+    }
+    ++node;
+  }
+  return MYB_OK;
+}
+
+myb_status myb_site_atmosphere_grid_load(const char* text, size_t size,
+                                         const myb_allocator* allocator, myb_site_grid** grid,
+                                         myb_diag* diag) {
+  MYB_CHECK((text != NULL || size == 0) && grid != NULL);
+  myb_internal_diag_clear(diag);
+  /* the shape: the first two rows give the longitude step, the first row of another
+   * latitude the count of longitudes and the latitude step */
+  size_t at = 0;
+  long number = 0;
+  const char* line = NULL;
+  size_t length = 0;
+  double row[TIDAL_COLUMNS];
+  double first[2] = {0.0, 0.0};
+  double second_longitude = 0.0;
+  double second_latitude = 0.0;
+  size_t rows = 0;
+  size_t longitudes = 0;
+  while (next_line(text, size, &at, &line, &length)) { /* bound: the lines */
+    ++number;
+    if (length == 0) {
+      continue;
+    }
+    if (line_numbers(line, length, row, TIDAL_COLUMNS) != TIDAL_COLUMNS) {
+      myb_internal_diag(diag, number, "expected %d numbers", (int)TIDAL_COLUMNS);
+      return MYB_E_FORMAT;
+    }
+    if (rows == 0) {
+      first[0] = row[0];
+      first[1] = row[1];
+    } else if (rows == 1) {
+      second_longitude = row[1];
+    }
+    if (longitudes == 0 && rows > 0 && row[0] != first[0]) {
+      longitudes = rows;
+      second_latitude = row[0];
+    }
+    ++rows;
+  }
+  if (longitudes < 2 || rows % longitudes != 0 || rows / longitudes > 100000 ||
+      longitudes > 100000 || !(second_longitude > first[1]) ||
+      !(second_latitude != first[0])) {
+    myb_internal_diag(diag, number, "the rows do not make a grid");
+    return MYB_E_FORMAT;
+  }
+  const myb_allocator a = myb_internal_allocator(allocator);
+  void* block = NULL;
+  myb_status status = myb_internal_alloc_array(&a, 1, sizeof(myb_site_grid), &block);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_site_grid* g = block;
+  memset(g, 0, sizeof *g);
+  g->allocator = a;
+  g->longitudes = longitudes;
+  g->latitudes = rows / longitudes;
+  g->values = 12;
+  g->first_latitude = first[0];
+  g->first_longitude = first[1];
+  g->longitude_step = second_longitude - first[1];
+  g->latitude_step = second_latitude - first[0];
+  g->round = fabs((double)longitudes * g->longitude_step - 360.0) < 1e-6 * g->longitude_step;
+  status = myb_internal_alloc_array(&a, rows * g->values, sizeof(double), &block);
+  if (status != MYB_OK) {
+    myb_site_grid_destroy(g);
+    return status;
+  }
+  g->data = block;
+  status = tidal_rows(text, size, g, diag);
+  if (status != MYB_OK) {
+    myb_site_grid_destroy(g);
+    return status;
+  }
+  *grid = g;
+  return MYB_OK;
+}
+
+myb_status myb_site_atmosphere_grid_load_file(const char* path, const myb_allocator* allocator,
+                                              myb_site_grid** grid, myb_diag* diag) {
+  MYB_CHECK(path != NULL && grid != NULL);
+  myb_internal_diag_clear(diag);
+  const myb_allocator a = myb_internal_allocator(allocator);
+  myb_platform_mapping map = {0};
+  const myb_status status = myb_platform_map_file(path, &a, &map);
+  if (status != MYB_OK) {
+    myb_internal_diag(diag, 0, "cannot map '%s'", path);
+    return status;
+  }
+  const myb_status loaded =
+      myb_site_atmosphere_grid_load((const char*)map.data, map.size, allocator, grid, diag);
   myb_platform_unmap_file(&map);
   return loaded;
 }

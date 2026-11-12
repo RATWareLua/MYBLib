@@ -351,17 +351,48 @@ myb_status myb_measure_offset(void* offset, double t, const double y[6], double*
   MYB_CHECK(o != NULL && o->measure != NULL && o->attitude != NULL && y != NULL &&
             values != NULL);
   static const double half = 0.5; /* s: the attitude a second apart gives its rate */
+  if (!(o->gm >= 0.0) || !isfinite(o->gm)) {
+    return MYB_E_DOMAIN;
+  }
+  /* the acceleration about the point mass and its gradient: a = -gm x / r^3,
+   * da/dx = gm (3 x x^T / r^5 - I / r^3) */
+  double acceleration[3] = {0.0, 0.0, 0.0};
+  double gradient[9] = {0.0};
+  if (o->gm > 0.0) {
+    const double r2 = y[0] * y[0] + y[1] * y[1] + y[2] * y[2];
+    const double r = sqrt(r2);
+    if (!(r > 0.0) || !isfinite(r)) {
+      return MYB_E_DOMAIN;
+    }
+    const double k3 = o->gm / (r2 * r);
+    for (int i = 0; i < 3; ++i) {
+      acceleration[i] = -k3 * y[i];
+      for (int j = 0; j < 3; ++j) {
+        gradient[3 * i + j] = k3 * (3.0 * y[i] * y[j] / r2 - (i == j ? 1.0 : 0.0));
+      }
+    }
+  }
+  /* the states half a second before and after: x -+ v h + a h^2 / 2, v -+ a h */
+  double x_before[3];
+  double x_after[3];
+  double v_before[3];
+  double v_after[3];
+  for (int i = 0; i < 3; ++i) {
+    const double drift = 0.5 * half * half * acceleration[i];
+    x_before[i] = y[i] - half * y[3 + i] + drift;
+    x_after[i] = y[i] + half * y[3 + i] + drift;
+    v_before[i] = y[3 + i] - half * acceleration[i];
+    v_after[i] = y[3 + i] + half * acceleration[i];
+  }
   myb_dual now[3];
   myb_dual before[3];
   myb_dual after[3];
-  const double x_before[3] = {y[0] - half * y[3], y[1] - half * y[4], y[2] - half * y[5]};
-  const double x_after[3] = {y[0] + half * y[3], y[1] + half * y[4], y[2] + half * y[5]};
   myb_status status = offset_at(o, t, y, y + 3, now);
   if (status == MYB_OK) {
-    status = offset_at(o, t - half, x_before, y + 3, before);
+    status = offset_at(o, t - half, x_before, v_before, before);
   }
   if (status == MYB_OK) {
-    status = offset_at(o, t + half, x_after, y + 3, after);
+    status = offset_at(o, t + half, x_after, v_after, after);
   }
   if (status != MYB_OK) {
     return status;
@@ -375,8 +406,9 @@ myb_status myb_measure_offset(void* offset, double t, const double y[6], double*
     return o->measure(o->context, t, point, values, NULL);
   }
   /* d point / d y: the centre of mass, and the offset as the attitude follows the state.
-   * The offsets half a second apart were taken at x -+ v / 2: their derivatives in v have
-   * that part of the derivatives in x */
+   * The offsets half a second apart were taken at the states (x+-, v+-) of the state y:
+   *   d x+- / d x = I + h^2 / 2 A,  d x+- / d v = +-h I,
+   *   d v+- / d x = +-h A,          d v+- / d v = I,  A = da/dx */
   double jacobian[36] = {0.0};
   for (int i = 0; i < 6; ++i) {
     jacobian[7 * i] = 1.0;
@@ -385,9 +417,16 @@ myb_status myb_measure_offset(void* offset, double t, const double y[6], double*
     for (int j = 0; j < 3; ++j) {
       jacobian[6 * i + j] += now[i].d[j];
       jacobian[6 * i + 3 + j] += now[i].d[3 + j];
-      jacobian[6 * (3 + i) + j] += (after[i].d[j] - before[i].d[j]) / (2.0 * half);
-      jacobian[6 * (3 + i) + 3 + j] += (after[i].d[3 + j] - before[i].d[3 + j]) / (2.0 * half) +
-                                       0.5 * (after[i].d[j] + before[i].d[j]);
+      double by_x = 0.0; /* d (after - before) / d x_j */
+      for (int k = 0; k < 3; ++k) {
+        const double carried = (k == j ? 1.0 : 0.0) + 0.5 * half * half * gradient[3 * k + j];
+        by_x += (after[i].d[k] - before[i].d[k]) * carried +
+                (after[i].d[3 + k] + before[i].d[3 + k]) * half * gradient[3 * k + j];
+      }
+      const double by_v = (after[i].d[j] + before[i].d[j]) * half +
+                          (after[i].d[3 + j] - before[i].d[3 + j]);
+      jacobian[6 * (3 + i) + j] += by_x / (2.0 * half);
+      jacobian[6 * (3 + i) + 3 + j] += by_v / (2.0 * half);
     }
   }
   /* the measurement knows how many values it has: its rows are those it wrote */

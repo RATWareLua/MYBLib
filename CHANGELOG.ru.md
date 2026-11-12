@@ -138,6 +138,55 @@
   `myb_iono_grid_density`), члены высших порядков (`myb_iono_orders_of`,
   `myb_iono_phase_delay`, `myb_iono_code_delay`, `myb_iono_bending`).
 - `cmake/FetchData.cmake`: сетка GPT3; большие файлы по `-DLARGE=ON`.
+- Фаза 22. `myb/ck.h`: вычисление CK типов 4, 5, 6 и их запись
+  (`myb_ck_writer_add_chebyshev`, `myb_ck_writer_add_packets`,
+  `myb_ck_writer_add_minisegments`).
+- `myb/site.h`: атмосферная нагрузка S1/S2 из файлов — `myb_site_atmosphere_load`,
+  `_load_file` (GGFC, станции TU Wien), `myb_site_atmosphere_grid_load`, `_grid_load_file`
+  (сетки TU Wien); сетка s1_s2_s3_cm_noib_grid.dat в `cmake/FetchData.cmake`.
+- `ext/ionosphere`: трёхмерные карты IONEX — `myb_ionex_dimension`,
+  `myb_ionex_density_grid`.
+- `ext/jb2008` (новый): JB2008, реализованная по статьям, — `myb_jb2008`, чтение файлов
+  индексов SOLFSMY и DTCFILE (`myb_jb2008_solar_*`, `myb_jb2008_storm_*`) и
+  `myb_jb2008_density` как `myb_density_function`.
+- `myb/iod.h`: `myb_iod_laplace`, `myb_iod_double_r`, `myb_iod_gooding`.
+- `myb/integ.h`: композиции из 7 и 15 стадий (`MYB_SYMPLECTIC_6_S7`,
+  `MYB_SYMPLECTIC_8_S15`); интерполянт шагов RKN12(10) (`myb_rkn12_options.interpolant`).
+- `myb/orbit.h`: `MYB_ORBIT_RKN12` для моделей сил из членов, зависящих только от положения
+  (`myb_force_model_set_position_only`, `myb_force_model_position_only` в `myb/model.h`).
+- `myb/conjunction.h`: вероятность долгого сближения — `myb_collision_rate`,
+  `myb_collision_probability_long`, `myb_conjunction_long`.
+- `myb/force.h`: вторичная эмиссия и тонкий слой в заряжении — `myb_secondary_emission`,
+  `myb_secondary_yield`, `myb_charging_model`, `myb_charging_current_model`,
+  `myb_charging_equilibria`, `myb_debye_length`; вход в атмосферу — `myb_air`,
+  `myb_air_heat_ratio`, `myb_newtonian_cp_max`, `myb_heating_sutton_graves`, `myb_ablation`,
+  `myb_ablation_rate`, `myb_ablation_rhs`, `myb_ablation_mass`.
+- `myb/surface.h`: ньютоновское сплошное обтекание пластин и сеток
+  (`myb_force_newtonian_plates`, `myb_force_newtonian_mesh`, `myb_continuum`); свет в данный
+  момент с тепловой инерцией (`myb_force_radiation_mesh_lagged`).
+- `myb/system.h`: слияния вращающихся тел и тел PN-пар; производные по состоянию и
+  параметрам (`myb_system_partials`); поиск соседей в `myb_system_advance` (те же события,
+  рассматриваются только пары, чьи пути за шаг могут встретиться).
+- `myb/contact.h` (новый): контакт тела с плоскостью, эллипсоидом или сеткой — закон
+  Ханта–Кроссли с гладким трением Кулона (`myb_contact_force`, `myb_contact_surface_nearest`,
+  `myb_contact_restitution`, `myb_contact_damping`), член `myb_term_contact` и зазор
+  `myb_event_contact`; в `myb/system.h` — `myb_system_add_contact`; в `myb/geometry.h` —
+  `myb_polyhedron_nearest`.
+- `myb/meteoroid.h` (новый): случайные удары микрометеороидов по Grün et al. —
+  `myb_meteoroid_flux`, `myb_meteoroid_rate`, `myb_meteoroid_mass`, `myb_meteoroid_next`,
+  `myb_meteoroid_propagate`.
+- `myb/cr3bp.h`: устойчивость и многообразия торов — `myb_cr3bp_torus_stability`,
+  `myb_cr3bp_torus_manifold`; `myb_cr3bp_propagate` с поверхностью сечения.
+- `myb/dyn.h`: быстрый метод мультиполей как приближённый уровень графа —
+  `myb_nbody_set_approximation`, `myb_nbody_approximation` (по умолчанию выключен).
+- `myb/rel.h`: `MYB_PN_4` (4PN с консервативным хвостом), `MYB_PN_4RR` (диссипативный хвост),
+  `MYB_PN_SO25`, `MYB_PN_SO35` (спин-орбитальные члены двух следующих порядков),
+  `MYB_PN_SORR` (спин-орбитальная радиационная реакция); `myb_system_add_pn_pair` их принимает.
+- `myb/optimal.h`: выведение на орбиту со свободной фазой в непрямом методе
+  (`myb_indirect_arrival`, `myb_indirect_problem.arrival`, `phase`); поле модели сил в методе
+  Симса–Фланагана (`myb_sims_flanagan.field`); цепочки участков с пролётами — `myb_chain`,
+  `myb_chain_size`, `myb_chain_guess`, `myb_chain_evaluate`, `myb_chain_solve`;
+  `myb_nlp_options.weight`.
 
 ### Изменено
 - `MYB_TIDES_ALL` включает `MYB_TIDES_ADMITTANCE`: с ядром, где есть таблица адмиттанса, и
@@ -175,6 +224,25 @@
   `static_assert(noexcept(…))`.
 - `myb_orbit` с DOP853 принимает `variational` (раньше — `MYB_E_DOMAIN`): вариации
   интегрируются вместе с состоянием.
+- Фаза 22. Новые поля в конце структур (ноль сохраняет прежнее поведение):
+  `myb_offset_measure.gm`, `myb_system_light.theta`, `spin_axis`, `phases`,
+  `myb_surface_drag_term.continuum`, `myb_rkn12_options.interpolant`; `myb_system_merger.spin`.
+- `myb_system_merge` принимает тела с интегрируемым вращением и тела PN-пар (раньше —
+  `MYB_E_DOMAIN`); `MYB_E_DOMAIN` остаётся для b с интегрируемым вращением при a без него.
+- CK: сегменты типов 4, 5, 6 вычисляются (раньше загружались и пропускались).
+- `myb_ionex_load` читает трёхмерные карты (раньше — `MYB_E_DOMAIN`); `myb_iono_grid`:
+  замкнутые по долготе сетки идут по кругу, пропущенный узел — `MYB_E_RANGE`.
+- `myb_ellipsoid_nearest` больше не возвращает `MYB_E_NOCONV` для точек у самой сферы (шаги
+  Ньютона падали ниже разрешения); прежние значения те же.
+- `myb/myb.h` включает `myb/contact.h` и `myb/meteoroid.h`.
+- `myb_wh_start` отказывает (`MYB_E_DOMAIN`) системе с приближением.
+- `myb_pn_binary.r0` — также калибровочная длина логарифмов 4PN (обе постоянные r′₀ = r″₀).
+- Новые поля в конце структур: `myb_indirect_problem.arrival`, `phase`,
+  `myb_indirect_solution.phase`, `myb_indirect_point.costate`, `myb_sims_flanagan.field`,
+  `myb_nlp_options.weight`.
+- `myb_nlp_solve`: вес штрафа больше не растёт, когда ограничения уже выполнены (результаты
+  прежних тестов те же до бита).
+- `myb/optimal.h` включает `myb/kin.h` и `myb/time.h`.
 
 ## 1.1.0.0 — 2026-11-10 (без тега)
 

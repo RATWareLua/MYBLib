@@ -21,6 +21,8 @@ MYB_IONOSPHERE_1.1 {
 
 MYB_IONOSPHERE_1.2 {
   global:
+    myb_ionex_density_grid;
+    myb_ionex_dimension;
     myb_iono_bending;
     myb_iono_code_delay;
     myb_iono_grid_density;

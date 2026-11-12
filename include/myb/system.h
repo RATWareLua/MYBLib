@@ -24,7 +24,10 @@
  *   guided     a body whose motion is given from outside — an ephemeris — pulls the bodies
  *              of the system as a point mass and is not moved by them
  *              (myb_system_add_guided): the hundreds of small bodies of a planetary
- *              ephemeris, whose motion the planets hardly depend on being integrated with.
+ *              ephemeris, whose motion the planets hardly depend on being integrated with;
+ *   contact    a body touches the surface of another with its contact points — a lander on
+ *              its legs — and is pushed, rubbed and turned (myb_system_add_contact; the law
+ *              of myb/contact.h).
  *
  * The body-fixed frame of a body is either given from outside (myb_system_set_orientation: any
  * provider of myb/frames.h) or integrated (myb_system_set_rotation): a mantle that may hold a
@@ -52,6 +55,7 @@
 
 #include <stddef.h>
 
+#include "myb/contact.h"
 #include "myb/core.h"
 #include "myb/dyn.h"
 #include "myb/frames.h"
@@ -74,7 +78,8 @@ enum {
   MYB_SYSTEM_MAX_DISTORTIONS = 32,
   MYB_SYSTEM_MAX_PN_PAIRS = 16,
   MYB_SYSTEM_MAX_ACTIONS = 64,
-  MYB_SYSTEM_MAX_DRAGS = 64      /* pairs (spinning body, point) */
+  MYB_SYSTEM_MAX_DRAGS = 64,     /* pairs (spinning body, point) */
+  MYB_SYSTEM_MAX_CONTACTS = 16   /* pairs (body, ground) */
 };
 
 /* `bodies` >= 1 massive bodies with gm[0 .. bodies-1] (finite, >= 0). Errors: MYB_E_DOMAIN,
@@ -178,14 +183,17 @@ MYB_API MYB_NODISCARD myb_status myb_system_add_distortion(myb_system* system, s
                                                            size_t raiser);
 
 /* The terms beyond 1PN of two bodies (myb_pn_binary_evaluate of myb/rel.h: `orders` of
- * MYB_PN_2 ... MYB_PN_SS, r0 for MYB_PN_3, kappa for MYB_PN_SS), added to what the point
+ * MYB_PN_2 ... MYB_PN_SORR, r0 for MYB_PN_3 and MYB_PN_4, kappa for MYB_PN_SS; the tails of
+ * MYB_PN_4 and MYB_PN_4RR are those of the pair's own osculating Kepler orbit, which must stay
+ * bound: the integration fails otherwise), added to what the point
  * masses give: the relative acceleration is shared by the masses, a_a += m_b / (m_a + m_b) a,
  * a_b -= m_a / (m_a + m_b) a, which keeps the Newtonian momentum. Ask for MYB_PN_1 only if
  * the point masses do not carry the 1PN terms of this pair already (its level in the
- * myb_nbody is Newtonian): it would be counted twice. With MYB_PN_SO or MYB_PN_SS the two
- * spins are integrated. The speed of light is `c`, or that of myb_nbody_set_relativity when
- * `c` is 0. Errors: MYB_E_DOMAIN (indices, a body without mass, unknown orders, no speed of
- * light, MYB_PN_3 without r0, a negative kappa), MYB_E_OVERFLOW. */
+ * myb_nbody is Newtonian): it would be counted twice. With any spin term (MYB_PN_SO,
+ * MYB_PN_SS, MYB_PN_SO25, MYB_PN_SO35, MYB_PN_SORR) the two spins are integrated. The speed of
+ * light is `c`, or that of myb_nbody_set_relativity when `c` is 0. Errors: MYB_E_DOMAIN
+ * (indices, a body without mass, unknown orders, no speed of light, MYB_PN_3 or MYB_PN_4
+ * without r0, a negative kappa), MYB_E_OVERFLOW. */
 typedef struct myb_system_pn_pair {
   unsigned orders;
   double c;      /* m/s; 0: that of the relativity of the point masses */
@@ -260,8 +268,10 @@ MYB_API size_t myb_system_guided(const myb_system* system);
  * the momentum of the light absorbed included — what turns a body from one instant to the
  * next, where myb_force_yorp gives the mean over a rotation of the re-emitted part alone. The
  * mesh is given in the frame of the body about its centre of mass; the heat is re-emitted at
- * once (surface.thermal), without conduction. An action: pass the structure as the context.
- * Errors: MYB_E_DOMAIN (a body without a frame, invalid values), those of the mesh. */
+ * once (surface.thermal) — or, with theta > 0, later, conducted into the surface as the body
+ * turns about spin_axis (myb_force_radiation_mesh_lagged: the thermal inertia in the torque of
+ * the moment, the rotation taken as steady over a turn). An action: pass the structure as the
+ * context. Errors: MYB_E_DOMAIN (a body without a frame, invalid values), those of the mesh. */
 typedef struct myb_system_light {
   size_t source;               /* the body that shines */
   const myb_polyhedron* shape; /* of the lit body */
@@ -271,12 +281,44 @@ typedef struct myb_system_light {
   double c;                    /* m/s */
   double mass;                 /* of the lit body, kg */
   int shadows;                 /* as myb_force_radiation_mesh */
+  double theta;                /* the thermal parameter at the rotation frequency; 0: at once */
+  double spin_axis[3];         /* with theta > 0: unit, in the frame of the body, the sense of
+                                  the rotation */
+  int phases;                  /* with theta > 0: steps of a turn, 8 .. 256 (0: 64) */
 } myb_system_light;
 
 MYB_API MYB_NODISCARD myb_status myb_system_light_action(void* light, double t,
                                                          const myb_system_view* view,
                                                          double acceleration[3],
                                                          double torque[3]);
+
+/* ---- Contact ----------------------------------------------------------------------------------
+ * `body` touches the surface of `ground` with its contact points (myb_contact_force of
+ * myb/contact.h: the force of Hunt and Crossley, Coulomb's friction made smooth). The surface is
+ * at rest in the frame of the ground, about its centre; the points are in the frame of the
+ * body, about its centre. A body without a frame (neither an orientation nor an integrated
+ * rotation) keeps the axes of the system and does not turn. The body is taken into the frame of
+ * the ground with the rate of that frame — the orientation's dM/dt, or the angular velocity of
+ * an integrated rotation — so that a turning ground carries its surface along, and the friction
+ * acts on the velocity of each point of the body relative to the ground under it. The ground
+ * is pushed back by the ratio of the masses at the same points, so that the momentum and the
+ * angular momentum are kept (a ground of gm 0 is not pushed: its mass counts as infinite
+ * beside the body's); the torques turn the bodies whose rotation is integrated. The surface,
+ * the law and the count are copied; the points must outlive the system. Errors: MYB_E_DOMAIN
+ * (the bodies, the same body twice, an invalid surface, law or point, no points),
+ * MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_CONTACTS). A contact against gravity stalls the steps
+ * of IAS15 (myb/contact.h): integrate such a system with DOP853, myb_system_acceleration as a
+ * system of the first order (x, v)' = (v, a). */
+typedef struct myb_system_contact {
+  myb_contact_surface surface;     /* of the ground, in its frame */
+  myb_contact_law law;             /* per unit mass of the body */
+  const myb_contact_point* points; /* of the body, in its frame */
+  size_t point_count;
+} myb_system_contact;
+
+MYB_API MYB_NODISCARD myb_status myb_system_add_contact(myb_system* system, size_t body,
+                                                        size_t ground,
+                                                        const myb_system_contact* contact);
 
 /* ---- The state ------------------------------------------------------------------------------- */
 
@@ -330,6 +372,26 @@ MYB_API MYB_NODISCARD myb_status myb_system_acceleration(void* system, double t,
 MYB_API MYB_NODISCARD myb_status myb_system_inertia(myb_system* system, size_t body, double t,
                                                     const double* y, double inertia[9]);
 
+/* ---- Derivatives -------------------------------------------------------------------------------
+ * The derivatives of the state at t1 with respect to the state at t0 and to the gravitational
+ * parameters of chosen bodies, for the system with every level it has: by central
+ * differences of whole propagations — an IAS15 integrator of the system (options as
+ * myb_system_integrator) from y0 changed by +-h in one coordinate (h = 1e-6 of the largest
+ * coordinate of its kind — the positions of the bodies, then each rotation's and each pair's
+ * values — or of their rates), or with one gm changed by +-1e-6 of itself. The error is that
+ * of the difference, a part in 10^9 .. 10^11 of a derivative, as long as the motion does
+ * not branch (no encounter between t0 and t1); every column costs two propagations. phi
+ * (2 n x 2 n, row-major: d y1_i / d y0_j, n = myb_system_coordinates) and sensitivity
+ * (2 n x count: d y1_i / d gm_k) may be NULL; y1 (may be NULL) the state at t1. The system
+ * is left as it was. Errors: MYB_E_DOMAIN (t1 == t0, an index or a gm of 0, non-finite
+ * input), MYB_E_NOMEM, the errors of the integration. */
+MYB_API MYB_NODISCARD myb_status myb_system_partials(myb_system* system,
+                                                     const myb_ias15_options* options, double t0,
+                                                     const double* y0, double t1,
+                                                     const size_t* bodies, size_t count,
+                                                     double* y1, double* phi,
+                                                     double* sensitivity);
+
 /* ---- Encounters ------------------------------------------------------------------------------
  * Bodies with a radius (myb_system_set_radius) are spheres that may touch. myb_system_advance
  * steps an IAS15 integrator of the system towards t_end and stops at the first contact — the
@@ -368,20 +430,30 @@ MYB_API MYB_NODISCARD myb_status myb_system_advance(myb_system* system, myb_ias1
 
 /* What a merger takes out of the motion, with G as a factor like the invariants of
  * myb/dyn.h: the energy of the relative motion, G m_a m_b (|v|^2 / (2 (m_a + m_b)) - 1 / |r|),
- * and its angular momentum, G m_a m_b / (m_a + m_b) r x v, for r = x_b - x_a, v = v_b - v_a.
- * They go into heat and spin, which the system does not follow. */
+ * and its angular momentum, G m_a m_b / (m_a + m_b) r x v, for r = x_b - x_a, v = v_b - v_a;
+ * and the spin of what is left: that angular momentum plus the spins the two brought — those
+ * of integrated rotations, G m (I omega) in the inertial axes, and those of a pair beyond
+ * 1PN, chi G^2 m^2 / c. The energy goes into heat, which the system does not follow. */
 typedef struct myb_system_merger {
   double energy;              /* G times the energy of the relative motion (m^5 s^-4) */
   double angular_momentum[3]; /* G times its angular momentum (m^5 s^-3) */
+  double spin[3];             /* G times the angular momentum of the remnant's own spin */
 } myb_system_merger;
 
 /* Merges body b into body a at the current state of the integrator: a takes the mass of both,
  * the position and velocity of their centre of mass (the momentum is kept) and the radius of
  * a sphere of both volumes; it keeps its own model. b is absent from then on: it attracts
  * nothing, feels nothing and its part of the state means nothing. Every level that names b is
- * dropped. The integrator is started again from the new state. Errors: MYB_E_DOMAIN (indices,
- * an absent body, a body whose rotation is integrated or that is part of a PN pair),
- * the errors of myb_ias15_start. */
+ * dropped. If the rotation of a is integrated, a keeps its shape, scaled to the new radius
+ * (its moments per unit mass and the radius of its distortion as the square and the first
+ * power of the ratio of the radii), turns as a rigid whole — the core with the mantle — and
+ * takes the whole spin of the merger (myb_system_merger.spin), so that the total angular
+ * momentum is kept; its attitude stays. (The spin of a body whose rotation is not integrated
+ * is not known and counts as none; the distortions of the inertia are left out of the spins
+ * brought.) A pair beyond 1PN that names a or b ends: its terms stop, and its spins (if
+ * integrated) stay in the state but mean nothing more. The integrator is started again from
+ * the new state. Errors: MYB_E_DOMAIN (indices, an absent body, b with an integrated rotation
+ * and a without — merge the other way), the errors of myb_ias15_start. */
 MYB_API MYB_NODISCARD myb_status myb_system_merge(myb_system* system, myb_ias15* integrator,
                                                   size_t a, size_t b,
                                                   myb_system_merger* merger);

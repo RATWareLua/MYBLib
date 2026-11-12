@@ -339,7 +339,8 @@ myb_status myb_nlp_solve(const myb_nlp_problem* problem, const myb_nlp_options* 
   const myb_nlp_options defaults = {0};
   const myb_nlp_options* o = options != NULL ? options : &defaults;
   if (!problem_valid(problem) || !(o->feasibility >= 0.0) || !(o->optimality >= 0.0) ||
-      o->max_outer < 0 || o->max_inner < 0) {
+      o->max_outer < 0 || o->max_inner < 0 || !(o->weight >= 0.0) ||
+      !(o->weight <= weight_max)) {
     return MYB_E_DOMAIN;
   }
   const size_t n = problem->n;
@@ -382,7 +383,8 @@ myb_status myb_nlp_solve(const myb_nlp_problem* problem, const myb_nlp_options* 
     x[i] = into_box(&s, i, x[i]);
   }
   /* the first weight from the sizes of the objective and of the violation at the start
-   * (E. G. Birgin, J. M. Martinez, Practical Augmented Lagrangian Methods, 2014, §12.4) */
+   * (E. G. Birgin, J. M. Martinez, Practical Augmented Lagrangian Methods, 2014, §12.4),
+   * unless the caller gives it */
   s.weight = 1.0;
   double value = 0.0;
   st = lagrangian(&s, x, &value, NULL);
@@ -392,7 +394,9 @@ myb_status myb_nlp_solve(const myb_nlp_problem* problem, const myb_nlp_options* 
       const double c = i < problem->equalities ? s.c[i] : fmax(s.c[i], 0.0);
       violation += 0.5 * c * c;
     }
-    s.weight = fmin(1e8, fmax(1e-8, 10.0 * fmax(1.0, fabs(s.objective)) / fmax(1.0, violation)));
+    s.weight = o->weight > 0.0 ? o->weight
+                               : fmin(1e8, fmax(1e-8, 10.0 * fmax(1.0, fabs(s.objective)) /
+                                                          fmax(1.0, violation)));
     reset_matrix(&s, 1.0);
   }
   double tolerance = 1e-3;
@@ -423,7 +427,11 @@ myb_status myb_nlp_solve(const myb_nlp_problem* problem, const myb_nlp_options* 
     }
     converged = measure <= feasibility && criticality <= optimality;
     if (!converged) {
-      if (measure > 0.5 * measure_before && s.weight < weight_max) {
+      /* the weight grows while the constraints come no closer; once they hold, only the
+       * minimisation is unfinished, and a larger weight would make it harder (it had grown
+       * to 1e12 on the chains of myb_chain_solve, with the constraints held to 1e-12 and the
+       * multipliers drifting by rho c each update) */
+      if (measure > feasibility && measure > 0.5 * measure_before && s.weight < weight_max) {
         s.weight *= weight_factor;
         reset_matrix(&s, 1.0);
       }

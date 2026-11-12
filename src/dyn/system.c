@@ -5,8 +5,9 @@
  *
  * One evaluation goes in a fixed order, every sum in the order in which the levels were added:
  * the point masses (myb_nbody), the frames of the bodies, the inertia tensors of the integrated
- * rotations, then fields, figures, tides, pairs, and at the end the equations of rotation,
- * which need the torques gathered on the way. */
+ * rotations, then fields, figures, tides, pairs, actions, contacts, dragging, the guided
+ * bodies, and at the end the equations of rotation, which need the torques gathered on the
+ * way. */
 #include <math.h> /* sqrt, fabs */
 #include <stdckdint.h>
 #include <stdint.h>
@@ -15,10 +16,12 @@
 #include "core/alloc.h"
 #include "core/base.h"
 #include "dyn/nbody_internal.h"
+#include "force/contact_internal.h"
 #include "frames/rotation.h"
 #include "integ/ias15_internal.h"
 #include "myb/attitude.h"
 #include "myb/cmath.h"
+#include "myb/contact.h"
 #include "myb/kin.h"
 #include "myb/num.h"
 #include "myb/rel.h"
@@ -52,7 +55,8 @@ typedef struct body_model {
   double gm_base;
   /* of the evaluation in hand */
   int framed;
-  double m[9]; /* inertial -> body */
+  double m[9];  /* inertial -> body */
+  double dm[9]; /* its rate, of an orientation from outside */
 } body_model;
 
 typedef struct rotation_state {
@@ -86,6 +90,7 @@ typedef struct pn_state {
   size_t b;
   myb_system_pn_pair model;
   int spins;
+  int ended; /* one of the two merged: no terms any more */
 } pn_state;
 
 typedef struct action_entry {
@@ -100,6 +105,13 @@ typedef struct drag_entry {
   size_t point;
   double spin[3];
 } drag_entry;
+
+/* A body on the surface of another. */
+typedef struct contact_entry {
+  size_t body;
+  size_t ground;
+  myb_system_contact contact;
+} contact_entry;
 
 /* A body whose motion is given. */
 typedef struct guided_body {
@@ -119,6 +131,12 @@ struct myb_system {
   double* point; /* 3 per body: the accelerations of the point masses of the evaluation */
   double* scratch; /* two states, for the encounters: the start of a step, and one to work on */
   size_t scratch_size;
+  /* the search for neighbours: a box per body over the step, the bodies in the order of their
+   * boxes along x, and the pairs whose boxes meet */
+  double* boxes;    /* 6 per body: lo and hi of x, y, z */
+  size_t* order;    /* 2 per body: the order and a buffer to sort with */
+  pair* candidates;
+  size_t candidate_capacity;
   myb_gravity_work* work;
   int work_degree;
   size_t rotation_count;
@@ -137,6 +155,8 @@ struct myb_system {
   action_entry actions[MYB_SYSTEM_MAX_ACTIONS];
   size_t drag_count;
   drag_entry drags[MYB_SYSTEM_MAX_DRAGS];
+  size_t contact_count;
+  contact_entry contacts[MYB_SYSTEM_MAX_CONTACTS];
   /* the bodies with a given motion, and their places at the last instants asked for: an
    * integrator comes back to the same instants several times within a step */
   size_t guided_count;
@@ -165,6 +185,9 @@ void myb_system_destroy(myb_system* system) {
   myb_internal_release(&a, system->guided);
   myb_internal_release(&a, system->guided_places);
   myb_internal_release(&a, system->scratch);
+  myb_internal_release(&a, system->boxes);
+  myb_internal_release(&a, system->order);
+  myb_internal_release(&a, system->candidates);
   myb_internal_release(&a, system->point);
   myb_internal_release(&a, system->gm);
   myb_internal_release(&a, system->models);
@@ -447,7 +470,7 @@ myb_status myb_system_add_pn_pair(myb_system* system, size_t a, size_t b,
                                   const myb_system_pn_pair* pair_model) {
   MYB_CHECK(system != NULL && pair_model != NULL);
   if (!two_bodies(system, a, b) || !(system->gm[a] > 0.0) || !(system->gm[b] > 0.0) ||
-      (pair_model->orders & ~(unsigned)MYB_PN_ALL) != 0u || pair_model->orders == 0u) {
+      (pair_model->orders & ~MYB_PN_KNOWN) != 0u || pair_model->orders == 0u) {
     return MYB_E_DOMAIN;
   }
   myb_system_pn_pair model = *pair_model;
@@ -459,7 +482,7 @@ myb_status myb_system_add_pn_pair(myb_system* system, size_t a, size_t b,
     model.c = ppn.c;
   }
   if (!isfinite(model.c + model.r0 + model.kappa1 + model.kappa2) ||
-      ((model.orders & MYB_PN_3) && !(model.r0 > 0.0)) ||
+      ((model.orders & (MYB_PN_3 | MYB_PN_4)) && !(model.r0 > 0.0)) ||
       ((model.orders & MYB_PN_SS) && (!(model.kappa1 >= 0.0) || !(model.kappa2 >= 0.0)))) {
     return MYB_E_DOMAIN;
   }
@@ -470,7 +493,7 @@ myb_status myb_system_add_pn_pair(myb_system* system, size_t a, size_t b,
   p->a = a;
   p->b = b;
   p->model = model;
-  p->spins = (model.orders & (MYB_PN_SO | MYB_PN_SS)) != 0u;
+  p->spins = (model.orders & MYB_PN_SPIN_TERMS) != 0u;
   return MYB_OK;
 }
 
@@ -515,7 +538,12 @@ myb_status myb_system_light_action(void* light, double t, const myb_system_view*
   double force[3];
   double moment[3];
   const myb_status st =
-      myb_force_radiation_mesh(l->shape, &l->surface, pressure, u, l->shadows, force, moment);
+      l->theta > 0.0
+          ? myb_force_radiation_mesh_lagged(l->shape, &l->surface, pressure, u, l->spin_axis,
+                                            l->theta, l->phases > 0 ? l->phases : 64, l->shadows,
+                                            force, moment)
+          : myb_force_radiation_mesh(l->shape, &l->surface, pressure, u, l->shadows, force,
+                                     moment);
   if (st != MYB_OK) {
     return st;
   }
@@ -525,6 +553,21 @@ myb_status myb_system_light_action(void* light, double t, const myb_system_view*
                        view->frame[6 + i] * force[2]) / l->mass;
     torque[i] = moment[i] / l->mass;
   }
+  return MYB_OK;
+}
+
+myb_status myb_system_add_contact(myb_system* system, size_t body, size_t ground,
+                                  const myb_system_contact* contact) {
+  MYB_CHECK(system != NULL && contact != NULL);
+  if (!two_bodies(system, body, ground) ||
+      !myb_internal_contact_valid(&contact->surface, &contact->law, contact->points,
+                                  contact->point_count)) {
+    return MYB_E_DOMAIN;
+  }
+  if (system->contact_count >= MYB_SYSTEM_MAX_CONTACTS) {
+    return MYB_E_OVERFLOW;
+  }
+  system->contacts[system->contact_count++] = (contact_entry){body, ground, *contact};
   return MYB_OK;
 }
 
@@ -682,6 +725,7 @@ static myb_status frames(myb_system* s, double t, const double* x, const double*
         return st;
       }
       memcpy(m->m, o.rotation.m, sizeof m->m);
+      memcpy(m->dm, o.rotation.dm, sizeof m->dm);
       m->framed = 1;
     }
   }
@@ -1072,6 +1116,12 @@ static myb_status apply_tides(myb_system* s, const double* x, const double* v, d
 static myb_status apply_pairs(myb_system* s, const double* x, const double* v, double* a) {
   for (size_t k = 0; k < s->pn_count; ++k) {
     const pn_state* p = &s->pn[k];
+    if (p->ended) {
+      if (p->spins) { /* its spins stand still */
+        memset(a + spin_offset(s, k), 0, 6 * sizeof *a);
+      }
+      continue;
+    }
     const myb_pn_binary binary = {.gm1 = s->gm[p->a], .gm2 = s->gm[p->b], .c = p->model.c,
                                   .orders = p->model.orders, .r0 = p->model.r0,
                                   .kappa1 = p->model.kappa1, .kappa2 = p->model.kappa2};
@@ -1120,6 +1170,128 @@ static myb_status apply_actions(myb_system* s, double t, const double* x, const 
       a[3 * e->body + (size_t)i] += acceleration[i];
       if (m->rotation != NO_ROTATION) {
         s->rotations[m->rotation].torque[i] += torque[i];
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+/* The frame of a body (inertial -> body) with its rate and the angular velocity in the body
+ * axes: the unit matrix and zeros for a body without a frame; dM/dt = -[w x] M. */
+static void frame_and_rate(const myb_system* s, size_t b, double m[9], double dm[9],
+                           double w[3]) {
+  const body_model* bm = &s->models[b];
+  if (!bm->framed) {
+    static const double unit[9] = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+    memcpy(m, unit, sizeof unit);
+    memset(dm, 0, 9 * sizeof *dm);
+    memset(w, 0, 3 * sizeof *w);
+    return;
+  }
+  memcpy(m, bm->m, 9 * sizeof *m);
+  if (bm->rotation != NO_ROTATION) {
+    memcpy(w, s->rotations[bm->rotation].omega, 3 * sizeof *w);
+    for (int j = 0; j < 3; ++j) {
+      const double column[3] = {m[j], m[3 + j], m[6 + j]};
+      double turn[3];
+      myb_vec3_cross(w, column, turn);
+      for (int i = 0; i < 3; ++i) {
+        dm[3 * i + j] = -turn[i];
+      }
+    }
+    return;
+  }
+  memcpy(dm, bm->dm, 9 * sizeof *dm);
+  double spin[9]; /* [w x] = -dM M^T */
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      spin[3 * i + j] =
+          -(dm[3 * i] * m[3 * j] + dm[3 * i + 1] * m[3 * j + 1] + dm[3 * i + 2] * m[3 * j + 2]);
+    }
+  }
+  w[0] = 0.5 * (spin[7] - spin[5]);
+  w[1] = 0.5 * (spin[2] - spin[6]);
+  w[2] = 0.5 * (spin[3] - spin[1]);
+}
+
+/* The bodies on the surfaces of others: the force at each point that presses in, its reaction
+ * on the ground at the same point, the torques on both. */
+static myb_status apply_contacts(myb_system* s, const double* x, const double* v, double* a) {
+  for (size_t k = 0; k < s->contact_count; ++k) {
+    const contact_entry* e = &s->contacts[k];
+    if (!s->models[e->body].present || !s->models[e->ground].present) {
+      continue;
+    }
+    double mg[9];
+    double dmg[9];
+    double wg[3];
+    double mb[9];
+    double dmb[9];
+    double wb[3];
+    frame_and_rate(s, e->ground, mg, dmg, wg);
+    frame_and_rate(s, e->body, mb, dmb, wb);
+    /* the body in the frame of the ground, which turns: (M d, M d' + dM d) */
+    double d[3];
+    double dv[3];
+    double p[3];
+    double u[3];
+    double turn[3];
+    relative(x, e->ground, e->body, d);
+    relative(v, e->ground, e->body, dv);
+    myb_internal_mat3_vec(mg, d, p);
+    myb_internal_mat3_vec(mg, dv, u);
+    myb_internal_mat3_vec(dmg, d, turn);
+    for (int i = 0; i < 3; ++i) {
+      u[i] += turn[i];
+    }
+    /* the attitude of the body in the axes of the ground, and its angular velocity relative to
+     * the ground in its own axes */
+    double attitude[9];
+    double carried[3];
+    double w[3];
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        attitude[3 * i + j] =
+            mb[3 * i] * mg[3 * j] + mb[3 * i + 1] * mg[3 * j + 1] + mb[3 * i + 2] * mg[3 * j + 2];
+      }
+    }
+    myb_internal_mat3_vec(attitude, wg, carried);
+    for (int i = 0; i < 3; ++i) {
+      w[i] = wb[i] - carried[i];
+    }
+    myb_contact_result r;
+    const myb_status st =
+        myb_contact_force(&e->contact.surface, &e->contact.law, e->contact.points,
+                          e->contact.point_count, p, u, attitude, w, &r);
+    if (st != MYB_OK) {
+      return st;
+    }
+    if (r.touching == 0) {
+      continue;
+    }
+    double f[3];
+    transposed_vec(mg, r.force, f);
+    const double ratio = s->gm[e->ground] > 0.0 ? s->gm[e->body] / s->gm[e->ground] : 0.0;
+    for (int i = 0; i < 3; ++i) {
+      a[3 * e->body + (size_t)i] += f[i];
+      a[3 * e->ground + (size_t)i] -= ratio * f[i];
+    }
+    const int body_turns = s->models[e->body].rotation;
+    const int ground_turns = s->models[e->ground].rotation;
+    if (body_turns != NO_ROTATION) {
+      for (int i = 0; i < 3; ++i) {
+        s->rotations[body_turns].torque[i] += r.torque[i];
+      }
+    }
+    if (ground_turns != NO_ROTATION && ratio != 0.0) {
+      /* the reactions at the points s_i of the ground: -sum s_i x f_i = -(p x F + sum (s_i - p)
+       * x f_i), the second the torque on the body carried into the axes of the ground */
+      double about[3];
+      double moment[3];
+      myb_vec3_cross(p, r.force, about);
+      transposed_vec(attitude, r.torque, moment);
+      for (int i = 0; i < 3; ++i) {
+        s->rotations[ground_turns].torque[i] -= ratio * (about[i] + moment[i]);
       }
     }
   }
@@ -1411,6 +1583,9 @@ myb_status myb_system_acceleration(void* system, double t, const double* x, cons
     st = apply_actions(s, t, x, v, a);
   }
   if (st == MYB_OK) {
+    st = apply_contacts(s, x, v, a);
+  }
+  if (st == MYB_OK) {
     st = apply_drags(s, x, v, a);
   }
   if (st == MYB_OK) {
@@ -1435,6 +1610,121 @@ myb_status myb_system_inertia(myb_system* system, size_t body, double t, const d
   }
   memcpy(inertia, system->rotations[system->models[body].rotation].total, 9 * sizeof *inertia);
   return MYB_OK;
+}
+
+/* ---- Derivatives ----------------------------------------------------------------------------- */
+
+/* One propagation of the system from (t0, y) to t1 into out. */
+static myb_status propagate(myb_system* s, myb_ias15* in, double t0, const double* y, double t1,
+                            double* out) {
+  myb_status st = myb_ias15_start(in, myb_system_acceleration, s, t0, y);
+  if (st == MYB_OK) {
+    st = myb_ias15_integrate(in, t1);
+  }
+  if (st == MYB_OK) {
+    memcpy(out, myb_ias15_state(in), 2 * myb_system_coordinates(s) * sizeof *out);
+  }
+  return st;
+}
+
+/* Sets the gravitational parameter of a body everywhere the system keeps it. */
+static void set_gm(myb_system* s, size_t body, double gm) {
+  s->gm[body] = gm;
+  if (s->models[body].gm_rate != 0.0) {
+    s->models[body].gm_base = gm;
+  }
+  myb_internal_nbody_set_gm(s->nbody, body, gm);
+}
+
+myb_status myb_system_partials(myb_system* system, const myb_ias15_options* options, double t0,
+                               const double* y0, double t1, const size_t* bodies, size_t count,
+                               double* y1, double* phi, double* sensitivity) {
+  MYB_CHECK(system != NULL && y0 != NULL && (bodies != NULL || count == 0));
+  myb_system* s = system;
+  const size_t n = myb_system_coordinates(s);
+  const size_t m = 2 * n;
+  if (!isfinite(t0) || !isfinite(t1) || t0 == t1) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t i = 0; i < m; ++i) {
+    if (!isfinite(y0[i])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  for (size_t k = 0; k < count; ++k) {
+    if (bodies[k] >= s->bodies || !(s->gm[bodies[k]] != 0.0)) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  myb_ias15* in = NULL;
+  myb_status st = myb_system_integrator(s, options, &s->allocator, &in);
+  if (st != MYB_OK) {
+    return st;
+  }
+  void* block = NULL;
+  st = myb_internal_alloc_array(&s->allocator, 4 * m, sizeof(double), &block);
+  if (st != MYB_OK) {
+    myb_ias15_destroy(in);
+    return st;
+  }
+  double* shifted = block;
+  double* plus = shifted + m;
+  double* minus = plus + m;
+  double* scales = minus + m;
+  /* the size of each kind of coordinate: the positions of the bodies, then the groups of the
+   * rotations and of the spins — and the same for the rates */
+  for (int half = 0; half < 2; ++half) {
+    const double* part = y0 + (size_t)half * n;
+    double largest = 0.0;
+    for (size_t i = 0; i < 3 * s->bodies; ++i) {
+      largest = fmax(largest, fabs(part[i]));
+    }
+    for (size_t i = 0; i < 3 * s->bodies; ++i) {
+      scales[(size_t)half * n + i] = largest > 0.0 ? largest : 1.0;
+    }
+    for (size_t i = 3 * s->bodies; i < n; ++i) {
+      double group = 0.0;
+      const size_t first = 3 * s->bodies + ((i - 3 * s->bodies) / 3) * 3;
+      for (size_t j = first; j < first + 3 && j < n; ++j) {
+        group = fmax(group, fabs(part[j]));
+      }
+      scales[(size_t)half * n + i] = group > 0.0 ? group : 1.0;
+    }
+  }
+  if (y1 != NULL) {
+    st = propagate(s, in, t0, y0, t1, y1);
+  }
+  for (size_t j = 0; j < m && phi != NULL && st == MYB_OK; ++j) {
+    const double h = 1e-6 * scales[j];
+    memcpy(shifted, y0, m * sizeof *shifted);
+    shifted[j] = y0[j] + h;
+    st = propagate(s, in, t0, shifted, t1, plus);
+    if (st == MYB_OK) {
+      shifted[j] = y0[j] - h;
+      st = propagate(s, in, t0, shifted, t1, minus);
+    }
+    for (size_t i = 0; i < m && st == MYB_OK; ++i) {
+      phi[i * m + j] = (plus[i] - minus[i]) / (2.0 * h);
+    }
+  }
+  for (size_t k = 0; k < count && sensitivity != NULL && st == MYB_OK; ++k) {
+    const size_t body = bodies[k];
+    const double gm = s->gm[body];
+    const double h = 1e-6 * fabs(gm);
+    set_gm(s, body, gm + h);
+    st = propagate(s, in, t0, y0, t1, plus);
+    if (st == MYB_OK) {
+      set_gm(s, body, gm - h);
+      st = propagate(s, in, t0, y0, t1, minus);
+    }
+    set_gm(s, body, gm);
+    for (size_t i = 0; i < m && st == MYB_OK; ++i) {
+      sensitivity[i * count + k] = (plus[i] - minus[i]) / (2.0 * h);
+    }
+  }
+  myb_internal_release(&s->allocator, block);
+  myb_ias15_destroy(in);
+  return st;
 }
 
 /* ---- Encounters ------------------------------------------------------------------------------ */
@@ -1513,6 +1803,207 @@ static myb_status bisect(myb_system* s, myb_ias15* in, search_kind kind, size_t 
   return st;
 }
 
+/* The event of the pair (a, b) in the step [t0, t1] (start and y1 the states at its ends),
+ * kept if it is the earliest so far. */
+static myb_status pair_event(myb_system* s, myb_ias15* integrator, double watch, size_t a,
+                             size_t b, double t0, double t1, const double* start,
+                             const double* y1, double* work, int* found, double* best,
+                             myb_system_event* first) {
+  const body_model* ma = &s->models[a];
+  const body_model* mb = &s->models[b];
+  const int spheres = ma->radius > 0.0 && mb->radius > 0.0;
+  if (!ma->present || !mb->present || (!spheres && watch == 0.0)) {
+    return MYB_OK;
+  }
+  myb_status st = MYB_OK;
+  double rate0 = 0.0;
+  double rate1 = 0.0;
+  const double r0 = separation(s, start, a, b, &rate0);
+  const double r1 = separation(s, y1, a, b, &rate1);
+  const double sum = ma->radius + mb->radius;
+  /* the closest approach inside the step, if the bodies turned from nearing to parting */
+  double t_closest = t1;
+  int turned = 0;
+  const int again = s->reported && s->reported_a == a && s->reported_b == b &&
+                    s->reported_t == t0;
+  if (rate0 < 0.0 && rate1 >= 0.0 && !again) {
+    st = bisect(s, integrator, SEARCH_CLOSEST, a, b, t0, t1, &t_closest);
+    if (st != MYB_OK) {
+      return st;
+    }
+    turned = 1;
+  }
+  double t_event = t1;
+  myb_system_event_kind kind = MYB_SYSTEM_ARRIVED;
+  if (spheres && r0 > sum) {
+    /* contact: by the end of the step, or before the closest approach inside it */
+    double r_closest = r1;
+    if (turned) {
+      double unused = 0.0;
+      st = myb_ias15_dense(integrator, t_closest, work);
+      if (st != MYB_OK) {
+        return st;
+      }
+      r_closest = separation(s, work, a, b, &unused);
+    }
+    if (r_closest <= sum || r1 <= sum) {
+      st = bisect(s, integrator, SEARCH_CONTACT, a, b, t0,
+                  turned && r_closest <= sum ? t_closest : t1, &t_event);
+      if (st != MYB_OK) {
+        return st;
+      }
+      kind = MYB_SYSTEM_CONTACT;
+    }
+  }
+  if (kind == MYB_SYSTEM_ARRIVED && turned && watch > 0.0) {
+    double unused = 0.0;
+    st = myb_ias15_dense(integrator, t_closest, work);
+    if (st != MYB_OK) {
+      return st;
+    }
+    if (separation(s, work, a, b, &unused) < watch) {
+      kind = MYB_SYSTEM_APPROACH;
+      t_event = t_closest;
+    }
+  }
+  /* the earliest in the direction of the integration */
+  if (kind != MYB_SYSTEM_ARRIVED && (!*found || fabs(t_event - t0) < fabs(*best - t0))) {
+    *found = 1;
+    *best = t_event;
+    first->kind = kind;
+    first->a = a;
+    first->b = b;
+  }
+  return MYB_OK;
+}
+
+/* Sorts n keys (by `key`) bottom-up by merging, stable: no recursion. */
+static void sort_bodies(size_t* order, size_t* buffer, size_t n, const double* boxes) {
+  for (size_t width = 1; width < n; width *= 2) { /* bound: log2 n passes */
+    for (size_t lo = 0; lo < n; lo += 2 * width) {
+      const size_t mid = lo + width < n ? lo + width : n;
+      const size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+      size_t i = lo;
+      size_t j = mid;
+      size_t k = lo;
+      while (i < mid || j < hi) { /* bound: hi - lo */
+        if (j >= hi || (i < mid && boxes[6 * order[i]] <= boxes[6 * order[j]])) {
+          buffer[k++] = order[i++];
+        } else {
+          buffer[k++] = order[j++];
+        }
+      }
+    }
+    memcpy(order, buffer, n * sizeof *order);
+  }
+}
+
+static int pair_before(const pair* x, const pair* y) {
+  return x->a < y->a || (x->a == y->a && x->b < y->b);
+}
+
+/* The pairs in the order of (a, b), by merging bottom-up. */
+static void sort_pairs(pair* list, pair* buffer, size_t n) {
+  for (size_t width = 1; width < n; width *= 2) { /* bound: log2 n passes */
+    for (size_t lo = 0; lo < n; lo += 2 * width) {
+      const size_t mid = lo + width < n ? lo + width : n;
+      const size_t hi = lo + 2 * width < n ? lo + 2 * width : n;
+      size_t i = lo;
+      size_t j = mid;
+      size_t k = lo;
+      while (i < mid || j < hi) { /* bound: hi - lo */
+        if (j >= hi || (i < mid && !pair_before(&list[j], &list[i]))) {
+          buffer[k++] = list[i++];
+        } else {
+          buffer[k++] = list[j++];
+        }
+      }
+    }
+    memcpy(list, buffer, n * sizeof *list);
+  }
+}
+
+/* The pairs that may hold an event in the last step: every present body that may take part
+ * gets the box of its path over the step (myb_internal_ias15_position_box), widened by
+ * max(its radius, watch / 2) — two bodies can touch, or pass within `watch`, only where their
+ * boxes meet; the boxes are sorted along x and swept, and the pairs whose boxes meet in all
+ * three axes are kept, sorted as (a, b). */
+static myb_status neighbours(myb_system* s, myb_ias15* integrator, double watch, size_t* count) {
+  const size_t bodies = s->bodies;
+  myb_status st = MYB_OK;
+  if (s->boxes == NULL || s->order == NULL) {
+    /* both or neither: a failed second allocation leaves the system as it was */
+    void* boxes = NULL;
+    void* order = NULL;
+    st = myb_internal_alloc_array(&s->allocator, 6 * bodies, sizeof(double), &boxes);
+    if (st == MYB_OK) {
+      st = myb_internal_alloc_array(&s->allocator, 2 * bodies, sizeof(size_t), &order);
+    }
+    if (st != MYB_OK) {
+      myb_internal_release(&s->allocator, boxes);
+      return st;
+    }
+    myb_internal_release(&s->allocator, s->boxes);
+    myb_internal_release(&s->allocator, s->order);
+    s->boxes = boxes;
+    s->order = order;
+  }
+  size_t taking = 0;
+  for (size_t k = 0; k < bodies; ++k) {
+    const body_model* m = &s->models[k];
+    if (!m->present || (m->radius <= 0.0 && watch == 0.0)) {
+      continue;
+    }
+    const double widen = fmax(m->radius, 0.5 * watch);
+    for (int axis = 0; axis < 3; ++axis) {
+      double lo = 0.0;
+      double hi = 0.0;
+      st = myb_internal_ias15_position_box(integrator, 3 * k + (size_t)axis, &lo, &hi);
+      if (st != MYB_OK) {
+        return st;
+      }
+      s->boxes[6 * k + 2 * (size_t)axis] = lo - widen;
+      s->boxes[6 * k + 2 * (size_t)axis + 1] = hi + widen;
+    }
+    s->order[taking++] = k;
+  }
+  /* the boxes in the order of their low x (the keys sit at 6 k) */
+  sort_bodies(s->order, s->order + bodies, taking, s->boxes);
+  *count = 0;
+  for (size_t i = 0; i < taking; ++i) {
+    const size_t p = s->order[i];
+    const double* bp = s->boxes + 6 * p;
+    for (size_t j = i + 1; j < taking; ++j) { /* bound: the boxes that overlap in x */
+      const size_t q = s->order[j];
+      const double* bq = s->boxes + 6 * q;
+      if (bq[0] > bp[1]) {
+        break; /* sorted by low x: no later box reaches back */
+      }
+      if (bq[2] > bp[3] || bp[2] > bq[3] || bq[4] > bp[5] || bp[4] > bq[5]) {
+        continue;
+      }
+      if (*count + 1 > s->candidate_capacity / 2) {
+        const size_t capacity = s->candidate_capacity > 0 ? 2 * s->candidate_capacity : 64;
+        void* block = NULL;
+        st = myb_internal_alloc_array(&s->allocator, capacity, sizeof(pair), &block);
+        if (st != MYB_OK) {
+          return st;
+        }
+        if (*count > 0) {
+          memcpy(block, s->candidates, *count * sizeof(pair));
+        }
+        myb_internal_release(&s->allocator, s->candidates);
+        s->candidates = block;
+        s->candidate_capacity = capacity;
+      }
+      s->candidates[(*count)++] = (pair){p < q ? p : q, p < q ? q : p};
+    }
+  }
+  /* the second half of the array is the buffer of the sort */
+  sort_pairs(s->candidates, s->candidates + s->candidate_capacity / 2, *count);
+  return MYB_OK;
+}
+
 myb_status myb_system_advance(myb_system* system, myb_ias15* integrator, double t_end,
                               double watch, myb_system_event* event) {
   MYB_CHECK(system != NULL && integrator != NULL && event != NULL);
@@ -1545,77 +2036,21 @@ myb_status myb_system_advance(myb_system* system, myb_ias15* integrator, double 
     if (st != MYB_OK) {
       return st;
     }
-    /* the earliest event of the step, pair by pair */
+    /* the earliest event of the step, over the pairs whose boxes meet (in the order of the
+     * pairs, as a loop over all of them would take them) */
+    size_t count = 0;
+    st = neighbours(s, integrator, watch, &count);
+    if (st != MYB_OK) {
+      return st;
+    }
     int found = 0;
     double best = t1;
     myb_system_event first = {0};
-    for (size_t a = 0; a < s->bodies; ++a) {
-      for (size_t b = a + 1; b < s->bodies; ++b) {
-        const body_model* ma = &s->models[a];
-        const body_model* mb = &s->models[b];
-        const int spheres = ma->radius > 0.0 && mb->radius > 0.0;
-        if (!ma->present || !mb->present || (!spheres && watch == 0.0)) {
-          continue;
-        }
-        double rate0 = 0.0;
-        double rate1 = 0.0;
-        const double r0 = separation(s, start, a, b, &rate0);
-        const double r1 = separation(s, y1, a, b, &rate1);
-        const double sum = ma->radius + mb->radius;
-        /* the closest approach inside the step, if the bodies turned from nearing to parting */
-        double t_closest = t1;
-        int turned = 0;
-        const int again = s->reported && s->reported_a == a && s->reported_b == b &&
-                          s->reported_t == t0;
-        if (rate0 < 0.0 && rate1 >= 0.0 && !again) {
-          st = bisect(s, integrator, SEARCH_CLOSEST, a, b, t0, t1, &t_closest);
-          if (st != MYB_OK) {
-            return st;
-          }
-          turned = 1;
-        }
-        double t_event = t1;
-        myb_system_event_kind kind = MYB_SYSTEM_ARRIVED;
-        if (spheres && r0 > sum) {
-          /* contact: by the end of the step, or before the closest approach inside it */
-          double r_closest = r1;
-          if (turned) {
-            double unused = 0.0;
-            st = myb_ias15_dense(integrator, t_closest, work);
-            if (st != MYB_OK) {
-              return st;
-            }
-            r_closest = separation(s, work, a, b, &unused);
-          }
-          if (r_closest <= sum || r1 <= sum) {
-            st = bisect(s, integrator, SEARCH_CONTACT, a, b, t0,
-                        turned && r_closest <= sum ? t_closest : t1, &t_event);
-            if (st != MYB_OK) {
-              return st;
-            }
-            kind = MYB_SYSTEM_CONTACT;
-          }
-        }
-        if (kind == MYB_SYSTEM_ARRIVED && turned && watch > 0.0) {
-          double unused = 0.0;
-          st = myb_ias15_dense(integrator, t_closest, work);
-          if (st != MYB_OK) {
-            return st;
-          }
-          if (separation(s, work, a, b, &unused) < watch) {
-            kind = MYB_SYSTEM_APPROACH;
-            t_event = t_closest;
-          }
-        }
-        /* the earliest in the direction of the integration */
-        if (kind != MYB_SYSTEM_ARRIVED &&
-            (!found || fabs(t_event - t0) < fabs(best - t0))) {
-          found = 1;
-          best = t_event;
-          first.kind = kind;
-          first.a = a;
-          first.b = b;
-        }
+    for (size_t k = 0; k < count; ++k) {
+      st = pair_event(s, integrator, watch, s->candidates[k].a, s->candidates[k].b, t0, t1, start,
+                      y1, work, &found, &best, &first);
+      if (st != MYB_OK) {
+        return st;
       }
     }
     if (!found) {
@@ -1651,13 +2086,48 @@ static size_t drop_pairs(pair* list, size_t count, size_t body) {
   return kept;
 }
 
-static int in_pn_pair(const myb_system* s, size_t body) {
-  for (size_t k = 0; k < s->pn_count; ++k) {
-    if (s->pn[k].a == body || s->pn[k].b == body) {
-      return 1;
+/* The spin a body brings to a merger, G times its angular momentum in the inertial axes:
+ * that of its integrated rotation (undistorted moments) and of an active pair beyond 1PN. */
+static myb_status brought_spin(const myb_system* s, size_t body, const double* y, double spin[3]) {
+  spin[0] = 0.0;
+  spin[1] = 0.0;
+  spin[2] = 0.0;
+  if (s->models[body].rotation != NO_ROTATION) {
+    double q[4];
+    double omega[3];
+    double core[3];
+    const myb_status st = myb_system_unpack_rotation(s, body, y, q, omega, core);
+    if (st != MYB_OK) {
+      return st;
+    }
+    const myb_system_rotation* r = &s->rotations[s->models[body].rotation].model;
+    const double mantle[3] = {r->moments[0] - r->core[0], r->moments[1] - r->core[0],
+                              r->moments[2] - r->core[1]};
+    const double core_moments[3] = {r->core[0], r->core[0], r->core[1]};
+    double m[9];
+    myb_quat_to_matrix(q, m); /* inertial -> body */
+    double body_spin[3];
+    for (int i = 0; i < 3; ++i) {
+      body_spin[i] = s->gm[body] * (mantle[i] * omega[i] + core_moments[i] * core[i]);
+    }
+    for (int i = 0; i < 3; ++i) {
+      spin[i] += m[i] * body_spin[0] + m[3 + i] * body_spin[1] + m[6 + i] * body_spin[2];
     }
   }
-  return 0;
+  const size_t n = myb_system_coordinates(s);
+  for (size_t k = 0; k < s->pn_count; ++k) {
+    const pn_state* p = &s->pn[k];
+    if (p->ended || !p->spins || (p->a != body && p->b != body)) {
+      continue;
+    }
+    const double c = p->model.c; /* resolved when the pair was added */
+    const double* chi = y + n + spin_offset(s, k) + (p->a == body ? 0u : 3u);
+    const double gm = s->gm[body];
+    for (int i = 0; i < 3; ++i) {
+      spin[i] += chi[i] * gm * gm / c;
+    }
+  }
+  return MYB_OK;
 }
 
 /* Copies the state of the integrator and starts it again from the copy. */
@@ -1669,8 +2139,8 @@ myb_status myb_system_merge(myb_system* system, myb_ias15* integrator, size_t a,
                             myb_system_merger* merger) {
   MYB_CHECK(system != NULL && integrator != NULL);
   myb_system* s = system;
-  if (!two_bodies(s, a, b) || s->models[a].rotation != NO_ROTATION ||
-      s->models[b].rotation != NO_ROTATION || in_pn_pair(s, a) || in_pn_pair(s, b)) {
+  if (!two_bodies(s, a, b) ||
+      (s->models[b].rotation != NO_ROTATION && s->models[a].rotation == NO_ROTATION)) {
     return MYB_E_DOMAIN;
   }
   myb_status st = need_scratch(s);
@@ -1692,13 +2162,29 @@ myb_status myb_system_merge(myb_system* system, myb_ias15* integrator, size_t a,
   if (!(r > 0.0) || !isfinite(r)) {
     return MYB_E_DOMAIN;
   }
+  /* the angular momentum of the relative motion and the spins the two bring (G times) */
+  const double reduced = total > 0.0 ? ga * gb / total : 0.0;
+  double orbital[3];
+  myb_vec3_cross(d, dv, orbital);
+  double spin_a[3];
+  double spin_b[3];
+  st = brought_spin(s, a, s->scratch, spin_a);
+  if (st == MYB_OK) {
+    st = brought_spin(s, b, s->scratch, spin_b);
+  }
+  if (st != MYB_OK) {
+    return st;
+  }
+  double remnant[3];
+  for (int i = 0; i < 3; ++i) {
+    orbital[i] *= reduced;
+    remnant[i] = orbital[i] + spin_a[i] + spin_b[i];
+  }
   if (merger != NULL) {
-    const double reduced = total > 0.0 ? ga * gb / total : 0.0;
-    double l[3];
-    myb_vec3_cross(d, dv, l);
     merger->energy = 0.5 * reduced * myb_vec3_dot(dv, dv) - ga * gb / r;
     for (int i = 0; i < 3; ++i) {
-      merger->angular_momentum[i] = reduced * l[i];
+      merger->angular_momentum[i] = orbital[i];
+      merger->spin[i] = remnant[i];
     }
   }
   /* the centre of mass takes the place of a; two bodies without mass meet half-way */
@@ -1710,6 +2196,45 @@ myb_status myb_system_merge(myb_system* system, myb_ias15* integrator, size_t a,
   const double ra = s->models[a].radius;
   const double rb = s->models[b].radius;
   s->models[a].radius = myb_cbrt(ra * ra * ra + rb * rb * rb);
+  if (s->models[a].rotation != NO_ROTATION && total > 0.0) {
+    /* the same shape, scaled to the new radius, turning as a whole with the whole spin */
+    myb_system_rotation* model = &s->rotations[s->models[a].rotation].model;
+    const double ratio = ra > 0.0 ? s->models[a].radius / ra : 1.0;
+    for (int i = 0; i < 3; ++i) {
+      model->moments[i] *= ratio * ratio;
+    }
+    model->core[0] *= ratio * ratio;
+    model->core[1] *= ratio * ratio;
+    model->radius *= ratio;
+    double q[4];
+    double omega[3];
+    double core[3];
+    st = myb_system_unpack_rotation(s, a, s->scratch, q, omega, core);
+    if (st != MYB_OK) {
+      return st;
+    }
+    double m[9];
+    myb_quat_to_matrix(q, m);
+    for (int i = 0; i < 3; ++i) {
+      const double along = m[3 * i] * remnant[0] + m[3 * i + 1] * remnant[1] +
+                           m[3 * i + 2] * remnant[2];
+      omega[i] = along / (total * model->moments[i]);
+    }
+    const int has_core = model->core[0] > 0.0 || model->core[1] > 0.0;
+    st = myb_system_pack_rotation(s, a, q, omega, has_core ? omega : NULL, s->scratch);
+    if (st != MYB_OK) {
+      return st;
+    }
+  }
+  for (size_t k = 0; k < s->pn_count; ++k) {
+    if (s->pn[k].a == a || s->pn[k].b == a || s->pn[k].a == b || s->pn[k].b == b) {
+      s->pn[k].ended = 1;
+      if (s->pn[k].spins) {
+        double* spins = s->scratch + n + spin_offset(s, k);
+        memset(spins, 0, 6 * sizeof *spins);
+      }
+    }
+  }
   s->gm[a] = total;
   s->gm[b] = 0.0;
   /* a mass that changes goes on changing at its relative rate from what it is now */
@@ -1752,6 +2277,13 @@ myb_status myb_system_merge(myb_system* system, myb_ias15* integrator, size_t a,
     }
   }
   s->drag_count = kept;
+  kept = 0;
+  for (size_t k = 0; k < s->contact_count; ++k) {
+    if (s->contacts[k].body != b && s->contacts[k].ground != b) {
+      s->contacts[kept++] = s->contacts[k];
+    }
+  }
+  s->contact_count = kept;
   s->reported = 0;
   return restart(s, integrator);
 }

@@ -669,7 +669,7 @@ static void test_domain(void) {
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   b.r0 = 1.0;
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_OK);
-  b.orders = 128;
+  b.orders = 1u << 20; /* an unknown bit (128 and above up to 2048 are the higher terms) */
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   b.orders = MYB_PN_SS;
   b.kappa1 = -1.0;

@@ -425,10 +425,8 @@ static double lagrange(int m, const double* d, const double* y) {
   return p[0];
 }
 
-/* Hermite interpolation at 0 of values y_i and derivatives yd_i at the m nodes d_i (Newton
- * divided differences on the doubled nodes): value and derivative. */
-static void hermite(int m, const double* d, const double* y, const double* yd, double* value,
-                    double* derivative) {
+void myb_internal_hermite(int m, const double* d, const double* y, const double* yd,
+                          double* value, double* derivative) {
   double z[2 * MYB_SPK_MAX_WINDOW];
   double c[2 * MYB_SPK_MAX_WINDOW];
   const int n = 2 * m;
@@ -548,7 +546,7 @@ static myb_status state_discrete(const myb_internal_spk_segment* s, myb_time t,
       state[j] = lagrange(m, d, y);
       state[j + 3] = lagrange(m, d, yd);
     } else {
-      hermite(m, d, y, yd, &state[j], &state[j + 3]);
+      myb_internal_hermite(m, d, y, yd, &state[j], &state[j + 3]);
     }
   }
   return MYB_OK;
@@ -628,13 +626,13 @@ static void state_packets(const myb_internal_spk_segment* s, const mini_segment*
         e[i] = word(s, base + (uint64_t)i * stride + (uint64_t)j + 9);
       }
       double unused;
-      hermite(m, d, a, b, &state[j], &unused);
-      hermite(m, d, c, e, &state[j + 3], &unused);
+      myb_internal_hermite(m, d, a, b, &state[j], &unused);
+      myb_internal_hermite(m, d, c, e, &state[j + 3], &unused);
     } else if (mini->subtype == 1) {
       state[j] = lagrange(m, d, a);
       state[j + 3] = lagrange(m, d, b);
     } else {
-      hermite(m, d, a, b, &state[j], &state[j + 3]);
+      myb_internal_hermite(m, d, a, b, &state[j], &state[j + 3]);
     }
   }
 }

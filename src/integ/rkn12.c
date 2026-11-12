@@ -3,9 +3,17 @@
  * (1987), for x'' = a(t, x), with the coefficients of integ/rkn12_coefficients.h. Step-size
  * control as in E. Hairer, S. P. Norsett, G. Wanner, Solving ODE I (1993), §II.4, with the
  * exponent 1/11 of the order-10 error estimate; the estimate covers positions and velocities.
- * The pair has no interpolant: the state inside the last step is one more step of the pair
- * from its start (16 evaluations), as accurate as the steps themselves. Positions, velocities
- * and time are updated with compensated summation. */
+ * The pair has no interpolant of its own: the state inside the last step is one more step of the
+ * pair from its start (16 evaluations), or, with options.interpolant, comes from one built on
+ * the first request in the step: the acceleration as a polynomial of degree 12 through its
+ * values at the 13 Chebyshev-Lobatto nodes of the step, integrated twice from the start (a
+ * Chebyshev series integrated term by term), the values at the 11 inner nodes taken at the
+ * places of the previous polynomial — Picard's iteration started from the quintic of Hermite
+ * of the ends — until the places at the nodes move less than a thousandth of the tolerance,
+ * then made to end exactly at the step's end by a term in theta^2, theta^3 of the size of the
+ * mismatch. Should it not settle in 12 rounds (a step too long for the degree), the state is
+ * one more step of the pair from the start of the step (16 evaluations a request). Positions,
+ * velocities and time are updated with compensated summation. */
 #include <math.h> /* sqrt, fabs */
 #include <stdckdint.h>
 #include <stdint.h>
@@ -19,7 +27,12 @@
 #include "myb/integ.h"
 #include "num/eft.h"
 
-enum { MAX_REJECTIONS = 100 };
+enum {
+  MAX_REJECTIONS = 100,
+  DEGREE = 12,           /* of the polynomial of the acceleration over a step */
+  NODES = DEGREE + 1,    /* Chebyshev-Lobatto, both ends included */
+  ROUNDS = 12            /* of Picard's iteration before falling back to a step of the pair */
+};
 
 static const int64_t default_max_steps = 1000000000;
 static const double safety = 0.9;
@@ -54,6 +67,15 @@ struct myb_rkn12 {
   double* a_old;    /* n: a at the start of the last accepted step */
   double* stage_x;  /* n */
   double* k;        /* MYB_RKN12_STAGES x n */
+  /* the interpolant of the last step */
+  int dense_state;          /* 0 not built, 1 built, -1 did not settle */
+  double node[NODES];       /* theta of the nodes, from 0 to 1 */
+  double dct[NODES][NODES]; /* Chebyshev coefficients from the values at the nodes */
+  double* node_x;           /* NODES x n: places at the nodes */
+  double* node_a;           /* NODES x n: accelerations there */
+  double* series_v;         /* (DEGREE + 2) x n: V(tau) = int_-1^tau a */
+  double* series_x;         /* (DEGREE + 3) x n: X(tau) = int_-1^tau V */
+  double* fix;              /* 2 x n: the terms alpha theta^2 + beta theta^3 */
 };
 
 static int finite(double x) {
@@ -88,9 +110,9 @@ myb_status myb_rkn12_create(size_t n, const myb_rkn12_options* options,
   }
   myb_rkn12* s = block;
   *s = (myb_rkn12){.allocator = a, .n = n, .options = o};
-  /* 8 vectors of 2n, 3 of n, 17 stages: 36 n values. */
+  /* 8 vectors of 2n, 3 of n, 17 stages, the interpolant: 2 NODES + 2 DEGREE + 7 */
   size_t count = 0;
-  if (ckd_mul(&count, (size_t)(8 * 2 + 3 + MYB_RKN12_STAGES), n)) {
+  if (ckd_mul(&count, (size_t)(8 * 2 + 3 + MYB_RKN12_STAGES + 2 * NODES + 2 * DEGREE + 7), n)) {
     status = MYB_E_OVERFLOW;
     goto fail;
   }
@@ -113,6 +135,36 @@ myb_status myb_rkn12_create(size_t n, const myb_rkn12_options* options,
     p += n;
   }
   s->k = p;
+  p += (size_t)MYB_RKN12_STAGES * n;
+  s->node_x = p;
+  p += (size_t)NODES * n;
+  s->node_a = p;
+  p += (size_t)NODES * n;
+  s->series_v = p;
+  p += (size_t)(DEGREE + 2) * n;
+  s->series_x = p;
+  p += (size_t)(DEGREE + 3) * n;
+  s->fix = p;
+  /* the nodes theta_j = (1 - cos(j pi / M)) / 2 and the discrete cosine transform that gives the
+   * coefficients of sum c_k T_k(tau), tau = 2 theta - 1, T_k(tau_j) = (-1)^k cos(k j pi / M) */
+  const double pi = 3.14159265358979323846;
+  for (int j = 0; j < NODES; ++j) {
+    s->node[j] = j == DEGREE ? 1.0 : 0.5 * (1.0 - myb_cos(pi * (double)j / (double)DEGREE));
+  }
+  for (int k = 0; k < NODES; ++k) {
+    for (int j = 0; j < NODES; ++j) {
+      const int phase = (k * j) % (2 * DEGREE);
+      double c = myb_cos(pi * (double)phase / (double)DEGREE);
+      c *= (k % 2 == 0 ? 1.0 : -1.0) * 2.0 / (double)DEGREE;
+      if (j == 0 || j == DEGREE) {
+        c *= 0.5;
+      }
+      if (k == 0 || k == DEGREE) {
+        c *= 0.5;
+      }
+      s->dct[k][j] = c;
+    }
+  }
   *integrator = s;
   return MYB_OK;
 
@@ -202,6 +254,7 @@ myb_status myb_rkn12_start(myb_rkn12* integrator, myb_position_accel_function a,
   s->t_comp = 0.0;
   s->h = s->options.h_initial;
   s->have_step = 0;
+  s->dense_state = 0;
   s->stats = (myb_rkn12_stats){};
   const myb_status status = evaluate(s, t0, s->y, s->a_now);
   s->started = status == MYB_OK;
@@ -347,6 +400,7 @@ myb_status myb_rkn12_step(myb_rkn12* integrator, double t_limit) {
       const double h_next = h * factor;
       s->h = clamp_step(s, last && fabs(h_planned) > fabs(h_next) ? h_planned : h_next);
       s->have_step = 1;
+      s->dense_state = 0;
       s->stats.accepted++;
       return MYB_OK;
     }
@@ -389,6 +443,150 @@ myb_rkn12_stats myb_rkn12_statistics(const myb_rkn12* integrator) {
   return integrator->stats;
 }
 
+/* ---- The interpolant of a step ---------------------------------------------------------- */
+
+/* The sum of a Chebyshev series of `count` coefficients (stride n) at tau (Clenshaw). */
+static double chebyshev(const double* c, size_t stride, int count, double tau) {
+  double b1 = 0.0;
+  double b2 = 0.0;
+  for (int k = count - 1; k >= 1; --k) {
+    const double b0 = c[(size_t)k * stride] + 2.0 * tau * b1 - b2;
+    b2 = b1;
+    b1 = b0;
+  }
+  return c[0] + tau * b1 - b2;
+}
+
+/* The coefficients of the integral from -1 of a series of `count` terms: `count + 1` terms. */
+static void integrate_series(const double* c, double* out, size_t stride, int count) {
+  for (int k = 1; k <= count; ++k) {
+    const double before = k == 1 ? 2.0 * c[0] : c[(size_t)(k - 1) * stride];
+    const double after = k + 1 < count ? c[(size_t)(k + 1) * stride] : 0.0;
+    out[(size_t)k * stride] = (before - after) / (2.0 * (double)k);
+  }
+  double at_minus_one = 0.0;
+  for (int k = 1; k <= count; ++k) {
+    at_minus_one += (k % 2 == 0 ? 1.0 : -1.0) * out[(size_t)k * stride];
+  }
+  out[0] = -at_minus_one;
+}
+
+/* The place and velocity of component i of the interpolant at theta. */
+static void interpolant_at(const myb_rkn12* s, size_t i, double theta, double* x, double* v) {
+  const size_t n = s->n;
+  const double h = s->h_last;
+  const double tau = 2.0 * theta - 1.0;
+  const double x0 = s->y_old[i] + s->comp_old[i];
+  const double v0 = s->y_old[n + i] + s->comp_old[n + i];
+  const double alpha = s->fix[i];
+  const double beta = s->fix[n + i];
+  const double big_x = chebyshev(s->series_x + i, n, DEGREE + 3, tau);
+  const double big_v = chebyshev(s->series_v + i, n, DEGREE + 2, tau);
+  *x = x0 + (h * theta * v0 + (0.25 * h * h * big_x + theta * theta * (alpha + beta * theta)));
+  *v = v0 + (0.5 * h * big_v + theta * (2.0 * alpha + 3.0 * beta * theta) / h);
+}
+
+/* The series from the accelerations at the nodes, and the terms that make it end at the end
+ * of the step. */
+static void make_series(myb_rkn12* s) {
+  const size_t n = s->n;
+  const double h = s->h_last;
+  double c[NODES];
+  double v_series[DEGREE + 2];
+  double x_series[DEGREE + 3];
+  for (size_t i = 0; i < n; ++i) {
+    for (int k = 0; k < NODES; ++k) {
+      double sum = 0.0;
+      for (int j = 0; j < NODES; ++j) {
+        sum += s->dct[k][j] * s->node_a[(size_t)j * n + i];
+      }
+      c[k] = sum;
+    }
+    integrate_series(c, v_series, 1, NODES);
+    integrate_series(v_series, x_series, 1, DEGREE + 2);
+    for (int k = 0; k < DEGREE + 2; ++k) {
+      s->series_v[(size_t)k * n + i] = v_series[k];
+    }
+    for (int k = 0; k < DEGREE + 3; ++k) {
+      s->series_x[(size_t)k * n + i] = x_series[k];
+    }
+    /* the mismatch at the end (tau = 1: the sums of the coefficients) */
+    double end_x = 0.0;
+    double end_v = 0.0;
+    for (int k = 0; k < DEGREE + 3; ++k) {
+      end_x += x_series[k];
+    }
+    for (int k = 0; k < DEGREE + 2; ++k) {
+      end_v += v_series[k];
+    }
+    const double x0 = s->y_old[i] + s->comp_old[i];
+    const double v0 = s->y_old[n + i] + s->comp_old[n + i];
+    const double dx = ((s->y[i] - x0) + s->y_comp[i]) - (h * v0 + 0.25 * h * h * end_x);
+    const double dv = ((s->y[n + i] - v0) + s->y_comp[n + i]) - 0.5 * h * end_v;
+    s->fix[i] = 3.0 * dx - h * dv;
+    s->fix[n + i] = h * dv - 2.0 * dx;
+  }
+}
+
+/* Builds the interpolant of the last step: 1 if it settled. */
+static myb_status build_interpolant(myb_rkn12* s, int* settled) {
+  const size_t n = s->n;
+  const double h = s->h_last;
+  *settled = 0;
+  /* the quintic of Hermite through x, h v, h^2 a at both ends */
+  for (int j = 0; j < NODES; ++j) {
+    const double q = s->node[j];
+    const double q2 = q * q;
+    const double q3 = q2 * q;
+    const double q4 = q3 * q;
+    const double q5 = q4 * q;
+    const double h00 = 1.0 - 10.0 * q3 + 15.0 * q4 - 6.0 * q5;
+    const double h10 = q - 6.0 * q3 + 8.0 * q4 - 3.0 * q5;
+    const double h20 = 0.5 * (q2 - 3.0 * q3 + 3.0 * q4 - q5);
+    const double h01 = 10.0 * q3 - 15.0 * q4 + 6.0 * q5;
+    const double h11 = -4.0 * q3 + 7.0 * q4 - 3.0 * q5;
+    const double h21 = 0.5 * (q3 - 2.0 * q4 + q5);
+    for (size_t i = 0; i < n; ++i) {
+      const double x0 = s->y_old[i] + s->comp_old[i];
+      const double x1 = s->y[i] + s->y_comp[i];
+      s->node_x[(size_t)j * n + i] =
+          x0 * h00 + h * s->y_old[n + i] * h10 + h * h * s->a_old[i] * h20 + x1 * h01 +
+          h * s->y[n + i] * h11 + h * h * s->a_now[i] * h21;
+    }
+  }
+  memcpy(s->node_a, s->a_old, n * sizeof(double));
+  memcpy(s->node_a + (size_t)DEGREE * n, s->a_now, n * sizeof(double));
+  /* Picard's iteration */
+  for (int round = 0; round < ROUNDS && !*settled; ++round) { /* bound: ROUNDS */
+    for (int j = 1; j < DEGREE; ++j) {
+      const double t = s->t_old + (s->t_comp_old + s->node[j] * h);
+      const myb_status status =
+          evaluate(s, t, s->node_x + (size_t)j * n, s->node_a + (size_t)j * n);
+      if (status != MYB_OK) {
+        return status;
+      }
+    }
+    make_series(s);
+    double worst = 0.0;
+    int quiet = 1;
+    for (int j = 1; j < DEGREE; ++j) {
+      for (size_t i = 0; i < n; ++i) {
+        double x = 0.0;
+        double v = 0.0;
+        interpolant_at(s, i, s->node[j], &x, &v);
+        double* old = s->node_x + (size_t)j * n + i;
+        const double change = fabs(x - *old);
+        const double scale = s->options.atol + s->options.rtol * fabs(x);
+        worst = fmax(worst, change / scale);
+        quiet = quiet && change <= 4e-16 * fabs(x);
+        *old = x;
+      }
+    }
+    *settled = worst < 1e-3 || quiet;
+  }
+  return MYB_OK;
+}
+
 myb_status myb_rkn12_dense(myb_rkn12* integrator, double t, double* y) {
   MYB_CHECK(integrator != NULL && y != NULL);
   myb_rkn12* s = integrator;
@@ -407,8 +605,33 @@ myb_status myb_rkn12_dense(myb_rkn12* integrator, double t, double* y) {
     }
     return MYB_OK;
   }
-  return pair_step(s, s->t_old, s->t_comp_old, s->y_old, s->comp_old, s->a_old, h, y, NULL,
-                   NULL);
+  if (!s->options.interpolant) {
+    return pair_step(s, s->t_old, s->t_comp_old, s->y_old, s->comp_old, s->a_old, h, y, NULL,
+                     NULL);
+  }
+  if (t == s->t + s->t_comp) {
+    for (size_t i = 0; i < 2 * s->n; ++i) {
+      y[i] = s->y[i] + s->y_comp[i];
+    }
+    return MYB_OK;
+  }
+  if (s->dense_state == 0) {
+    int settled = 0;
+    const myb_status status = build_interpolant(s, &settled);
+    if (status != MYB_OK) {
+      return status;
+    }
+    s->dense_state = settled ? 1 : -1;
+  }
+  if (s->dense_state < 0) {
+    return pair_step(s, s->t_old, s->t_comp_old, s->y_old, s->comp_old, s->a_old, h, y, NULL,
+                     NULL);
+  }
+  const double theta = fmin(fmax(h / s->h_last, 0.0), 1.0);
+  for (size_t i = 0; i < s->n; ++i) {
+    interpolant_at(s, i, theta, &y[i], &y[s->n + i]);
+  }
+  return MYB_OK;
 }
 
 static myb_status dense_view(void* integrator, double t, double* y) {

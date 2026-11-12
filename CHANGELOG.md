@@ -144,7 +144,58 @@ version the API only grows. Details, checks and measured accuracies of every pha
   (`myb_iono_layer_density`, `myb_iono_grid_density`), the higher orders
   (`myb_iono_orders_of`, `myb_iono_phase_delay`, `myb_iono_code_delay`, `myb_iono_bending`).
 - `cmake/FetchData.cmake`: the GPT3 grid; large files with `-DLARGE=ON`.
-
+- Phase 22. `myb/ck.h`: evaluating CK types 4, 5, 6 and writing them
+  (`myb_ck_writer_add_chebyshev`, `myb_ck_writer_add_packets`,
+  `myb_ck_writer_add_minisegments`).
+- `myb/site.h`: the atmospheric S1/S2 loading from files — `myb_site_atmosphere_load`,
+  `_load_file` (GGFC, TU Wien stations), `myb_site_atmosphere_grid_load`, `_grid_load_file`
+  (the grids of TU Wien); the grid s1_s2_s3_cm_noib_grid.dat in `cmake/FetchData.cmake`.
+- `ext/ionosphere`: three-dimensional IONEX maps — `myb_ionex_dimension`,
+  `myb_ionex_density_grid`.
+- `ext/jb2008` (new): JB2008 implemented from the papers — `myb_jb2008`, readers of the index
+  files SOLFSMY and DTCFILE (`myb_jb2008_solar_*`, `myb_jb2008_storm_*`) and
+  `myb_jb2008_density` as a `myb_density_function`.
+- `myb/iod.h`: `myb_iod_laplace`, `myb_iod_double_r`, `myb_iod_gooding`.
+- `myb/integ.h`: compositions of 7 and 15 stages (`MYB_SYMPLECTIC_6_S7`,
+  `MYB_SYMPLECTIC_8_S15`); an interpolant of the steps of RKN12(10)
+  (`myb_rkn12_options.interpolant`).
+- `myb/orbit.h`: `MYB_ORBIT_RKN12` for force models of position-only terms
+  (`myb_force_model_set_position_only`, `myb_force_model_position_only` in `myb/model.h`).
+- `myb/conjunction.h`: the probability of a long encounter — `myb_collision_rate`,
+  `myb_collision_probability_long`, `myb_conjunction_long`.
+- `myb/force.h`: secondary emission and the thin sheath in charging —
+  `myb_secondary_emission`, `myb_secondary_yield`, `myb_charging_model`,
+  `myb_charging_current_model`, `myb_charging_equilibria`, `myb_debye_length`; atmospheric
+  entry — `myb_air`, `myb_air_heat_ratio`, `myb_newtonian_cp_max`,
+  `myb_heating_sutton_graves`, `myb_ablation`, `myb_ablation_rate`, `myb_ablation_rhs`,
+  `myb_ablation_mass`.
+- `myb/surface.h`: Newtonian continuum flow on plates and meshes
+  (`myb_force_newtonian_plates`, `myb_force_newtonian_mesh`, `myb_continuum`); the light of
+  the moment with thermal inertia (`myb_force_radiation_mesh_lagged`).
+- `myb/system.h`: mergers of rotating bodies and of bodies of PN pairs; derivatives with
+  respect to the state and the parameters (`myb_system_partials`); a search for neighbours in
+  `myb_system_advance` (the same events, only the pairs whose paths over the step can meet
+  are examined).
+- `myb/contact.h` (new): contact of a body with a plane, an ellipsoid or a mesh — the law of
+  Hunt and Crossley with smooth Coulomb friction (`myb_contact_force`,
+  `myb_contact_surface_nearest`, `myb_contact_restitution`, `myb_contact_damping`), the term
+  `myb_term_contact` and the gap `myb_event_contact`; in `myb/system.h` —
+  `myb_system_add_contact`; in `myb/geometry.h` — `myb_polyhedron_nearest`.
+- `myb/meteoroid.h` (new): random impacts of micrometeoroids after Grün et al. —
+  `myb_meteoroid_flux`, `myb_meteoroid_rate`, `myb_meteoroid_mass`, `myb_meteoroid_next`,
+  `myb_meteoroid_propagate`.
+- `myb/cr3bp.h`: the stability and the manifolds of tori — `myb_cr3bp_torus_stability`,
+  `myb_cr3bp_torus_manifold`; `myb_cr3bp_propagate` with a surface of section.
+- `myb/dyn.h`: the fast multipole method as an approximate level of the graph —
+  `myb_nbody_set_approximation`, `myb_nbody_approximation` (off by default).
+- `myb/rel.h`: `MYB_PN_4` (4PN with the conservative tail), `MYB_PN_4RR` (the dissipative
+  tail), `MYB_PN_SO25`, `MYB_PN_SO35` (spin-orbit terms at the next two orders),
+  `MYB_PN_SORR` (spin-orbit radiation reaction); `myb_system_add_pn_pair` accepts them.
+- `myb/optimal.h`: insertion into an orbit with a free phase in the indirect method
+  (`myb_indirect_arrival`, `myb_indirect_problem.arrival`, `phase`); the field of a force model
+  in Sims–Flanagan (`myb_sims_flanagan.field`); chains of legs with flybys — `myb_chain`,
+  `myb_chain_size`, `myb_chain_guess`, `myb_chain_evaluate`, `myb_chain_solve`;
+  `myb_nlp_options.weight`.
 ### Changed
 - `MYB_TIDES_ALL` includes `MYB_TIDES_ADMITTANCE`: with a kernel that has a table of
   admittance and ocean waves loaded the result changes (the secondary waves are added).
@@ -183,6 +234,24 @@ version the API only grows. Details, checks and measured accuracies of every pha
   `static_assert(noexcept(…))`.
 - `myb_orbit` with DOP853 accepts `variational` (it was `MYB_E_DOMAIN`): the variations are
   integrated with the state.
+- Phase 22. New trailing fields (zero keeps the former behaviour): `myb_offset_measure.gm`,
+  `myb_system_light.theta`, `spin_axis`, `phases`, `myb_surface_drag_term.continuum`,
+  `myb_rkn12_options.interpolant`; `myb_system_merger.spin`.
+- `myb_system_merge` accepts bodies whose rotation is integrated and bodies of PN pairs (it
+  was `MYB_E_DOMAIN`); `MYB_E_DOMAIN` remains for b with an integrated rotation and a without.
+- CK: segments of types 4, 5, 6 are evaluated (they were loaded and passed over).
+- `myb_ionex_load` reads three-dimensional maps (it was `MYB_E_DOMAIN`); `myb_iono_grid`:
+  grids closed in longitude go round, a missing node is `MYB_E_RANGE`.
+- `myb_ellipsoid_nearest` no longer returns `MYB_E_NOCONV` for points just off a sphere (its
+  Newton steps fell below the resolution); the values it returned before are the same.
+- `myb/myb.h` includes `myb/contact.h` and `myb/meteoroid.h`.
+- `myb_wh_start` refuses (`MYB_E_DOMAIN`) a system with an approximation.
+- `myb_pn_binary.r0` is also the gauge length of the 4PN logarithms (both constants r′₀ = r″₀).
+- New trailing fields: `myb_indirect_problem.arrival`, `phase`, `myb_indirect_solution.phase`,
+  `myb_indirect_point.costate`, `myb_sims_flanagan.field`, `myb_nlp_options.weight`.
+- `myb_nlp_solve`: the penalty weight no longer grows once the constraints hold (the results of
+  the earlier tests are the same to the bit).
+- `myb/optimal.h` includes `myb/kin.h` and `myb/time.h`.
 
 ## 1.1.0.0 — 2026-11-10 (no tag)
 

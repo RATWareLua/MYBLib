@@ -12,7 +12,14 @@ typedef enum myb_internal_nbody_path {
   MYB_NBODY_PATH_RECEIVER = 2,  /* each receiver summed on its own, parallel when a pool is set,
                                    four receivers per vector block */
   MYB_NBODY_PATH_RECEIVER_SCALAR = 3, /* the same one receiver at a time (the reference) */
+  MYB_NBODY_PATH_FMM = 4, /* the fast multipole method (AUTO takes it once it is set; the other
+                             paths stay direct sums whatever is set) */
 } myb_internal_nbody_path;
+
+typedef struct myb_internal_fmm myb_internal_fmm;
+
+/* The evaluator of the approximation, NULL while the sums are exact. */
+myb_internal_fmm* myb_internal_nbody_fmm(myb_nbody* nbody);
 
 [[nodiscard]] myb_status myb_internal_nbody_acceleration_path(myb_nbody* nbody, const double* x,
                                                               double* a,

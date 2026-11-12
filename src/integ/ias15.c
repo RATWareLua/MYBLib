@@ -714,6 +714,50 @@ static myb_status dense_view(void* integrator, double t, double* y) {
   return myb_ias15_dense(integrator, t, y);
 }
 
+myb_status myb_internal_ias15_position_box(const myb_ias15* integrator, size_t coordinate,
+                                           double* lo, double* hi) {
+  MYB_CHECK(integrator != NULL && lo != NULL && hi != NULL && coordinate < integrator->n);
+  const myb_ias15* s = integrator;
+  if (!s->have_step) {
+    return MYB_E_RANGE;
+  }
+  enum { DEGREE = ORDER + 2 };
+  /* x(h) = x0 + (dt v0) h + (dt^2 a0 / 2) h^2 + sum_k dt^2 b_k w_k h^(k+3) */
+  const size_t n = s->n;
+  const double dt = s->h_last;
+  const double* b = s->b_last + (size_t)ORDER * coordinate;
+  double c[DEGREE + 1];
+  c[0] = s->y_old[coordinate] + s->comp_old[coordinate];
+  c[1] = dt * s->y_old[n + coordinate];
+  c[2] = dt * dt * 0.5 * s->a_old[coordinate];
+  for (int k = 0; k < ORDER; ++k) {
+    c[k + 3] = dt * dt * b[k] * x_weight[k];
+  }
+  /* Bernstein coefficients: beta_j = sum_{i <= j} C(j, i) / C(9, i) c_i */
+  static const double choose9[DEGREE + 1] = {1, 9, 36, 84, 126, 126, 84, 36, 9, 1};
+  double low = c[0];
+  double high = c[0];
+  double size = fabs(c[0]);
+  for (int j = 1; j <= DEGREE; ++j) {
+    double beta = 0.0;
+    double choose_j = 1.0; /* C(j, i) */
+    for (int i = 0; i <= j; ++i) {
+      beta += choose_j / choose9[i] * c[i];
+      choose_j = choose_j * (double)(j - i) / (double)(i + 1);
+    }
+    low = fmin(low, beta);
+    high = fmax(high, beta);
+    size = fmax(size, fabs(beta));
+  }
+  for (int i = 1; i <= DEGREE; ++i) {
+    size = fmax(size, fabs(c[i]) * 10.0);
+  }
+  const double margin = 64.0 * 2.220446049250313e-16 * size;
+  *lo = low - margin;
+  *hi = high + margin;
+  return MYB_OK;
+}
+
 myb_status myb_ias15_locate(myb_ias15* integrator, myb_event_function g, void* context,
                             int* found, double* t_event, double* y_event) {
   MYB_CHECK(integrator != NULL && g != NULL && found != NULL && t_event != NULL);

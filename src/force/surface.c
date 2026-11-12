@@ -307,6 +307,111 @@ myb_status myb_term_surface_radiation(void* term, double t, const double x[3], c
   return MYB_OK;
 }
 
+myb_status myb_internal_gas_at(myb_env* env, double t, size_t body, myb_density_function density,
+                               void* density_context, myb_wind_function wind, void* wind_context,
+                               const double x[3], const double v[3], myb_time* when,
+                               double fixed[3], double* rho, double w[3]) {
+  const double* s = NULL;
+  myb_status status = myb_internal_env_state(env, t, body, &s);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const myb_orientation* o = NULL;
+  const myb_rotation* inverse = NULL;
+  status = myb_internal_env_orientation(env, t, body, &o, &inverse);
+  if (status != MYB_OK) {
+    return status;
+  }
+  status = myb_internal_env_orientation_time(env, t, body, when);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double y[6];
+  sub3(x, s, y);
+  sub3(v, s + 3, y + 3);
+  double state[6];
+  myb_rotation_apply_state(&o->rotation, y, state);
+  status = density(density_context, *when, state, rho);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (!(*rho >= 0.0) || !isfinite(*rho)) {
+    return MYB_E_DOMAIN;
+  }
+  if (wind != NULL) {
+    double blowing[3];
+    status = wind(wind_context, *when, state, blowing);
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (!myb_vec3_finite(blowing)) {
+      return MYB_E_DOMAIN;
+    }
+    sub3(state + 3, blowing, state + 3);
+  }
+  memcpy(fixed, state, 3 * sizeof(double));
+  /* the velocity relative to the gas in the inertial axes */
+  myb_rotation_apply_position(inverse, state + 3, w);
+  return MYB_OK;
+}
+
+/* The term with a continuum (myb_continuum): the air of the place, the free molecules on the
+ * plates and the Newtonian continuum, each computed where its weight is not zero, blended in
+ * the body of the object. */
+static myb_status bridged_flow(const myb_surface_drag_term* d, double mass, myb_time when,
+                               const double fixed[3], double density, const double w_body[3],
+                               const double m[9], double a[3]) {
+  const myb_continuum* c = d->continuum;
+  myb_gas gas = d->gas;
+  myb_air air = {.temperature = gas.temperature, .molar_mass = gas.molar_mass,
+                 .heat_ratio = c->heat_ratio};
+  if (c->air != NULL) {
+    const myb_status status = c->air(c->air_context, when, fixed, &air);
+    if (status != MYB_OK) {
+      return status;
+    }
+    gas.temperature = air.temperature;
+    gas.molar_mass = air.molar_mass;
+  }
+  if (!myb_internal_air_valid(&air)) {
+    return MYB_E_DOMAIN;
+  }
+  double weight = 1.0; /* without a length, no transition: the free molecules alone */
+  if (d->length > 0.0) {
+    if (!(d->molecule > 0.0)) {
+      return MYB_E_DOMAIN;
+    }
+    weight = myb_gas_bridge(myb_gas_knudsen(density, gas.molar_mass, d->molecule, d->length));
+  }
+  double rare[3] = {0.0, 0.0, 0.0};
+  double dense[3] = {0.0, 0.0, 0.0};
+  myb_status status = MYB_OK;
+  if (weight > 0.0) {
+    status = myb_force_gas_plates(density, &gas, mass, d->plates, d->plate_count, w_body, rare);
+  }
+  if (status == MYB_OK && weight < 1.0) {
+    if (c->shape != NULL) {
+      double force[3];
+      status = myb_force_newtonian_mesh(c->shape, density, &air, w_body, c->shadows, force, NULL);
+      for (int i = 0; i < 3; ++i) {
+        dense[i] = force[i] / mass;
+      }
+    } else {
+      status = myb_force_newtonian_plates(density, &air, mass, d->plates, d->plate_count, w_body,
+                                          dense);
+    }
+  }
+  if (status != MYB_OK) {
+    return status;
+  }
+  double a_body[3];
+  for (int i = 0; i < 3; ++i) {
+    a_body[i] = weight * rare[i] + (1.0 - weight) * dense[i];
+  }
+  from_body(m, a_body, a);
+  return MYB_OK;
+}
+
 myb_status myb_term_surface_drag(void* term, double t, const double x[3], const double v[3],
                                  double a[3]) {
   const myb_surface_drag_term* d = term;
@@ -317,49 +422,17 @@ myb_status myb_term_surface_drag(void* term, double t, const double x[3], const 
   if (!(mass > 0.0)) {
     return MYB_E_DOMAIN;
   }
-  const double* s = NULL;
-  myb_status status = myb_internal_env_state(d->env, t, d->body, &s);
-  if (status != MYB_OK) {
-    return status;
-  }
-  const myb_orientation* o = NULL;
-  const myb_rotation* inverse = NULL;
-  status = myb_internal_env_orientation(d->env, t, d->body, &o, &inverse);
-  if (status != MYB_OK) {
-    return status;
-  }
   myb_time when;
-  status = myb_internal_env_orientation_time(d->env, t, d->body, &when);
-  if (status != MYB_OK) {
-    return status;
-  }
-  double y[6];
-  sub3(x, s, y);
-  sub3(v, s + 3, y + 3);
-  double fixed[6];
-  myb_rotation_apply_state(&o->rotation, y, fixed);
+  double fixed[3];
   double density = 0.0;
-  status = d->density(d->density_context, when, fixed, &density);
-  if (status != MYB_OK) {
-    return status;
-  }
-  if (!(density >= 0.0) || !isfinite(density)) {
-    return MYB_E_DOMAIN;
-  }
-  if (d->wind != NULL) {
-    double wind[3];
-    status = d->wind(d->wind_context, when, fixed, wind);
-    if (status != MYB_OK) {
-      return status;
-    }
-    if (!myb_vec3_finite(wind)) {
-      return MYB_E_DOMAIN;
-    }
-    sub3(fixed + 3, wind, fixed + 3);
-  }
   /* the velocity relative to the gas in the inertial axes, then in the body of the object */
   double w[3];
-  myb_rotation_apply_position(inverse, fixed + 3, w);
+  myb_status status =
+      myb_internal_gas_at(d->env, t, d->body, d->density, d->density_context, d->wind,
+                          d->wind_context, x, v, &when, fixed, &density, w);
+  if (status != MYB_OK) {
+    return status;
+  }
   double m[9];
   status = d->attitude(d->attitude_context, t, x, v, m);
   if (status != MYB_OK) {
@@ -374,6 +447,9 @@ myb_status myb_term_surface_drag(void* term, double t, const double x[3], const 
   zero3(a);
   if (density == 0.0) {
     return MYB_OK;
+  }
+  if (d->continuum != NULL) {
+    return bridged_flow(d, mass, when, fixed, density, w_body, m, a);
   }
   status = myb_force_gas_plates(density, &d->gas, mass, d->plates, d->plate_count, w_body,
                                 a_body);
@@ -760,6 +836,15 @@ myb_status myb_term_surface_drag_jacobian(void* term, double t, const double x[3
   const double mass = myb_internal_object_mass(d->object, t);
   if (!(mass > 0.0)) {
     return MYB_E_DOMAIN;
+  }
+  if (d->continuum != NULL) {
+    /* the Mach number, the air of the place, the parts of a mesh the flow reaches */
+    const double reach = myb_vec3_norm(x);
+    const double speed = myb_vec3_norm(v);
+    return myb_internal_state_differences(myb_term_surface_drag, term, t, x, v,
+                                          difference_step * (reach > 0.0 ? reach : 1.0),
+                                          difference_step * (speed > 0.0 ? speed : 1.0), dadx,
+                                          dadv);
   }
   double rho = 0.0;
   double gradient[3];

@@ -23,6 +23,7 @@ set(_files
   "GOCO06s.gfc|https://icgem.gfz-potsdam.de/getmodel/gfc/32ec2884630a02670476f752d2a2bf1c395d8c8d6d768090ed95b4f04b0d5863/GOCO06s.gfc|351d9d20b84cd2c0f52ce77146b1e3b774f408200b579ffaf98593cf3d271819|GOCO06s gravity field, degree 300 with trends and annual terms (ICGEM, CC BY 4.0)"
   "fes2004_Cnm-Snm.dat|https://iers-conventions.obspm.fr/content/chapter6/additional_info/tidemodels/fes2004_Cnm-Snm.dat|620dc48fd4d97baa14f532287b19788bd55dc2056e0b478ab0f928b951c194cf|FES2004 ocean tides as Stokes coefficients (IERS Conventions 2010, ch. 6)"
   "gpt3_5.grd|https://vmf.geo.tuwien.ac.at/codes/gpt3_5.grd|3bf35c611e7cd5c42a0650ee14652a8f36430127ec213ed7b7b867bd29245b3d|GPT3 empirical troposphere model, 5 degree grid (TU Wien)"
+  "s1_s2_s3_cm_noib_grid.dat|https://vmf.geo.tuwien.ac.at/APL_products/TIDAL/s1_s2_s3_cm_noib_grid.dat|0b54049c98a28ad0116c2ae022dcc444fbce5dd666a486679a6584f4c7ad3940|S1, S2, S3 atmospheric tide loading, 1 degree grid, centre of mass (TU Wien, VMF data server)"
   "igrf14coeffs.txt|https://www.ngdc.noaa.gov/IAGA/vmod/coeffs/igrf14coeffs.txt|8f8d88403028fc4ee92c4f38d97b46e0a87e2cfc496045b43c9e26c1d6b0903c|IGRF-14 geomagnetic field, Gauss coefficients 1900-2025 with secular variation (IAGA, NOAA NCEI)"
   "earth_latest_high_prec.bpc|https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/earth_latest_high_prec.bpc||ITRF93 Earth orientation from current EOP (binary PCK, updated daily)"
   "eopc04.1962-now|https://hpiers.obspm.fr/iers/eop/eopc04/eopc04.1962-now||IERS EOP 20 C04 daily series (updated weekly)"

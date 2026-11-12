@@ -244,6 +244,121 @@ static void test_indirect_time(void) {
   MT_CHECK(myb_indirect_sample(&problem, &fastest, &late, 1, NULL, &point) == MYB_E_DOMAIN);
 }
 
+/* The transversality condition at the arrival from the costates of a sample there, in the
+ * units of the solver (lengths in the first distance from the centre `length`): l_x . v +
+ * l_v . a for the state of the target orbit there, and the size of its two terms. */
+static double transversality(const myb_indirect_point* end, double length, double* size) {
+  const double time = sqrt(length * length * length / MU);
+  double r[3];
+  double v[3];
+  for (int i = 0; i < 3; ++i) {
+    r[i] = end->y[i] / length;
+    v[i] = end->y[3 + i] * time / length;
+  }
+  const double d = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+  double along = 0.0;
+  double lx = 0.0;
+  double lv = 0.0;
+  double vv = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    const double a = -r[i] / (d * d * d);
+    along += end->costate[i] * v[i] + end->costate[3 + i] * a;
+    lx += end->costate[i] * end->costate[i];
+    lv += end->costate[3 + i] * end->costate[3 + i];
+    vv += v[i] * v[i];
+  }
+  *size = sqrt(lx * vv) + sqrt(lv) / (d * d);
+  return along;
+}
+
+/* Insertion into an orbit with the phase free: the transfer of test_indirect_fuel ends
+ * anywhere on the target circle. */
+static void test_indirect_orbit(void) {
+  myb_indirect_problem problem = {.mu = MU, .thrust = 300.0, .exhaust = 3000.0, .t0 = 100.0,
+                                  .mass0 = 1000.0, .t1 = 4600.0, .goal = MYB_INDIRECT_FUEL,
+                                  .arrival = MYB_INDIRECT_ORBIT};
+  on_circle(7.0e6, 0.0, problem.start);
+  on_tilted_circle(8.0e6, 0.0, 0.06, problem.target); /* a point of the orbit, any */
+  myb_indirect_solution chosen;
+  MT_CHECK(myb_indirect_solve(&problem, NULL, NULL, &chosen) == MYB_OK);
+  const double n2 = sqrt(MU / (8.0e6 * 8.0e6 * 8.0e6));
+  const double angle = chosen.phase * n2; /* on the target circle, from the point given */
+  double there[6];
+  on_tilted_circle(8.0e6, angle, 0.06, there);
+  const profile p = look(&problem, &chosen, there);
+  myb_indirect_point end;
+  MT_CHECK(myb_indirect_sample(&problem, &chosen, &chosen.t1, 1, NULL, &end) == MYB_OK);
+  double size = 0.0;
+  const double cross = transversality(&end, 7.0e6, &size);
+  printf("indirect, the same into the orbit with the phase chosen: arrives %.4f rad along the "
+         "circle (%d first guesses, %d steps), %.3f kg left; misses the orbit by %.1e m, "
+         "%.1e m/s; transversality %.1e of its terms; Hamiltonian to %.1e; residual %.1e\n",
+         angle, chosen.tries, chosen.stages, chosen.mass1, p.miss_r, p.miss_v, fabs(cross) / size,
+         p.hamiltonian, chosen.residual);
+  MT_CHECK(chosen.smoothing == 1e-4 && chosen.phase >= 0.0 && chosen.phase < 2.0 * PI / n2);
+  MT_CHECK(p.miss_r < 0.05 && p.miss_v < 5e-5);
+  MT_CHECK(p.hamiltonian < 1e-7);
+  MT_CHECK(fabs(cross) < 1e-10 * size);
+  MT_CHECK(p.between < 0.02);
+  /* the rendezvous at the point chosen is the same transfer */
+  myb_indirect_problem fixed = problem;
+  fixed.arrival = MYB_INDIRECT_RENDEZVOUS;
+  memcpy(fixed.target, there, sizeof there);
+  myb_indirect_solution same;
+  MT_CHECK(myb_indirect_solve(&fixed, chosen.costate, NULL, &same) == MYB_OK);
+  printf("  the rendezvous at that point, from those costates: %.6f kg left (%.1e apart)\n",
+         same.mass1, fabs(same.mass1 - chosen.mass1));
+  MT_CHECK(fabs(same.mass1 - chosen.mass1) < 1e-4);
+  /* and every rendezvous at another point spends more */
+  /* the last: the rendezvous of test_indirect_fuel */
+  const double offsets[5] = {-0.1, -0.05, 0.1, 0.3, 4.4 - angle};
+  for (int k = 0; k < 5; ++k) {
+    on_tilted_circle(8.0e6, angle + offsets[k], 0.06, fixed.target);
+    myb_indirect_solution other;
+    const myb_status st = myb_indirect_solve(&fixed, NULL, NULL, &other);
+    printf("  a rendezvous %+.3f rad from it: %.3f kg left\n", offsets[k], other.mass1);
+    MT_CHECK(st == MYB_OK);
+    MT_CHECK(other.mass1 < chosen.mass1 + 1e-6);
+  }
+  /* from its own costates and phase the solution is found at once */
+  myb_indirect_problem again = problem;
+  again.phase = chosen.phase + 3.0 * 2.0 * PI / n2; /* the phase counts modulo the period */
+  myb_indirect_solution twice;
+  MT_CHECK(myb_indirect_solve(&again, chosen.costate, NULL, &twice) == MYB_OK);
+  MT_CHECK(fabs(twice.mass1 - chosen.mass1) < 1e-6 && fabs(twice.phase - chosen.phase) < 1e-3);
+  /* the least time into the orbit of 8000 km: no longer than to any point of it */
+  myb_indirect_problem fastest = {.mu = MU, .thrust = 300.0, .exhaust = 3000.0, .t0 = 0.0,
+                                  .mass0 = 1000.0, .t1 = 2500.0, .goal = MYB_INDIRECT_TIME,
+                                  .arrival = MYB_INDIRECT_ORBIT};
+  on_circle(7.0e6, 0.0, fastest.start);
+  on_circle(8.0e6, 0.5, fastest.target);
+  myb_indirect_solution quick;
+  MT_CHECK(myb_indirect_solve(&fastest, NULL, NULL, &quick) == MYB_OK);
+  double reached[6];
+  on_circle(8.0e6, 0.5 + quick.phase * n2, reached);
+  const profile q = look(&fastest, &quick, reached);
+  MT_CHECK(myb_indirect_sample(&fastest, &quick, &quick.t1, 1, NULL, &end) == MYB_OK);
+  const double cross_time = transversality(&end, 7.0e6, &size);
+  printf("  the least time into the circle of 8000 km: %.3f s (%d first guesses), arriving "
+         "%.4f rad along it; misses %.1e m, %.1e m/s; transversality %.1e of its terms; the "
+         "Hamiltonian %.1e everywhere\n",
+         quick.t1 - fastest.t0, quick.tries, 0.5 + quick.phase * n2, q.miss_r, q.miss_v,
+         fabs(cross_time) / size, fabs(end.hamiltonian) + q.hamiltonian);
+  MT_CHECK(q.miss_r < 0.05 && q.miss_v < 5e-5);
+  MT_CHECK(fabs(cross_time) < 1e-10 * size);
+  MT_CHECK(fabs(end.hamiltonian) < 1e-9 && q.hamiltonian < 1e-8); /* H = 0 all the way */
+  MT_CHECK(quick.t1 - fastest.t0 < 3633.451); /* test_indirect_time's rendezvous */
+  /* refused: an orbit that does not close */
+  myb_indirect_problem open = problem;
+  for (int i = 3; i < 6; ++i) {
+    open.target[i] *= 1.5;
+  }
+  MT_CHECK(myb_indirect_solve(&open, NULL, NULL, &chosen) == MYB_E_DOMAIN);
+  open = problem;
+  open.arrival = (myb_indirect_arrival)7;
+  MT_CHECK(myb_indirect_solve(&open, NULL, NULL, &chosen) == MYB_E_DOMAIN);
+}
+
 /* ---- The solver of nonlinear programs -------------------------------------------------------- */
 
 /* Problem 71 of W. Hock and K. Schittkowski (Test Examples for Nonlinear Programming Codes,
@@ -512,12 +627,159 @@ static void test_sims_flanagan(void) {
   MT_CHECK(myb_sims_flanagan_mismatch(&leg, throttles, mismatch, NULL, NULL) == MYB_E_DOMAIN);
 }
 
+/* The J2 of the Earth (its Jacobian left to the differences of the model). */
+typedef struct oblate {
+  double gm;
+  double j2;
+  double radius;
+} oblate;
+
+static myb_status oblate_term(void* context, double t, const double x[3], const double v[3],
+                              double a[3]) {
+  (void)t;
+  (void)v;
+  const oblate* o = context;
+  const double r2 = x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+  const double r = sqrt(r2);
+  const double z2 = x[2] * x[2] / r2;
+  const double k = 1.5 * o->j2 * o->gm * o->radius * o->radius / (r2 * r2 * r);
+  a[0] = k * x[0] * (5.0 * z2 - 1.0);
+  a[1] = k * x[1] * (5.0 * z2 - 1.0);
+  a[2] = k * x[2] * (5.0 * z2 - 3.0);
+  return MYB_OK;
+}
+
+/* The largest difference of the Jacobian of the mismatch from central differences, per unit
+ * of what a throttle moves (1e5 m, 1e2 m/s), over the throttles that are not zero. */
+static double mismatch_derivatives(const myb_sims_flanagan* leg, double* throttles,
+                                   double* jacobian, size_t n) {
+  double mismatch[6];
+  MT_CHECK(myb_sims_flanagan_mismatch(leg, throttles, mismatch, NULL, jacobian) == MYB_OK);
+  double worst = 0.0;
+  for (size_t j = 0; j < 3 * n; ++j) {
+    if (throttles[3 * (j / 3)] == 0.0 && throttles[3 * (j / 3) + 1] == 0.0) {
+      continue;
+    }
+    const double keep = throttles[j];
+    const double h = 1e-6;
+    double up[6];
+    double down[6];
+    throttles[j] = keep + h;
+    MT_CHECK(myb_sims_flanagan_mismatch(leg, throttles, up, NULL, NULL) == MYB_OK);
+    throttles[j] = keep - h;
+    MT_CHECK(myb_sims_flanagan_mismatch(leg, throttles, down, NULL, NULL) == MYB_OK);
+    throttles[j] = keep;
+    for (size_t r = 0; r < 6; ++r) {
+      const double scale = r < 3 ? 1.0e5 : 1.0e2;
+      worst = fmax(worst, fabs(jacobian[r * 3 * n + j] - (up[r] - down[r]) / (2.0 * h)) / scale);
+    }
+  }
+  return worst;
+}
+
+/* Sims and Flanagan in the field of a force model: the point mass as a model is the conics
+ * again; with J2 the transfer changes and the derivatives still hold. */
+static void test_sims_flanagan_field(void) {
+  enum { N = 30 };
+  myb_sims_flanagan leg = {.mu = MU, .thrust = 300.0, .exhaust = 3000.0, .t0 = 100.0,
+                           .mass0 = 1000.0, .t1 = 4600.0, .segments = N};
+  on_circle(7.0e6, 0.0, leg.start);
+  on_tilted_circle(8.0e6, 4.4, 0.06, leg.target);
+  static double throttles[3 * N];
+  static double conic[3 * N];
+  static double jacobian[6 * 3 * N];
+  mt_rng rng = {23};
+  for (int i = 0; i < N; ++i) {
+    const double size = i % 4 == 0 ? 0.0 : ((double)(mt_next(&rng) >> 11) * 0x1p-53);
+    const double a = 6.28 * ((double)(mt_next(&rng) >> 11) * 0x1p-53);
+    const double b = 1.4 * (((double)(mt_next(&rng) >> 11) * 0x1p-53) - 0.5);
+    throttles[3 * i] = size * myb_cos(b) * myb_cos(a);
+    throttles[3 * i + 1] = size * myb_cos(b) * myb_sin(a);
+    throttles[3 * i + 2] = size * myb_sin(b);
+  }
+  double by_conics[6];
+  double mass_conics = 0.0;
+  MT_CHECK(myb_sims_flanagan_mismatch(&leg, throttles, by_conics, &mass_conics, NULL) == MYB_OK);
+  myb_point_mass_term centre = {MU};
+  oblate earth = {MU, 1.08262668e-3, 6378137.0};
+  myb_force_model* field = NULL;
+  MT_CHECK(myb_force_model_create(NULL, &field) == MYB_OK);
+  MT_CHECK(myb_force_model_add(field, "centre", myb_term_point_mass, myb_term_point_mass_jacobian,
+                               &centre, NULL) == MYB_OK);
+  size_t j2 = 0;
+  MT_CHECK(myb_force_model_add(field, "J2", oblate_term, NULL, &earth, &j2) == MYB_OK);
+  myb_force_model_set_enabled(field, j2, 0);
+  /* the point mass as a model: the same mismatch, to the tolerance of the integration */
+  myb_sims_flanagan modelled = leg;
+  modelled.field = field;
+  double by_model[6];
+  double mass_model = 0.0;
+  MT_CHECK(myb_sims_flanagan_mismatch(&modelled, throttles, by_model, &mass_model, NULL) ==
+           MYB_OK);
+  double apart = 0.0;
+  for (int r = 0; r < 6; ++r) {
+    apart = fmax(apart, fabs(by_model[r] - by_conics[r]) / (r < 3 ? 7.0e6 : 7.5e3));
+  }
+  printf("Sims and Flanagan in a force model, 30 segments\n  the point mass as a model: the "
+         "mismatch of random throttles as by the conics to %.1e of the orbit, the same mass\n",
+         apart);
+  MT_CHECK(apart < 1e-11 && mass_model == mass_conics);
+  const double worst_point = mismatch_derivatives(&modelled, throttles, jacobian, N);
+  /* the transfer: the conics first, then the model */
+  memset(conic, 0, sizeof conic);
+  myb_sims_flanagan_result by_kepler;
+  MT_CHECK(myb_sims_flanagan_solve(&leg, NULL, conic, NULL, &by_kepler) == MYB_OK);
+  static double solved[3 * N];
+  memset(solved, 0, sizeof solved);
+  myb_sims_flanagan_result result;
+  MT_CHECK(myb_sims_flanagan_solve(&modelled, NULL, solved, NULL, &result) == MYB_OK);
+  double throttles_apart = 0.0;
+  for (int i = 0; i < 3 * N; ++i) {
+    throttles_apart = fmax(throttles_apart, fabs(solved[i] - conic[i]));
+  }
+  printf("  its Jacobian against differences %.1e; the least propellant %.6f kg against %.6f "
+         "by the conics (%.1e apart), the throttles within %.1e; %d evaluations\n",
+         worst_point, 1000.0 - result.mass1, 1000.0 - by_kepler.mass1,
+         fabs(result.mass1 - by_kepler.mass1), throttles_apart, result.nlp.evaluations);
+  MT_CHECK(worst_point < 1e-6);
+  MT_CHECK(fabs(result.mass1 - by_kepler.mass1) < 1e-3);
+  /* J2 */
+  myb_force_model_set_enabled(field, j2, 1);
+  const double worst = mismatch_derivatives(&modelled, throttles, jacobian, N);
+  MT_CHECK(myb_sims_flanagan_mismatch(&modelled, throttles, by_model, NULL, NULL) == MYB_OK);
+  double moved = 0.0;
+  for (int r = 0; r < 3; ++r) {
+    moved = fmax(moved, fabs(by_model[r] - by_conics[r]));
+  }
+  memset(solved, 0, sizeof solved);
+  MT_CHECK(myb_sims_flanagan_solve(&modelled, NULL, solved, NULL, &result) == MYB_OK);
+  double mismatch[6];
+  double mass1 = 0.0;
+  MT_CHECK(myb_sims_flanagan_mismatch(&modelled, solved, mismatch, &mass1, NULL) == MYB_OK);
+  const double miss_r = sqrt(mismatch[0] * mismatch[0] + mismatch[1] * mismatch[1] +
+                             mismatch[2] * mismatch[2]);
+  const double miss_v = sqrt(mismatch[3] * mismatch[3] + mismatch[4] * mismatch[4] +
+                             mismatch[5] * mismatch[5]);
+  printf("  with J2: random throttles meet %.1f km elsewhere; the Jacobian against differences "
+         "%.1e; the least propellant %.3f kg; the halves meet to %.1e m and %.1e m/s; %d "
+         "updates, %d evaluations\n",
+         moved / 1e3, worst, 1000.0 - result.mass1, miss_r, miss_v, result.nlp.outer,
+         result.nlp.evaluations);
+  MT_CHECK(worst < 1e-6);
+  MT_CHECK(moved > 1e3); /* J2 matters here */
+  MT_CHECK(miss_r < 0.1 && miss_v < 1e-4 && mass1 == result.mass1);
+  MT_CHECK(fabs(result.mass1 - by_kepler.mass1) > 0.1); /* and the answer is another */
+  myb_force_model_destroy(field);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_indirect_fuel();
   test_indirect_hohmann();
   test_indirect_time();
+  test_indirect_orbit();
   test_nlp();
   test_sims_flanagan();
+  test_sims_flanagan_field();
   return mt_finish("test_optimal");
 }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* The circular restricted three-body problem: dynamics, Lagrange points, periodic orbits,
- * stability, manifolds, Richardson's halo orbits, ephemeris frames. */
+ * stability, manifolds, propagation to a section, Richardson's halo orbits, ephemeris frames. */
 #include <math.h>
 #include <string.h>
 
@@ -8,6 +8,7 @@
 #include "core/base.h"
 #include "myb/cmath.h"
 #include "myb/cr3bp.h"
+#include "myb/integ.h"
 #include "myb/model.h"
 #include "myb/num.h"
 #include "myb/transfer.h"
@@ -406,6 +407,92 @@ myb_status myb_cr3bp_manifold(double mu, const double y0[6], double period, doub
   }
   for (int i = 0; i < 6; ++i) {
     y[i] = state[i] + sign * epsilon * w[i] / norm;
+  }
+  return MYB_OK;
+}
+
+/* ---- Propagation to a time or to a section --------------------------------------------------- */
+
+enum { PROPAGATE_STEPS = 1000000 };
+
+typedef struct plane {
+  int axis;
+  double value;
+} plane;
+
+static double plane_event(void* context, double t, const double* y) {
+  (void)t;
+  const plane* p = context;
+  return y[p->axis] - p->value;
+}
+
+myb_status myb_cr3bp_propagate(double mu, const double y0[6], double duration,
+                               const myb_cr3bp_section* section, double y[6], double* elapsed,
+                               int* crossed) {
+  MYB_CHECK(y0 != NULL && y != NULL);
+  if (!(mu > 0.0 && mu <= 0.5) || !isfinite(duration) ||
+      (section != NULL && (section->axis < 0 || section->axis > 5 || !isfinite(section->value) ||
+                           section->direction < -1 || section->direction > 1))) {
+    return MYB_E_DOMAIN;
+  }
+  double start[6]; /* y0 and y may be the same */
+  for (int i = 0; i < 6; ++i) {
+    if (!isfinite(y0[i])) {
+      return MYB_E_DOMAIN;
+    }
+    start[i] = y0[i];
+  }
+  double context = mu;
+  myb_ias15* integrator = NULL;
+  const myb_ias15_options o = {.epsilon = 1e-12};
+  myb_status st = myb_ias15_create(3, &o, NULL, &integrator);
+  if (st == MYB_OK) {
+    st = myb_ias15_start(integrator, myb_cr3bp_term, &context, 0.0, start);
+  }
+  memcpy(y, start, sizeof start);
+  double t = 0.0;
+  int found = 0;
+  plane p = {section != NULL ? section->axis : 0, section != NULL ? section->value : 0.0};
+  const double forward = duration < 0.0 ? -1.0 : 1.0;
+  double before = plane_event(&p, 0.0, start);
+  /* bound: PROPAGATE_STEPS accepted steps */
+  for (int step = 0; st == MYB_OK && !found && t != duration; ++step) {
+    if (step == PROPAGATE_STEPS) {
+      st = MYB_E_NOCONV;
+      break;
+    }
+    st = myb_ias15_step(integrator, duration);
+    if (st != MYB_OK) {
+      break;
+    }
+    t = myb_ias15_time(integrator);
+    memcpy(y, myb_ias15_state(integrator), 6 * sizeof *y);
+    if (section == NULL) {
+      continue;
+    }
+    const double after = plane_event(&p, t, y);
+    /* a change of sign in the step (a start on the plane is none), in the direction asked
+     * for in time, or either */
+    const int changed = (before < 0.0 && after >= 0.0) || (before > 0.0 && after <= 0.0);
+    const double rising = (after - before) * forward;
+    if (changed && (section->direction == 0 || (section->direction > 0) == (rising > 0.0))) {
+      double t_event = t;
+      st = myb_ias15_locate(integrator, plane_event, &p, &found, &t_event, y);
+      if (st == MYB_OK && found) {
+        t = t_event;
+      }
+    }
+    before = after;
+  }
+  myb_ias15_destroy(integrator);
+  if (st != MYB_OK) {
+    return st;
+  }
+  if (elapsed != NULL) {
+    *elapsed = t;
+  }
+  if (crossed != NULL) {
+    *crossed = found;
   }
   return MYB_OK;
 }

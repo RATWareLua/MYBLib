@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/* Symplectic compositions: order conditions of the weights, observed orders 2, 4, 6, 8, bounded
- * energy error over 10^4 orbits (no drift, unlike a non-symplectic method), time reversibility,
- * a time-dependent force, error statuses. */
+/* Symplectic compositions: order conditions of the weights, observed orders 2, 4, 6, 8 (the
+ * triple jump and the schemes of 7 and 15 stages), the error of the new schemes against the
+ * triple jump for equal work, bounded energy error over 10^4 orbits (no drift, unlike a
+ * non-symplectic method), time reversibility, a time-dependent force, error statuses. */
 #include <math.h>
 
 #include "core/fpguard.h"
@@ -20,9 +21,10 @@ static void test_weights(void) {
     const double* w;
     int count;
     int order;
-  } sets[] = {{myb_symplectic_order4, 3, 4}, {myb_symplectic_order6, 9, 6},
-              {myb_symplectic_order8, 27, 8}};
-  for (int k = 0; k < 3; ++k) {
+  } sets[] = {{myb_symplectic_order4, 3, 4},      {myb_symplectic_order6, 9, 6},
+              {myb_symplectic_order8, 27, 8},     {myb_symplectic_order6_s7, 7, 6},
+              {myb_symplectic_order8_s15, 15, 8}};
+  for (int k = 0; k < 5; ++k) {
     double s1 = 0.0;
     double s3 = 0.0;
     double s5 = 0.0;
@@ -42,7 +44,9 @@ static void test_weights(void) {
     if (sets[k].order >= 6) {
       MT_CHECK(fabs(s5) < 1e-14 * pow(size, 5));
     }
-    (void)s7; /* sum c^7 = 0 is not a condition of the triple jump of order 8 by itself */
+    if (sets[k].order >= 8) {
+      MT_CHECK(fabs(s7) < 1e-14 * pow(size, 7));
+    }
   }
 }
 
@@ -81,9 +85,11 @@ static void test_orders(void) {
   const double y0[6] = {start.r[0], start.r[1], start.r[2], start.v[0], start.v[1], start.v[2]};
   myb_pv exact = {};
   MT_CHECK(myb_kepler_propagate(mu, &start, 2.0 * pi, &exact) == MYB_OK);
-  const int orders[4] = {2, 4, 6, 8};
-  const int base[4] = {400, 200, 100, 50}; /* stay above round-off at the finest step */
-  for (int q = 0; q < 4; ++q) {
+  const int orders[6] = {2, 4, 6, 8, MYB_SYMPLECTIC_6_S7, MYB_SYMPLECTIC_8_S15};
+  const int expected[6] = {2, 4, 6, 8, 6, 8};
+  const int base[6] = {400, 200, 100, 50, 100, 50}; /* above round-off at the finest step */
+  double finest[6] = {0.0};
+  for (int q = 0; q < 6; ++q) {
     double previous = 0.0;
     double order_seen = 0.0;
     for (int k = 0; k < 3; ++k) {
@@ -100,10 +106,20 @@ static void test_orders(void) {
       previous = err;
       myb_symplectic_destroy(s);
     }
-    printf("order %d: observed %.2f (error %.2e at %d steps per orbit)\n", orders[q], order_seen,
-           previous, base[q] << 2);
-    MT_CHECK(fabs(order_seen - orders[q]) < 0.3);
+    printf("order %d%s: observed %.2f (error %.2e at %d steps per orbit)\n", expected[q],
+           q < 4 ? "" : (q == 4 ? ", 7 stages" : ", 15 stages"), order_seen, previous,
+           base[q] << 2);
+    MT_CHECK(fabs(order_seen - expected[q]) < 0.3);
+    finest[q] = previous;
   }
+  /* for equal work: the error of the new scheme at the same steps, scaled to as many
+   * evaluations as the triple jump spends, (stages ratio)^p */
+  const double gain6 = finest[2] / (finest[4] * pow(9.0 / 7.0, 6.0));
+  const double gain8 = finest[3] / (finest[5] * pow(27.0 / 15.0, 8.0));
+  printf("for equal work the error of the triple jump is %.0f times (order 6) and %.0f times "
+         "(order 8) that of the 7- and 15-stage schemes\n",
+         gain6, gain8);
+  MT_CHECK(gain6 > 1.4 && gain8 > 100.0);
 }
 
 static void test_energy(void) {

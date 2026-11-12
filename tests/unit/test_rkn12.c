@@ -180,6 +180,51 @@ static void test_dense_and_events(void) {
   myb_rkn12_destroy(s);
 }
 
+/* The interpolant of a step: nine states inside every step against the two-body solution, as
+ * accurate as the ends of the steps; what building it costs; at several tolerances. */
+static void test_interpolant(void) {
+  const myb_pv start = orbit(0.6);
+  const double y0[6] = {start.r[0], start.r[1], start.r[2], start.v[0], start.v[1], start.v[2]};
+  const double tolerances[3] = {1e-10, 1e-12, 1e-14};
+  for (int k = 0; k < 3; ++k) {
+    const myb_rkn12_options options = {.rtol = tolerances[k], .atol = tolerances[k],
+                                       .interpolant = 1};
+    myb_rkn12* s = NULL;
+    MT_CHECK(myb_rkn12_create(3, &options, NULL, &s) == MYB_OK);
+    MT_CHECK(myb_rkn12_start(s, two_body, NULL, 0.0, y0) == MYB_OK);
+    const double t_end = 3.0 * period();
+    double worst_inside = 0.0;
+    double worst_ends = 0.0;
+    int64_t spent = 0;
+    double t_previous = 0.0;
+    /* bound: the integration ends at t_end; at most 10^6 steps */
+    for (int i = 0; i < 1000000 && myb_rkn12_time(s) < t_end; ++i) {
+      MT_CHECK(myb_rkn12_step(s, t_end) == MYB_OK);
+      const double t_now = myb_rkn12_time(s);
+      myb_pv exact = {};
+      MT_CHECK(myb_kepler_propagate(mu, &start, t_now, &exact) == MYB_OK);
+      worst_ends = fmax(worst_ends, time_offset(myb_rkn12_state(s), &exact));
+      const int64_t before = myb_rkn12_statistics(s).evaluations;
+      for (int q = 1; q <= 9; ++q) {
+        const double tm = t_previous + 0.1 * q * (t_now - t_previous);
+        double y[6];
+        MT_CHECK(myb_rkn12_dense(s, tm, y) == MYB_OK);
+        MT_CHECK(myb_kepler_propagate(mu, &start, tm, &exact) == MYB_OK);
+        worst_inside = fmax(worst_inside, time_offset(y, &exact));
+      }
+      spent += myb_rkn12_statistics(s).evaluations - before;
+      t_previous = t_now;
+    }
+    const myb_rkn12_stats st = myb_rkn12_statistics(s);
+    printf("interpolant, rtol %.0e: inside the steps %.2e s, at their ends %.2e s; %.1f "
+           "evaluations a step to build it (a step: 17; the pair from the start: 16 a state)\n",
+           tolerances[k], worst_inside, worst_ends, (double)spent / (double)st.accepted);
+    MT_CHECK(worst_inside < 3.0 * worst_ends + 1e-12);
+    MT_CHECK((double)spent / (double)st.accepted < 9.0 * 16.0 / 2.0);
+    myb_rkn12_destroy(s);
+  }
+}
+
 static void test_backward_and_stops(void) {
   const myb_pv start = orbit(0.4);
   const double y0[6] = {start.r[0], start.r[1], start.r[2], start.v[0], start.v[1], start.v[2]};
@@ -241,6 +286,7 @@ int main(void) {
   test_order();
   test_adaptive();
   test_dense_and_events();
+  test_interpolant();
   test_backward_and_stops();
   test_errors();
   return mt_finish("test_rkn12");

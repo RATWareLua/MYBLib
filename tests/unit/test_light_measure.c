@@ -343,6 +343,87 @@ static myb_status radial_first(void* context, double t, const double x[3], const
   return MYB_OK;
 }
 
+/* A law that follows the velocity: x along it, z along the angular momentum. */
+static myb_status along_velocity(void* context, double t, const double x[3], const double v[3],
+                                 double m[9]) {
+  (void)context;
+  (void)t;
+  const double speed = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  const double h[3] = {x[1] * v[2] - x[2] * v[1], x[2] * v[0] - x[0] * v[2],
+                       x[0] * v[1] - x[1] * v[0]};
+  const double hn = sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+  if (!(speed > 0.0) || !(hn > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  for (int i = 0; i < 3; ++i) {
+    m[i] = v[i] / speed;
+    m[6 + i] = h[i] / hn;
+  }
+  m[3] = m[7] * m[2] - m[8] * m[1];
+  m[4] = m[8] * m[0] - m[6] * m[2];
+  m[5] = m[6] * m[1] - m[7] * m[0];
+  return MYB_OK;
+}
+
+/* The point of the arm on the Kepler orbit through y at t0, a time dt later. */
+static void point_on_orbit(const myb_offset_measure* arm, double t0, const double y[6],
+                           double dt, double point[3]) {
+  myb_pv from;
+  myb_pv to;
+  memcpy(from.r, y, sizeof from.r);
+  memcpy(from.v, y + 3, sizeof from.v);
+  MT_CHECK(myb_kepler_propagate(gm, &from, dt, &to) == MYB_OK);
+  double m[9];
+  MT_CHECK(arm->attitude(arm->attitude_context, t0 + dt, to.r, to.v, m) == MYB_OK);
+  for (int i = 0; i < 3; ++i) {
+    point[i] = to.r[i] + m[i] * arm->offset[0] + m[3 + i] * arm->offset[1] +
+               m[6 + i] * arm->offset[2];
+  }
+}
+
+/* The velocity of the point of an arm whose attitude follows the velocity: against the
+ * difference of the point on the true orbit; with gm the turning of the velocity is in it,
+ * without gm it is not. */
+static void test_offset_velocity(void) {
+  const double t = 700.0;
+  const double y[6] = {4.3e6, 3.6e6, 4.4e6, -5.1e3, 5.3e3, 0.7e3};
+  myb_offset_measure arm = {.measure = myb_measure_state, .attitude = along_velocity,
+                            .offset = {30.0, -20.0, 10.0}, .gm = gm};
+  double values[6];
+  MT_CHECK(myb_measure_offset(&arm, t, y, values, NULL) == MYB_OK);
+  /* the velocity of the point: a difference of fourth order over 0.25 s */
+  const double h = 0.25;
+  double p[4][3];
+  static const double at[4] = {-2.0, -1.0, 1.0, 2.0};
+  for (int k = 0; k < 4; ++k) {
+    point_on_orbit(&arm, t, y, at[k] * h, p[k]);
+  }
+  double with_gm = 0.0;
+  double turning = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    const double v = (p[0][i] - 8.0 * p[1][i] + 8.0 * p[2][i] - p[3][i]) / (12.0 * h);
+    with_gm = fmax(with_gm, fabs(values[3 + i] - v));
+    turning = fmax(turning, fabs(v - y[3 + i]));
+  }
+  arm.gm = 0.0;
+  MT_CHECK(myb_measure_offset(&arm, t, y, values, NULL) == MYB_OK);
+  double without_gm = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    const double v = (p[0][i] - 8.0 * p[1][i] + 8.0 * p[2][i] - p[3][i]) / (12.0 * h);
+    without_gm = fmax(without_gm, fabs(values[3 + i] - v));
+  }
+  arm.gm = gm;
+  const double worst_partials = check_partials(myb_measure_offset, &arm, t, y, 6, 0);
+  printf("a point 37 m from the centre of mass, the attitude along the velocity: it moves "
+         "%.2e m/s against the centre; its velocity against the difference of its places on "
+         "the orbit %.1e m/s with gm, %.1e m/s with the velocity kept; derivatives against "
+         "differences, of what a difference allows: %.2f\n",
+         turning, with_gm, without_gm, worst_partials);
+  MT_CHECK(with_gm < 1e-8 && without_gm > 1e-3 && worst_partials < 1.0);
+  arm.gm = -1.0;
+  MT_CHECK(myb_measure_offset(&arm, t, y, values, NULL) == MYB_E_DOMAIN);
+}
+
 /* The measurement of a point off the centre of mass: its derivatives with the attitude that
  * follows the orbit. A long arm makes the part of the attitude visible. */
 static void test_offset(scene* s) {
@@ -396,6 +477,7 @@ int main(void) {
   test_directions(&s);
   test_fit(&s);
   test_offset(&s);
+  test_offset_velocity();
   myb_env_destroy(s.env);
   return mt_finish("test_light_measure");
 }

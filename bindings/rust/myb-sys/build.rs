@@ -28,6 +28,7 @@ fn main() {
         ("CARGO_FEATURE_NRLMSISE00", "myb_nrlmsise00"),
         ("CARGO_FEATURE_TROPOSPHERE", "myb_troposphere"),
         ("CARGO_FEATURE_IONOSPHERE", "myb_ionosphere"),
+        ("CARGO_FEATURE_JB2008", "myb_jb2008"),
     ] {
         if env::var_os(feature).is_some() {
             libraries.push(name);

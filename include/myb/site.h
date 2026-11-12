@@ -101,6 +101,28 @@ MYB_API void myb_ocean_loading_destroy(myb_ocean_loading* loading); /* accepts N
 MYB_API void myb_ocean_loading_at(const myb_site_tides* tides, const myb_ocean_loading* loading,
                                   myb_time t, double dynamical, double displacement[3]);
 
+/* ---- The load of the atmospheric tides at a point ---------------------------------------------
+ * The twelve coefficients of eq. 19 for myb_site_loads.atmosphere (up, east, north; for each
+ * the cosine and the sine of one and of two cycles a day, metres) from the record of the
+ * point `site` in a file of the form the loading calculator of the IERS gives for the model
+ * of R. D. Ray and R. M. Ponte (Ann. Geophys. 21, 1897, 2003) by T. van Dam: lines that
+ * begin with $$ are comments; a record is the name of the point on a line of its own, then
+ * three lines — radial, north-south, east-west — of four numbers: cos S1, sin S1, cos S2,
+ * sin S2, in millimetres. Or a line of the files of stations of TU Wien (the VMF data
+ * server, APL_products/TIDAL/s1_s2_s3_cm_noib_{vlbi,slr,gnss,doris}.dat): the name, then
+ * for radial, east, north the cosine and the sine of S1, S2 and S3 (18 numbers, mm; S3 is
+ * not read — eq. 19 has S1 and S2); the first line of the name is taken. The name is
+ * compared as in myb_ocean_loading_load. Errors: MYB_E_NOT_FOUND (no such point),
+ * MYB_E_FORMAT (diag gives the line), MYB_E_IO. */
+MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_load(const char* text, size_t size,
+                                                          const char* site,
+                                                          double coefficients[12],
+                                                          myb_diag* diag);
+MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_load_file(const char* path,
+                                                               const char* site,
+                                                               double coefficients[12],
+                                                               myb_diag* diag);
+
 /* ---- A grid of coefficients ------------------------------------------------------------------
  * Numbers given at the nodes of a grid of equal steps in longitude and latitude, in the form
  * of the file of the ocean pole tide load of the Conventions (opoleloadcoefcmcor.txt): a
@@ -127,6 +149,23 @@ MYB_API size_t myb_site_grid_values(const myb_site_grid* grid); /* per node */
  * (outside the grid), MYB_E_DOMAIN (not finite). */
 MYB_API MYB_NODISCARD myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude,
                                                   double latitude, double* values);
+
+/* The coefficients of the atmospheric tides on a grid, from the file of S1, S2 and S3 of TU
+ * Wien (the VMF data server, APL_products/TIDAL/s1_s2_s3_{cm,ce}_noib_grid.dat; Ray and Ponte's
+ * method on the pressure of ECMWF): rows of latitude, longitude (degrees; the longitude
+ * running first) and, for radial, east and north, the cosine and the sine of S1, S2 and S3
+ * (mm) of a time from 0 h UTC. The grid is taken from the rows (equal steps in each; the
+ * latitudes may fall); its values are the twelve numbers of myb_site_loads.atmosphere in
+ * metres — S3 is not read, eq. 19 has S1 and S2 — so that myb_site_grid_at gives them at a
+ * point. The grid of TU Wien runs from 89.5 to -89.5 degrees: a point nearer a pole is
+ * outside it (MYB_E_RANGE). Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM,
+ * MYB_E_IO. */
+MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_grid_load(const char* text, size_t size,
+                                                               const myb_allocator* allocator,
+                                                               myb_site_grid** grid,
+                                                               myb_diag* diag);
+MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_grid_load_file(
+    const char* path, const myb_allocator* allocator, myb_site_grid** grid, myb_diag* diag);
 
 /* ---- The displacement ------------------------------------------------------------------------ */
 

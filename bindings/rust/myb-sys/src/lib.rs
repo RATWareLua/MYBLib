@@ -9,7 +9,7 @@
 //! take in safe types.
 //!
 //! The optional libraries of `ext/` are modules behind features of the same names: `sgp4`,
-//! `nrlmsise00`, `troposphere`, `ionosphere`.
+//! `nrlmsise00`, `troposphere`, `ionosphere`, `jb2008`.
 #![allow(non_camel_case_types, non_upper_case_globals, non_snake_case)]
 #![allow(clippy::all)]
 
@@ -33,6 +33,11 @@ pub mod troposphere {
 #[cfg(feature = "ionosphere")]
 pub mod ionosphere {
     include!("ext_ionosphere.rs");
+}
+
+#[cfg(feature = "jb2008")]
+pub mod jb2008 {
+    include!("ext_jb2008.rs");
 }
 
 #[cfg(test)]

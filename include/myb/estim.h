@@ -125,20 +125,23 @@ MYB_API MYB_NODISCARD myb_status myb_measure_azel(void* station, double t, const
  * the phase centre of an antenna: the measurement `measure` (with its context) is taken at
  * the state of that point, offset (m, in the body frame) from the centre of mass and turned
  * by the attitude of the object; its velocity includes the turning of the body: the
- * attitude half a second before and after, at the places the velocity leads to and with the
- * velocity kept — the turning of a law that follows the place (the orbital axes, the nadir),
- * not of one that follows the direction of the velocity alone. The derivatives are those of
- * the measurement at the point times those of
- * the point in the state: the centre of mass and the offset as the attitude follows the
- * orbit (the laws of myb/surface.h differentiated as they are written, any other law by
- * central differences of the law) — a part in |offset| / |x|. The measurement must write
- * every row of its derivatives. */
+ * attitude half a second before and after, at the states the motion leads to — about a
+ * point mass gm at the origin of the environment when gm > 0 (so that a law which follows
+ * the velocity turns as the velocity does), in a straight line with the velocity kept when
+ * gm = 0 (enough for a law that follows the place: the orbital axes, the nadir). The
+ * derivatives are those of the measurement at the point times those of the point in the
+ * state: the centre of mass and the offset as the attitude follows the orbit (the laws of
+ * myb/surface.h differentiated as they are written, any other law by central differences of
+ * the law) — a part in |offset| / |x|. The measurement must write every row of its
+ * derivatives. Errors: those of the measurement and of the attitude, MYB_E_DOMAIN (gm
+ * negative, the object at the origin with gm > 0). */
 typedef struct myb_offset_measure {
   myb_measure_function measure;
   void* context;
   myb_attitude_function attitude;
   void* attitude_context;
   double offset[3];
+  double gm; /* of the body at the origin, m^3 s^-2; 0: the velocity kept over the second */
 } myb_offset_measure;
 
 MYB_API MYB_NODISCARD myb_status myb_measure_offset(void* offset, double t, const double y[6],

@@ -555,3 +555,438 @@ myb_status myb_collision_probability_max(const myb_encounter* encounter, double*
   *factor = myb_exp(f1 > f2 ? x1 : x2);
   return MYB_OK;
 }
+
+/* ---- Long encounters ---------------------------------------------------------------------- */
+
+enum {
+  SPHERE_LEVELS = 7,   /* doublings of the grid on the sphere */
+  PIECES = 4000,       /* of the adaptive integral in time */
+  PIECE_STACK = 64     /* halvings of one panel at most */
+};
+
+/* Gauss-Legendre, 8 nodes on [-1, 1] (the halves) */
+static const double gl8_node[4] = {0.1834346424956498, 0.5255324099163290, 0.7966664774136267,
+                                   0.9602898564975363};
+static const double gl8_weight[4] = {0.3626837833783620, 0.3137066458778873,
+                                     0.2223810344533745, 0.1012285362903763};
+
+/* Gauss-Kronrod 15 (the nodes of Gauss 7 are the odd ones) */
+static const double gk_node[8] = {0.991455371120812639206854697526329,
+                                  0.949107912342758524526189684047851,
+                                  0.864864423359769072789712788640926,
+                                  0.741531185599394439863864773280788,
+                                  0.586087235467691130294144845693013,
+                                  0.405845151377397166906606412076961,
+                                  0.207784955007898467600689403773245,
+                                  0.0};
+static const double gk_weight[8] = {0.022935322010529224963732008058970,
+                                    0.063092092629978553290700663189204,
+                                    0.104790010322250183839876322541518,
+                                    0.140653259715525918745189590510238,
+                                    0.169004726639267902826583426598550,
+                                    0.190350578064785409913256402421014,
+                                    0.204432940075298892414161999234649,
+                                    0.209482141084727828012999174891714};
+static const double g7_weight[4] = {0.129484966168869693270611432679082,
+                                    0.279705391489276667901467771423780,
+                                    0.381830050505118944950369775488975,
+                                    0.417959183673469387755102040816327};
+
+/* The Cholesky factor of a 3 x 3 matrix (lower, row-major); 0 if not positive definite. */
+static int cholesky3(const double a[9], double l[9]) {
+  memset(l, 0, 9 * sizeof *l);
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j <= i; ++j) {
+      double sum = a[3 * i + j];
+      for (int k = 0; k < j; ++k) {
+        sum -= l[3 * i + k] * l[3 * j + k];
+      }
+      if (i == j) {
+        if (!(sum > 0.0)) {
+          return 0;
+        }
+        l[3 * i + i] = sqrt(sum);
+      } else {
+        l[3 * i + j] = sum / l[3 * j + j];
+      }
+    }
+  }
+  return 1;
+}
+
+/* The mean inward flux of a Gaussian of mean m and deviation s: E[(-u)^+]. */
+static double inward(double m, double s) {
+  if (!(s > 0.0)) {
+    return m < 0.0 ? -m : 0.0;
+  }
+  const double x = m / s;
+  /* s phi(x) - m Phi(-x), Phi(-x) = erfc(x / sqrt 2) / 2 */
+  return s * 0.3989422804014327 * myb_exp(-0.5 * x * x) -
+         m * 0.5 * myb_internal_erfc(x * 0.7071067811865476);
+}
+
+myb_status myb_collision_rate(const double mean[6], const double covariance[36], double radius,
+                              double* rate) {
+  MYB_CHECK(mean != NULL && covariance != NULL && rate != NULL);
+  if (!(radius > 0.0) || !isfinite(radius)) {
+    return MYB_E_DOMAIN;
+  }
+  for (int i = 0; i < 36; ++i) {
+    if (!isfinite(covariance[i]) || (i < 6 && !isfinite(mean[i]))) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  /* A (position), B (position x velocity), D (velocity) */
+  double a[9];
+  double b[9];
+  double d[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      a[3 * i + j] = 0.5 * (covariance[6 * i + j] + covariance[6 * j + i]);
+      b[3 * i + j] = 0.5 * (covariance[6 * i + 3 + j] + covariance[6 * (3 + j) + i]);
+      d[3 * i + j] = 0.5 * (covariance[6 * (3 + i) + 3 + j] + covariance[6 * (3 + j) + 3 + i]);
+    }
+  }
+  double l[9];
+  if (!cholesky3(a, l)) {
+    return MYB_E_DOMAIN;
+  }
+  /* A^-1 by the factor; K = B^T A^-1 (the velocity given the place), C = D - B^T A^-1 B */
+  double inverse[9];
+  for (int col = 0; col < 3; ++col) {
+    double y[3];
+    for (int i = 0; i < 3; ++i) {
+      double sum = i == col ? 1.0 : 0.0;
+      for (int k = 0; k < i; ++k) {
+        sum -= l[3 * i + k] * y[k];
+      }
+      y[i] = sum / l[3 * i + i];
+    }
+    for (int i = 2; i >= 0; --i) {
+      double sum = y[i];
+      for (int k = i + 1; k < 3; ++k) {
+        sum -= l[3 * k + i] * inverse[3 * k + col];
+      }
+      inverse[3 * i + col] = sum / l[3 * i + i];
+    }
+  }
+  double k_gain[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      double sum = 0.0;
+      for (int m = 0; m < 3; ++m) {
+        sum += b[3 * m + i] * inverse[3 * m + j];
+      }
+      k_gain[3 * i + j] = sum;
+    }
+  }
+  double c[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      double sum = d[3 * i + j];
+      for (int m = 0; m < 3; ++m) {
+        sum -= k_gain[3 * i + m] * b[3 * m + j];
+      }
+      c[3 * i + j] = sum;
+    }
+  }
+  /* the grid on the sphere has its pole along the mean relative velocity at the centre (given
+   * the place there): the flux turns on and off across the great circle at right angles to
+   * it — sharply where the velocity is nearly certain — and that circle is then the equator,
+   * a boundary of the panels */
+  double axis[3];
+  for (int i = 0; i < 3; ++i) {
+    double ki = 0.0;
+    for (int m = 0; m < 3; ++m) {
+      ki -= k_gain[3 * i + m] * mean[m];
+    }
+    axis[i] = mean[3 + i] + ki;
+  }
+  double frame[9]; /* rows: two directions across the axis, then the axis */
+  const double size = myb_vec3_norm(axis);
+  if (size > 0.0 && isfinite(size)) {
+    for (int i = 0; i < 3; ++i) {
+      frame[6 + i] = axis[i] / size;
+    }
+  } else {
+    frame[6] = 0.0;
+    frame[7] = 0.0;
+    frame[8] = 1.0;
+  }
+  {
+    int least = 0;
+    for (int i = 1; i < 3; ++i) {
+      if (fabs(frame[6 + i]) < fabs(frame[6 + least])) {
+        least = i;
+      }
+    }
+    double e[3] = {0.0, 0.0, 0.0};
+    e[least] = 1.0;
+    myb_vec3_cross(frame + 6, e, frame);
+    const double n0 = myb_vec3_norm(frame);
+    for (int i = 0; i < 3; ++i) {
+      frame[i] /= n0;
+    }
+    myb_vec3_cross(frame + 6, frame, frame + 3);
+  }
+  const double det = l[0] * l[4] * l[8];
+  const double norm = 1.0 / (15.749609945722419 * det); /* (2 pi)^(3/2) sqrt(det A) */
+  double last = -1.0;
+  int panels = 2;
+  int around = 16;
+  for (int level = 0; level < SPHERE_LEVELS; ++level) { /* bound: SPHERE_LEVELS */
+    const double width = 2.0 / (double)panels;
+    double sum = 0.0;
+    for (int p = 0; p < panels; ++p) {
+      const double centre = -1.0 + ((double)p + 0.5) * width;
+      for (int q = 0; q < 8; ++q) {
+        const double z = centre + (q < 4 ? -1.0 : 1.0) * 0.5 * width * gl8_node[q % 4];
+        const double wz = 0.5 * width * gl8_weight[q % 4];
+        const double ring = sqrt(fmax(0.0, 1.0 - z * z));
+        double row = 0.0;
+        for (int j = 0; j < around; ++j) {
+          const double phi = 2.0 * pi * ((double)j + 0.5) / (double)around;
+          const double cx = ring * myb_cos(phi);
+          const double cy = ring * myb_sin(phi);
+          const double n[3] = {cx * frame[0] + cy * frame[3] + z * frame[6],
+                               cx * frame[1] + cy * frame[4] + z * frame[7],
+                               cx * frame[2] + cy * frame[5] + z * frame[8]};
+          double dx[3];
+          for (int i = 0; i < 3; ++i) {
+            dx[i] = radius * n[i] - mean[i];
+          }
+          double quad = 0.0;
+          double mu = 0.0;
+          for (int i = 0; i < 3; ++i) {
+            double ai = 0.0;
+            double ki = 0.0;
+            for (int m = 0; m < 3; ++m) {
+              ai += inverse[3 * i + m] * dx[m];
+              ki += k_gain[3 * i + m] * dx[m];
+            }
+            quad += dx[i] * ai;
+            mu += n[i] * (mean[3 + i] + ki);
+          }
+          double s2 = 0.0;
+          for (int i = 0; i < 3; ++i) {
+            for (int m = 0; m < 3; ++m) {
+              s2 += n[i] * c[3 * i + m] * n[m];
+            }
+          }
+          row += myb_exp(-0.5 * quad) * inward(mu, sqrt(fmax(s2, 0.0)));
+        }
+        sum += wz * row * (2.0 * pi / (double)around);
+      }
+    }
+    const double value = radius * radius * norm * sum;
+    if (!isfinite(value)) {
+      return MYB_E_DOMAIN;
+    }
+    if (level > 0 && (fabs(value - last) <= 1e-12 * value || (value < 1e-300 && last < 1e-300))) {
+      *rate = value;
+      return MYB_OK;
+    }
+    last = value;
+    panels *= 2;
+    around *= 2;
+  }
+  return MYB_E_NOCONV;
+}
+
+/* The two rules of Gauss and Kronrod over [a, b] from the rates at their 15 nodes, in the
+ * order of the time. */
+static void kronrod_sums(const double rates[15], double a, double b, double* kronrod,
+                         double* gauss) {
+  const double half = 0.5 * (b - a);
+  double k = gk_weight[7] * rates[7];
+  double g = g7_weight[3] * rates[7];
+  for (int j = 0; j < 7; ++j) {
+    const double pair = rates[j] + rates[14 - j];
+    k += gk_weight[j] * pair;
+    if (j % 2 == 1) {
+      g += g7_weight[j / 2] * pair;
+    }
+  }
+  *kronrod = half * k;
+  *gauss = half * g;
+}
+
+/* The time of node j (0 .. 14, increasing) of the rule over [a, b]. */
+static double kronrod_time(double a, double b, int j) {
+  const double centre = 0.5 * (a + b);
+  const double half = 0.5 * (b - a);
+  return j < 7 ? centre - half * gk_node[j] : (j == 7 ? centre : centre + half * gk_node[14 - j]);
+}
+
+static myb_status rate_of(myb_relative_gaussian_function f, void* context, double t,
+                          double radius, double* rate) {
+  double mean[6];
+  double covariance[36];
+  const myb_status status = f(context, t, mean, covariance);
+  if (status != MYB_OK) {
+    return status;
+  }
+  return myb_collision_rate(mean, covariance, radius, rate);
+}
+
+myb_status myb_collision_probability_long(myb_relative_gaussian_function f, void* context,
+                                          double t0, double t1, double step, double radius,
+                                          double* probability, double* error) {
+  MYB_CHECK(f != NULL && probability != NULL);
+  if (!(t1 > t0) || !(step > 0.0) || !isfinite(t0) || !isfinite(t1) || !isfinite(step)) {
+    return MYB_E_DOMAIN;
+  }
+  const double panels_wanted = ceil((t1 - t0) / step);
+  if (!(panels_wanted < (double)PIECES)) {
+    return MYB_E_DOMAIN;
+  }
+  const int panels = (int)panels_wanted;
+  /* first pass: the panels, to know the size of the total */
+  double total = 0.0;
+  double spread = 0.0;
+  int pieces = 0;
+  double stack_a[PIECE_STACK];
+  double stack_b[PIECE_STACK];
+  for (int p = 0; p < panels; ++p) {
+    const double a0 = t0 + (t1 - t0) * ((double)p / (double)panels);
+    const double b0 = p + 1 == panels ? t1 : t0 + (t1 - t0) * ((double)(p + 1) / (double)panels);
+    int depth = 0;
+    stack_a[depth] = a0;
+    stack_b[depth] = b0;
+    ++depth;
+    while (depth > 0) { /* bound: PIECES pieces in all */
+      --depth;
+      const double a = stack_a[depth];
+      const double b = stack_b[depth];
+      if (++pieces > PIECES) {
+        return MYB_E_NOCONV;
+      }
+      double rates[15];
+      for (int j = 0; j < 15; ++j) {
+        const myb_status status = rate_of(f, context, kronrod_time(a, b, j), radius, &rates[j]);
+        if (status != MYB_OK) {
+          return status;
+        }
+      }
+      double k = 0.0;
+      double g = 0.0;
+      kronrod_sums(rates, a, b, &k, &g);
+      const double gap = fabs(k - g);
+      /* halved while the two disagree against the total so far and this piece's own size */
+      if (gap > 1e-10 * fmax(fabs(total) + fabs(k), 1e-300) && depth + 2 <= PIECE_STACK &&
+          b - a > 1e-9 * (t1 - t0)) {
+        const double middle = 0.5 * (a + b);
+        stack_a[depth] = middle;
+        stack_b[depth] = b;
+        ++depth;
+        stack_a[depth] = a;
+        stack_b[depth] = middle;
+        ++depth;
+        continue;
+      }
+      total += k;
+      spread += gap;
+    }
+  }
+  *probability = total;
+  if (error != NULL) {
+    *error = spread;
+  }
+  return MYB_OK;
+}
+
+/* The relative Gaussian of two orbits at t: the difference of the states and the sum of
+ * Phi P Phi^T. */
+static myb_status orbits_gaussian(const pair_of_orbits* p, double t, double mean[6],
+                                  double covariance[36]) {
+  transitions phi;
+  myb_status status = pair_at(p, t, mean, &phi);
+  if (status != MYB_OK) {
+    return status;
+  }
+  memset(covariance, 0, 36 * sizeof *covariance);
+  for (int body = 0; body < 2; ++body) {
+    const double* m = body == 0 ? phi.first : phi.second;
+    const double* cov = body == 0 ? p->first_covariance : p->second_covariance;
+    double mp[36];
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) {
+        double sum = 0.0;
+        for (int k = 0; k < 6; ++k) {
+          sum += m[6 * i + k] * cov[6 * k + j];
+        }
+        mp[6 * i + j] = sum;
+      }
+    }
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) {
+        double sum = 0.0;
+        for (int k = 0; k < 6; ++k) {
+          sum += mp[6 * i + k] * m[6 * j + k];
+        }
+        covariance[6 * i + j] += sum;
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status myb_conjunction_long(myb_orbit* first, const double first_covariance[36],
+                                myb_orbit* second, const double second_covariance[36],
+                                double radius, double t1, double step, double* probability,
+                                double* error) {
+  MYB_CHECK(first != NULL && second != NULL && first_covariance != NULL &&
+            second_covariance != NULL && probability != NULL);
+  const double t0 = myb_orbit_time(first);
+  if (myb_orbit_time(second) != t0 || !(step > 0.0) || !isfinite(t1) || !isfinite(step) ||
+      t1 == t0) {
+    return MYB_E_DOMAIN;
+  }
+  const double span = fabs(t1 - t0);
+  const double panels_wanted = ceil(span / step);
+  if (!(panels_wanted < (double)PIECES)) {
+    return MYB_E_DOMAIN;
+  }
+  const int panels = (int)panels_wanted;
+  const pair_of_orbits pair = {.first = first,
+                               .second = second,
+                               .first_covariance = first_covariance,
+                               .second_covariance = second_covariance,
+                               .radius = radius};
+  double total = 0.0;
+  double spread = 0.0;
+  for (int p = 0; p < panels; ++p) {
+    const double a = t0 + (t1 - t0) * ((double)p / (double)panels);
+    const double b = p + 1 == panels ? t1 : t0 + (t1 - t0) * ((double)(p + 1) / (double)panels);
+    double rates[15];
+    for (int j = 0; j < 15; ++j) {
+      /* the nodes in the order of the propagation, backward as well */
+      const int node = t1 > t0 ? j : 14 - j;
+      double mean[6];
+      double covariance[36];
+      myb_status status = orbits_gaussian(&pair, kronrod_time(a, b, node), mean, covariance);
+      if (status == MYB_OK) {
+        status = myb_collision_rate(mean, covariance, radius, &rates[node]);
+      }
+      if (status != MYB_OK) {
+        return status;
+      }
+    }
+    double k = 0.0;
+    double g = 0.0;
+    kronrod_sums(rates, a, b, &k, &g);
+    total += fabs(k);
+    spread += fabs(k - g);
+  }
+  /* the end of the propagation */
+  double end[6];
+  const myb_status status = pair_at(&pair, t1, end, NULL);
+  if (status != MYB_OK) {
+    return status;
+  }
+  *probability = total;
+  if (error != NULL) {
+    *error = spread;
+  }
+  return MYB_OK;
+}

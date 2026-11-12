@@ -75,7 +75,7 @@ _extensions = {}
 
 def extension(name):
     """The library of an optional module of ext/ ("sgp4", "nrlmsise00", "troposphere",
-    "ionosphere"): its functions are attributes of what is returned, its types are known to
+    "ionosphere", "jb2008"): its functions are attributes of what is returned, its types are known to
     `ffi`. It is looked for next to the library of the core, then as that one is."""
     if name in _extensions:
         return _extensions[name]

@@ -451,6 +451,131 @@ static void test_ocean_pole(void) {
   myb_site_tides_destroy(tides);
 }
 
+/* The coefficients of S1 and S2 of a point from a file of the loading calculator. */
+static void test_atmosphere_file(void) {
+  double c[12];
+  myb_diag diag = {0};
+  MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/atmosphere.atl", "BETA", c,
+                                         &diag) == MYB_OK);
+  /* up from the radial row, east from the east-west row, north from the north-south row */
+  MT_CHECK(fabs(c[0] - 0.33e-3) < 1e-18 && fabs(c[3] - 0.21e-3) < 1e-18 &&
+           fabs(c[4] + 0.08e-3) < 1e-18 && fabs(c[7] + 0.04e-3) < 1e-18 &&
+           fabs(c[8] - 0.03e-3) < 1e-18 && fabs(c[11] - 0.06e-3) < 1e-18);
+  MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/atmosphere.atl", "delta", c,
+                                         &diag) == MYB_E_NOT_FOUND);
+  MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/atmosphere.atl", "gamma", c,
+                                         &diag) == MYB_E_FORMAT &&
+           diag.line == 25);
+  MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/none.atl", "alfa", c, &diag) ==
+           MYB_E_IO);
+  /* a line of the files of stations of TU Wien: radial, east, north of S1, S2, S3; the first
+   * line of a name */
+  MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/atmosphere_sites.dat", "alfa",
+                                         c, &diag) == MYB_OK);
+  MT_CHECK(fabs(c[0] - 0.688e-3) < 1e-18 && fabs(c[3] + 0.831e-3) < 1e-18 &&
+           fabs(c[4] + 0.229e-3) < 1e-18 && fabs(c[7] - 0.080e-3) < 1e-18 &&
+           fabs(c[8] - 0.121e-3) < 1e-18 && fabs(c[11] + 0.086e-3) < 1e-18);
+  MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/atmosphere_sites.dat", "beta",
+                                         c, &diag) == MYB_E_FORMAT &&
+           diag.line == 3);
+}
+
+/* The test grid: values linear in latitude and longitude (degrees), exact in four decimals. */
+static double grid_value(int k, double latitude, double longitude) {
+  return 0.01 * (k + 1) * (k % 2 == 0 ? 1.0 : -1.0) + 0.002 * (latitude - 49.5) * (k % 5 + 1) -
+         0.003 * (longitude - 13.0) * (k % 3 + 1);
+}
+
+/* The S1 and S2 of a point from the grid of TU Wien: the made grid exactly; the grid itself,
+ * if downloaded, against the coefficients TU Wien gives at VLBI stations. */
+static void test_atmosphere_grid(void) {
+  const double degree = pi / 180.0;
+  myb_site_grid* grid = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_site_atmosphere_grid_load_file(MYB_TEST_DATA_DIR "/site/atmosphere_grid.dat", NULL,
+                                              &grid, &diag) == MYB_OK);
+  if (grid == NULL) {
+    return;
+  }
+  MT_CHECK(myb_site_grid_values(grid) == 12);
+  double c[12];
+  MT_CHECK(myb_site_grid_at(grid, 12.8775 * degree, 49.145 * degree, c) == MYB_OK);
+  double worst = 0.0;
+  for (int component = 0; component < 3; ++component) {
+    for (int k = 0; k < 4; ++k) {
+      const double expected = 1e-3 * grid_value(6 * component + k, 49.145, 12.8775);
+      worst = fmax(worst, fabs(c[4 * component + k] - expected));
+    }
+  }
+  MT_CHECK(worst < 1e-18);
+  MT_CHECK(myb_site_grid_at(grid, 12.8775 * degree, 51.0 * degree, c) == MYB_E_RANGE);
+  MT_CHECK(myb_site_grid_at(grid, 15.0 * degree, 49.0 * degree, c) == MYB_E_RANGE);
+  myb_site_grid_destroy(grid);
+  /* rows that are not a grid */
+  static const char* const bad[3] = {
+      "50.5 11.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n"
+      "50.5 12.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17\n",
+      "50.5 11.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n"
+      "50.5 12.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n"
+      "49.5 11.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n"
+      "49.5 13.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n",
+      "50.5 11.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n"
+      "50.5 12.5 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18\n"};
+  static const long line[3] = {2, 4, 2};
+  for (int k = 0; k < 3; ++k) {
+    grid = NULL;
+    MT_CHECK(myb_site_atmosphere_grid_load(bad[k], strlen(bad[k]), NULL, &grid, &diag) ==
+                 MYB_E_FORMAT &&
+             grid == NULL && diag.line == line[k]);
+  }
+  /* the grid of TU Wien and its coefficients at four VLBI stations
+   * (s1_s2_s3_cm_noib_vlbi.dat, vlbi.ell of the VMF data server; mm) */
+  grid = NULL;
+  const myb_status loaded = myb_site_atmosphere_grid_load_file(
+      MYB_DATA_DIR "/download/s1_s2_s3_cm_noib_grid.dat", NULL, &grid, &diag);
+  if (loaded == MYB_E_IO) {
+    printf("S1/S2 grid of TU Wien: data/download/s1_s2_s3_cm_noib_grid.dat is not there "
+           "(cmake -P cmake/FetchData.cmake): not checked\n");
+    return;
+  }
+  MT_CHECK(loaded == MYB_OK);
+  if (grid == NULL) {
+    return;
+  }
+  static const struct {
+    double latitude;
+    double longitude;
+    double mm[18];
+  } stations[4] = {
+      {49.1450, 12.8775, {-0.124, -0.350, -0.122, 0.455, 0.005, -0.009, -0.448, 0.029, 0.156,
+                          0.019, 0.009, -0.003, 0.085, 0.312, -0.007, -0.060, -0.010, -0.015}},
+      {45.9555, 281.9273, {0.449, 0.119, -0.056, -0.580, -0.006, 0.032, -0.093, -0.400, -0.237,
+                           -0.083, 0.008, 0.016, -0.304, 0.015, -0.054, 0.155, 0.004, 0.003}},
+      {31.8238, 130.5999, {-0.363, 0.386, -0.780, -0.484, -0.045, -0.072, 0.284, 0.347, -0.072,
+                           0.223, -0.004, -0.026, 0.135, -0.128, 0.093, 0.026, -0.002, 0.012}},
+      {-34.9067, 302.0677, {0.688, -0.268, -0.484, -0.831, 0.001, -0.000, -0.229, -0.401, -0.234,
+                            0.080, 0.011, 0.026, 0.121, -0.034, -0.021, -0.086, -0.003, 0.005}}};
+  worst = 0.0;
+  double largest = 0.0;
+  for (int s = 0; s < 4; ++s) {
+    MT_CHECK(myb_site_grid_at(grid, stations[s].longitude * degree, stations[s].latitude * degree,
+                              c) == MYB_OK);
+    for (int component = 0; component < 3; ++component) {
+      for (int k = 0; k < 4; ++k) {
+        const double given = 1e-3 * stations[s].mm[6 * component + k];
+        worst = fmax(worst, fabs(c[4 * component + k] - given));
+        largest = fmax(largest, fabs(given));
+      }
+    }
+  }
+  MT_CHECK(myb_site_grid_at(grid, 0.0, 89.9 * degree, c) == MYB_E_RANGE);
+  printf("S1 and S2 of the grid of TU Wien at four VLBI stations against the coefficients it "
+         "gives there: %.1e m of up to %.1e m\n",
+         worst, largest);
+  MT_CHECK(worst < 1e-6);
+  myb_site_grid_destroy(grid);
+}
+
 /* The atmospheric tides S1 and S2: eq. 19 at a time of the day. */
 static void test_atmosphere(const myb_site_tides* tides) {
   const double lon = 0.3;
@@ -658,6 +783,8 @@ int main(void) {
   test_ocean(tides);
   test_ocean_pole();
   test_atmosphere(tides);
+  test_atmosphere_file();
+  test_atmosphere_grid();
   test_station(tides);
   test_kernels();
   myb_site_tides_destroy(tides);

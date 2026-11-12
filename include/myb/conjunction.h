@@ -120,6 +120,70 @@ MYB_API MYB_NODISCARD myb_status myb_conjunction_find(myb_orbit* first,
                                                       myb_conjunction* conjunctions,
                                                       size_t capacity, size_t* count);
 
+/* ---- Long encounters ------------------------------------------------------------------------
+ * Where the two move slowly against each other, the encounter lasts long against the time in
+ * which the uncertainty changes and the relative motion bends: the plane of a short encounter
+ * does not hold. Then the probability counts the entries of the relative state into the sphere
+ * of radius R, the sum of the radii (V. T. Coppola, AAS 12-247, 2012; D. T. Hall et al.,
+ * AAS 18-252, 2018): at every instant the rate of entry is the flux of the probability density
+ * of the relative state through the sphere,
+ *   rate(t) = R^2 int_S2 p_r(R n) E[(-n . v)^+ | r = R n] dOmega(n),
+ * p_r the Gaussian density of the relative position, v the relative velocity given the
+ * position (Gaussian too: the joint Gaussian of the six), whose mean flux inward is
+ * s phi(m / s) - m Phi(-m / s) for m, s the mean and the deviation of n . v. Its integral over
+ * the time is the expected number of entries: the probability of collision while it is small
+ * (a second entry needs an exit first; a straight line enters a sphere once, and for a
+ * certain relative velocity with a constant covariance the result is the probability of the
+ * short encounter exactly). Being inside at the start is not counted. The sphere is
+ * integrated by Gauss-Legendre panels of 8 nodes in its cosine of latitude and equal steps in
+ * longitude, both doubled until the rate settles to 1e-12. */
+
+/* The rate of entry (1/s) for the relative state (of the second from the first: position and
+ * velocity, m and m/s) with the mean `mean` and the covariance `covariance` (6 x 6, row-major:
+ * the sum of the covariances of the two states, its cross terms included). Errors:
+ * MYB_E_DOMAIN (a covariance of the position that is not positive definite, radius <= 0,
+ * non-finite input), MYB_E_NOCONV (the sphere does not settle: a radius far beyond the
+ * uncertainty). */
+MYB_API MYB_NODISCARD myb_status myb_collision_rate(const double mean[6],
+                                                    const double covariance[36], double radius,
+                                                    double* rate);
+
+/* The relative state as a Gaussian at the time t: its mean (6) and covariance (6 x 6). Any
+ * status other than MYB_OK stops the integration. */
+typedef myb_status (*myb_relative_gaussian_function)(void* context, double t, double mean[6],
+                                                     double covariance[36]);
+
+/* The expected number of entries over [t0, t1]: the time cut into panels no longer than
+ * `step` (the encounter must be resolved by them: a step well below the time it takes to
+ * cross the uncertainty), each integrated by the rule of Gauss and Kronrod of 15 points and
+ * halved until the two estimates agree to 1e-10 of the total (at most 4000 pieces); *error
+ * (may be NULL) receives the sum of their disagreements. Errors: MYB_E_DOMAIN (t1 <= t0,
+ * step <= 0), MYB_E_NOCONV (the pieces exhausted), those of the function and of
+ * myb_collision_rate. */
+MYB_API MYB_NODISCARD myb_status myb_collision_probability_long(myb_relative_gaussian_function f,
+                                                                void* context, double t0,
+                                                                double t1, double step,
+                                                                double radius,
+                                                                double* probability,
+                                                                double* error);
+
+/* The same for two orbits being propagated with `variational` (myb/orbit.h), both started
+ * and standing at one time, with the covariances of their states then (6 x 6, m and m/s):
+ * from that time to t1 in panels of `step`, each by the rule of Gauss and Kronrod of 15
+ * points, the relative mean the difference of the states and its covariance
+ * Phi_1 P_1 Phi_1^T + Phi_2 P_2 Phi_2^T from the transition matrices at the nodes. The
+ * orbits go forward only, so the panels are not halved: *error (may be NULL) receives the sum
+ * over the panels of the difference of the two rules — a step to be made smaller where it is
+ * not small against the result. Both orbits are left at t1. Errors: MYB_E_DOMAIN (the orbits
+ * at different times, t1 not ahead of them, step <= 0), those of myb_orbit_partials and of
+ * myb_collision_rate. */
+MYB_API MYB_NODISCARD myb_status myb_conjunction_long(myb_orbit* first,
+                                                      const double first_covariance[36],
+                                                      myb_orbit* second,
+                                                      const double second_covariance[36],
+                                                      double radius, double t1, double step,
+                                                      double* probability, double* error);
+
 #ifdef __cplusplus
 }
 #endif

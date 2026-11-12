@@ -23,6 +23,7 @@
 #include "myb/kepler.h"
 #include "myb/rel.h"
 #include "myb/system.h"
+#include "myb/uncert.h"
 
 static const double PI = 3.141592653589793;
 
@@ -716,6 +717,326 @@ static myb_status push(void* context, double t, const myb_system_view* view, dou
   return view->frame != NULL ? MYB_OK : MYB_E_DOMAIN;
 }
 
+/* G times the angular momentum about the origin: of the motion of the present bodies and of
+ * the integrated rotation of body `spinning` (undistorted moments). */
+static void total_angular_momentum(myb_system* s, const double* y, size_t spinning,
+                                   const myb_system_rotation* r, double l[3]) {
+  const size_t n = myb_system_coordinates(s);
+  l[0] = 0.0;
+  l[1] = 0.0;
+  l[2] = 0.0;
+  for (size_t k = 0; k < myb_system_bodies(s); ++k) {
+    if (!myb_system_present(s, k)) {
+      continue;
+    }
+    const double* x = y + 3 * k;
+    const double* v = y + n + 3 * k;
+    const double gm = myb_nbody_gm(myb_system_nbody(s), k);
+    l[0] += gm * (x[1] * v[2] - x[2] * v[1]);
+    l[1] += gm * (x[2] * v[0] - x[0] * v[2]);
+    l[2] += gm * (x[0] * v[1] - x[1] * v[0]);
+  }
+  double q[4];
+  double w[3];
+  MT_CHECK(myb_system_unpack_rotation(s, spinning, y, q, w, NULL) == MYB_OK);
+  double m[9];
+  myb_quat_to_matrix(q, m); /* inertial -> body */
+  const double gm = myb_nbody_gm(myb_system_nbody(s), spinning);
+  const double body[3] = {gm * r->moments[0] * w[0], gm * r->moments[1] * w[1],
+                          gm * r->moments[2] * w[2]};
+  for (int i = 0; i < 3; ++i) {
+    l[i] += m[i] * body[0] + m[3 + i] * body[1] + m[6 + i] * body[2];
+  }
+}
+
+/* A spinning body hit by another: the merger keeps the total angular momentum, the remnant
+ * takes the orbital part as spin, and turns as a whole of the scaled shape. */
+static void test_rotating_merger(void) {
+  const double gm[3] = {6.0e10, 1.5e10, 3.986004418e14};
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(3, gm, NULL, &s) == MYB_OK);
+  const myb_system_rotation top = {.moments = {0.30e10, 0.32e10, 0.40e10}};
+  MT_CHECK(myb_system_set_rotation(s, 0, &top) == MYB_OK);
+  MT_CHECK(myb_system_set_radius(s, 0, 9.0e4) == MYB_OK);
+  MT_CHECK(myb_system_set_radius(s, 1, 6.0e4) == MYB_OK);
+  const size_t n = myb_system_coordinates(s);
+  double y[2 * (9 + 9)];
+  memset(y, 0, sizeof y);
+  /* far from the Earth (body 2); body 1 comes at body 0 off-centre */
+  const double x0[9] = {4.0e8, 0.0, 0.0, 4.0e8 + 3.0e6, 1.0e5, 2.0e4, 0.0, 0.0, 0.0};
+  const double v0[9] = {0.0, 1000.0, 0.0, -150.0, 1000.0, 3.0, 0.0, 0.0, 0.0};
+  memcpy(y, x0, sizeof x0);
+  memcpy(y + n, v0, sizeof v0);
+  double q0[4] = {0.9, -0.1, 0.3, 0.2};
+  (void)myb_quat_normalize(q0);
+  const double w0[3] = {2.0e-5, -1.0e-5, 1.0e-4};
+  MT_CHECK(myb_system_pack_rotation(s, 0, q0, w0, NULL, y) == MYB_OK);
+  const myb_ias15_options o = {.epsilon = 1e-10};
+  myb_ias15* in = NULL;
+  MT_CHECK(myb_system_integrator(s, &o, NULL, &in) == MYB_OK);
+  MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y) == MYB_OK);
+  myb_system_event e;
+  MT_CHECK(myb_system_advance(s, in, 1.0e5, 0.0, &e) == MYB_OK);
+  MT_CHECK(e.kind == MYB_SYSTEM_CONTACT && e.a == 0 && e.b == 1);
+  double before[3];
+  total_angular_momentum(s, myb_ias15_state(in), 0, &top, before);
+  myb_system_merger merger;
+  MT_CHECK(myb_system_merge(s, in, 0, 1, &merger) == MYB_OK);
+  /* the remnant: a sphere of both volumes, the shape of 0 scaled to it */
+  const double ratio = cbrt(9.0e4 * 9.0e4 * 9.0e4 + 6.0e4 * 6.0e4 * 6.0e4) / 9.0e4;
+  const myb_system_rotation scaled = {.moments = {top.moments[0] * ratio * ratio,
+                                                  top.moments[1] * ratio * ratio,
+                                                  top.moments[2] * ratio * ratio}};
+  double after[3];
+  total_angular_momentum(s, myb_ias15_state(in), 0, &scaled, after);
+  double worst = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    worst = fmax(worst, fabs(after[i] - before[i]) / norm3(before));
+  }
+  /* the spin of the remnant is what the merger reports */
+  double q[4];
+  double w[3];
+  MT_CHECK(myb_system_unpack_rotation(s, 0, myb_ias15_state(in), q, w, NULL) == MYB_OK);
+  double m[9];
+  myb_quat_to_matrix(q, m);
+  const double total = gm[0] + gm[1];
+  double spin_error = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    const double in_body = m[3 * i] * merger.spin[0] + m[3 * i + 1] * merger.spin[1] +
+                           m[3 * i + 2] * merger.spin[2];
+    spin_error = fmax(spin_error, fabs(total * scaled.moments[i] * w[i] - in_body) /
+                                      norm3(merger.spin));
+  }
+  printf("a spinning body merging: the total angular momentum kept to %.1e, the remnant's spin "
+         "its own to %.1e; the spin rate from %.3e to %.3e rad/s\n",
+         worst, spin_error, norm3(w0), norm3(w));
+  MT_CHECK(worst < 1e-12 && spin_error < 1e-14);
+  /* the rotation goes on */
+  MT_CHECK(myb_ias15_integrate(in, myb_ias15_time(in) + 3600.0) == MYB_OK);
+  myb_ias15_destroy(in);
+  myb_system_destroy(s);
+}
+
+/* Two compact bodies of a pair beyond 1PN with spins merge: the pair ends, the spins stop,
+ * and the merger reports the orbital angular momentum plus chi G^2 m^2 / c of each. */
+static void test_pn_merger(void) {
+  const double c = 299792458.0;
+  const double gm[2] = {1.4 * 1.32712440018e20, 1.3 * 1.32712440018e20};
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+  const myb_system_pn_pair pair = {.orders = MYB_PN_ALL, .c = c, .r0 = 1.0e7, .kappa1 = 4.0,
+                                   .kappa2 = 5.0};
+  MT_CHECK(myb_system_add_pn_pair(s, 0, 1, &pair) == MYB_OK);
+  MT_CHECK(myb_system_set_radius(s, 0, 2.0e4) == MYB_OK);
+  MT_CHECK(myb_system_set_radius(s, 1, 2.0e4) == MYB_OK);
+  const size_t n = myb_system_coordinates(s);
+  double y[2 * 12];
+  memset(y, 0, sizeof y);
+  const double x0[6] = {1.0e5, 0.0, 0.0, -1.0e5, 2.0e3, 0.0};
+  const double v0[6] = {-3.0e6, 1.0e6, 0.0, 3.0e6, -1.0e6, 1.0e4};
+  memcpy(y, x0, sizeof x0);
+  memcpy(y + n, v0, sizeof v0);
+  const double chi1[3] = {0.1, -0.2, 0.5};
+  const double chi2[3] = {-0.3, 0.1, 0.2};
+  MT_CHECK(myb_system_pack_spins(s, 0, chi1, chi2, y) == MYB_OK);
+  const myb_ias15_options o = {.epsilon = 1e-9};
+  myb_ias15* in = NULL;
+  MT_CHECK(myb_system_integrator(s, &o, NULL, &in) == MYB_OK);
+  MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y) == MYB_OK);
+  myb_system_event e;
+  MT_CHECK(myb_system_advance(s, in, 1.0, 0.0, &e) == MYB_OK && e.kind == MYB_SYSTEM_CONTACT);
+  const double* z = myb_ias15_state(in);
+  double s1[3];
+  double s2[3];
+  MT_CHECK(myb_system_unpack_spins(s, 0, z, s1, s2) == MYB_OK);
+  const double total = gm[0] + gm[1];
+  const double reduced = gm[0] * gm[1] / total;
+  double expected[3];
+  const double r[3] = {z[3] - z[0], z[4] - z[1], z[5] - z[2]};
+  const double dv[3] = {z[n + 3] - z[n], z[n + 4] - z[n + 1], z[n + 5] - z[n + 2]};
+  expected[0] = reduced * (r[1] * dv[2] - r[2] * dv[1]);
+  expected[1] = reduced * (r[2] * dv[0] - r[0] * dv[2]);
+  expected[2] = reduced * (r[0] * dv[1] - r[1] * dv[0]);
+  for (int i = 0; i < 3; ++i) {
+    expected[i] += s1[i] * gm[0] * gm[0] / c + s2[i] * gm[1] * gm[1] / c;
+  }
+  myb_system_merger merger;
+  MT_CHECK(myb_system_merge(s, in, 0, 1, &merger) == MYB_OK);
+  double worst = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    worst = fmax(worst, fabs(merger.spin[i] - expected[i]) / norm3(expected));
+  }
+  printf("a pair beyond 1PN merging: the remnant's spin %.3e (chi %.3f) against the sum %.1e\n",
+         norm3(merger.spin), norm3(merger.spin) * c / (total * total), worst);
+  MT_CHECK(worst < 1e-14);
+  /* the remnant goes on, the spins stand still */
+  MT_CHECK(myb_ias15_integrate(in, myb_ias15_time(in) + 0.01) == MYB_OK);
+  MT_CHECK(myb_system_unpack_spins(s, 0, myb_ias15_state(in), s1, s2) == MYB_OK);
+  MT_CHECK(norm3(s1) == 0.0 && norm3(s2) == 0.0);
+  myb_ias15_destroy(in);
+  myb_system_destroy(s);
+}
+
+/* The search for neighbours: 300 spheres of 2 m in a cube of 200 m, almost without gravity, in
+ * straight lines; the first five contacts, each followed by an elastic bounce, against the
+ * same billiard worked out here pair by pair in closed form. */
+enum { BALLS = 300 };
+
+static double line_contact(const double* x, const double* v, size_t a, size_t b, double sum) {
+  double d[3];
+  double w[3];
+  for (int i = 0; i < 3; ++i) {
+    d[i] = x[3 * b + (size_t)i] - x[3 * a + (size_t)i];
+    w[i] = v[3 * b + (size_t)i] - v[3 * a + (size_t)i];
+  }
+  const double aa = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+  const double bb = d[0] * w[0] + d[1] * w[1] + d[2] * w[2];
+  const double cc = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - sum * sum;
+  const double disc = bb * bb - aa * cc;
+  if (!(bb < 0.0) || !(disc >= 0.0) || !(aa > 0.0)) {
+    return -1.0;
+  }
+  return (-bb - sqrt(disc)) / aa;
+}
+
+static void test_neighbours(void) {
+  static double gm[BALLS];
+  static double x[3 * BALLS];
+  static double v[3 * BALLS];
+  myb_rng rng;
+  myb_rng_seed(&rng, 22);
+  for (size_t k = 0; k < BALLS; ++k) {
+    gm[k] = 1e-12;
+    for (int i = 0; i < 3; ++i) {
+      x[3 * k + (size_t)i] = 200.0 * myb_rng_uniform(&rng);
+      v[3 * k + (size_t)i] = 2.0 * myb_rng_uniform(&rng) - 1.0;
+    }
+  }
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(BALLS, gm, NULL, &s) == MYB_OK);
+  for (size_t k = 0; k < BALLS; ++k) {
+    MT_CHECK(myb_system_set_radius(s, k, 2.0) == MYB_OK);
+  }
+  const size_t n = myb_system_coordinates(s);
+  static double y[2 * 3 * BALLS];
+  memcpy(y, x, sizeof x);
+  memcpy(y + n, v, sizeof v);
+  const myb_ias15_options o = {.epsilon = 1e-9};
+  myb_ias15* in = NULL;
+  MT_CHECK(myb_system_integrator(s, &o, NULL, &in) == MYB_OK);
+  MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y) == MYB_OK);
+  double now = 0.0;
+  double worst_t = 0.0;
+  int matched = 0;
+  for (int hit = 0; hit < 5; ++hit) {
+    /* the billiard: the first contact of the straight lines from now */
+    double first = 1e300;
+    size_t fa = 0;
+    size_t fb = 0;
+    for (size_t a = 0; a < BALLS; ++a) {
+      for (size_t b = a + 1; b < BALLS; ++b) {
+        const double dt = line_contact(x, v, a, b, 4.0);
+        if (dt >= 0.0 && dt < first) {
+          first = dt;
+          fa = a;
+          fb = b;
+        }
+      }
+    }
+    myb_system_event e;
+    MT_CHECK(myb_system_advance(s, in, 1.0e5, 0.0, &e) == MYB_OK);
+    matched += e.kind == MYB_SYSTEM_CONTACT && e.a == fa && e.b == fb;
+    worst_t = fmax(worst_t, fabs(e.t - (now + first)));
+    /* both go on from the state of the integrator; the billiard bounces the same way */
+    MT_CHECK(myb_system_bounce(s, in, e.a, e.b, 1.0) == MYB_OK);
+    now = e.t;
+    memcpy(x, myb_ias15_state(in), sizeof x);
+    memcpy(v, myb_ias15_state(in) + n, sizeof v);
+  }
+  printf("search for neighbours, 300 spheres in straight lines: the first five contacts are those "
+         "of the billiard (%d of 5), in time to %.1e s\n",
+         matched, worst_t);
+  MT_CHECK(matched == 5 && worst_t < 1e-6);
+  myb_ias15_destroy(in);
+  myb_system_destroy(s);
+}
+
+/* The derivatives of a two-body system: against the transition matrix of the relative Kepler
+ * motion and the straight motion of the centre of mass in closed form; with respect to the
+ * gm of the heavy body against differences of the Kepler propagation. */
+static void test_partials(void) {
+  const double gm[2] = {3.986004418e14, 1.0e9};
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+  const myb_pv rel0 = {{7.0e6, 1.0e6, 0.5e6}, {-900.0, 7300.0, 1200.0}};
+  double y0[12] = {0.0};
+  for (int i = 0; i < 3; ++i) {
+    y0[3 + i] = rel0.r[i];
+    y0[6 + 3 + i] = rel0.v[i];
+  }
+  const double t1 = 4000.0;
+  double y1[12];
+  double phi[144];
+  double sens[12];
+  const size_t heavy[1] = {0};
+  const myb_ias15_options o = {.epsilon = 1e-12};
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, heavy, 1, y1, phi, sens) == MYB_OK);
+  /* d (x2, v2)(t1) / d (x2, v2)(0): gm2 / M from the centre of mass, gm1 / M Phi_kepler */
+  const double total = gm[0] + gm[1];
+  myb_pv out;
+  double stm[36];
+  MT_CHECK(myb_kepler_stm(total, &rel0, t1, &out, stm) == MYB_OK);
+  double worst = 0.0;
+  double size = 0.0;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      /* row i of body 2 (x: 3 + i, v: 6 + 3 + i); column j of body 2 likewise */
+      const size_t row = i < 3 ? 3 + (size_t)i : 6 + 3 + (size_t)(i - 3);
+      const size_t col = j < 3 ? 3 + (size_t)j : 6 + 3 + (size_t)(j - 3);
+      double centre = 0.0;
+      if (i % 3 == j % 3) {
+        if (i < 3 && j < 3) {
+          centre = 1.0;
+        } else if (i < 3 && j >= 3) {
+          centre = t1;
+        } else if (i >= 3 && j >= 3) {
+          centre = 1.0;
+        }
+      }
+      const double expected = gm[1] / total * centre + gm[0] / total * stm[6 * i + j];
+      worst = fmax(worst, fabs(phi[12 * row + col] - expected));
+      size = fmax(size, fabs(expected));
+    }
+  }
+  /* d x2(t1) / d gm1 against differences of the Kepler propagation and the drift of the
+   * centre of mass in closed form */
+  double kepler_diff = 0.0;
+  double kepler_size = 0.0;
+  {
+    myb_pv up;
+    myb_pv down;
+    const double h = 1e-6 * gm[0];
+    MT_CHECK(myb_kepler_propagate(total + h, &rel0, t1, &up) == MYB_OK);
+    MT_CHECK(myb_kepler_propagate(total - h, &rel0, t1, &down) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      /* x2 = (gm2 / M)(r0 + v0 t) + (gm1 / M) rel(t; M): the centre of mass drifts with
+       * gm2 / M v0, body 1 starting at rest at the origin */
+      const double drel = (up.r[i] - down.r[i]) / (2.0 * h);
+      const double rel_now = out.r[i];
+      const double cm_rate = -gm[1] / (total * total) * (rel0.r[i] + rel0.v[i] * t1);
+      const double expected = gm[0] / total * drel + gm[1] / (total * total) * rel_now + cm_rate;
+      kepler_diff = fmax(kepler_diff, fabs(sens[3 + (size_t)i] - expected));
+      kepler_size = fmax(kepler_size, fabs(expected));
+    }
+  }
+  printf("derivatives of a two-body system over 4000 s: against the closed transition matrix %.1e "
+         "of %.1e; with respect to gm of the Earth against Kepler %.1e of %.1e\n",
+         worst, size, kepler_diff, kepler_size);
+  MT_CHECK(worst < 1e-6 * size && kepler_diff < 1e-6 * kepler_size);
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, 0.0, NULL, 0, y1, phi, NULL) == MYB_E_DOMAIN);
+  myb_system_destroy(s);
+}
+
 static void test_actions(void) {
   const double c = 299792458.0;
   const double au = 1.495978707e11;
@@ -992,6 +1313,10 @@ int main(void) {
   test_rotation();
   test_pn_pair();
   test_encounters();
+  test_rotating_merger();
+  test_pn_merger();
+  test_neighbours();
+  test_partials();
   test_actions();
   test_guided_and_drags();
   return mt_finish("test_system");

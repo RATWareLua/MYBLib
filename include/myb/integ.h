@@ -181,7 +181,12 @@ MYB_API MYB_NODISCARD myb_status myb_ias15_locate(myb_ias15* integrator, myb_eve
  * Fixed-step symmetric compositions of the kick-drift-kick leapfrog for x'' = a(t, x) (forces
  * derived from a potential, possibly time-dependent; no velocity dependence): orders 2, 4, 6
  * and 8 by Yoshida's triple jump (H. Yoshida, Phys. Lett. A 150, 262, 1990), with 1, 3, 9, 27
- * evaluations per step. The map is symplectic and time-reversible: the energy error stays
+ * evaluations per step; and orders 6 and 8 with 7 and 15 evaluations and smaller errors
+ * (MYB_SYMPLECTIC_6_S7: Yoshida's solution A; MYB_SYMPLECTIC_8_S15: the method p8 s15 of
+ * Hairer, Lubich and Wanner, Geometric Numerical Integration, V.3). On a Kepler orbit of
+ * e = 0.3 their error for equal work is 1.75 times smaller than that of the triple jump of
+ * order 6 and 200 times smaller than of order 8 (the work for one accuracy: 10 % and 50 %
+ * less). The map is symplectic and time-reversible: the energy error stays
  * bounded over any number of steps instead of drifting, and the phase error grows linearly;
  * the price is a fixed step (no error control). Positions, velocities and time are updated with
  * compensated summation. The state is y = (x[0..n-1], v[0..n-1]). */
@@ -196,8 +201,10 @@ typedef struct myb_symplectic_stats {
   int64_t evaluations;
 } myb_symplectic_stats;
 
-/* order: 2, 4, 6 or 8. Errors: MYB_E_DOMAIN (other order, n == 0), MYB_E_NOMEM,
- * MYB_E_OVERFLOW. */
+enum { MYB_SYMPLECTIC_6_S7 = 607, MYB_SYMPLECTIC_8_S15 = 815 };
+
+/* order: 2, 4, 6 or 8 (the triple jump), MYB_SYMPLECTIC_6_S7 or MYB_SYMPLECTIC_8_S15. Errors:
+ * MYB_E_DOMAIN (other order, n == 0), MYB_E_NOMEM, MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_symplectic_create(size_t n, int order,
                                                        const myb_allocator* allocator,
                                                        myb_symplectic** integrator);
@@ -227,8 +234,17 @@ MYB_API myb_symplectic_stats myb_symplectic_statistics(const myb_symplectic* int
  * positions and velocities, controller 0.9 err^(-1/11) bounded to [0.2, 5];
  *   err = sqrt(mean_i ((e_i / s_i)^2)),   s_i = atol + rtol max(|y_i|, |y_new_i|)
  * over the 2n components of y = (x, v). Efficient for very tight tolerances. The pair has no
- * interpolant: myb_rkn12_dense takes one more step of the pair from the start of the last step
- * (16 evaluations per call), as accurate as the steps. */
+ * interpolant of its own: myb_rkn12_dense takes one more step of the pair from the start of the
+ * last step (16 evaluations a request), as accurate as the steps — or, with
+ * options.interpolant, builds one on the first request inside a step: the acceleration as a
+ * polynomial of degree 12 on the Chebyshev-Lobatto nodes of the step, integrated twice, its
+ * inner values refined by Picard's iteration from the quintic of Hermite of the ends until the
+ * places settle to a thousandth of the tolerance (11 evaluations a round, usually 4), ending
+ * exactly at the end of the step; every further request in the step costs no evaluation (a
+ * step too long for the degree, not settled in 12 rounds, falls back to the step of the
+ * pair). Inside the steps of a two-body orbit it is as accurate as their ends (1.9e-11 s
+ * against 2.2e-11 s at rtol 1e-14); building it costs 44 to 49 evaluations a step, three
+ * requests of the other way. */
 
 typedef struct myb_rkn12 myb_rkn12;
 
@@ -239,6 +255,7 @@ typedef struct myb_rkn12_options {
   double h_max;      /* largest step magnitude; 0 = unlimited */
   double h_min;      /* smallest step magnitude before MYB_E_STEP_MIN; 0 = none */
   int64_t max_steps; /* budget of accepted steps per call of myb_rkn12_integrate; 0 = 10^9 */
+  int interpolant;   /* != 0: the dense output from the interpolant of the step (above) */
 } myb_rkn12_options;
 
 typedef struct myb_rkn12_stats {
@@ -270,7 +287,7 @@ MYB_API double myb_rkn12_time(const myb_rkn12* integrator);
 MYB_API const double* myb_rkn12_state(const myb_rkn12* integrator); /* 2n values: x, then v */
 MYB_API myb_rkn12_stats myb_rkn12_statistics(const myb_rkn12* integrator);
 
-/* State at any t within the last accepted step (16 evaluations). MYB_E_RANGE outside it. */
+/* State at any t within the last accepted step. MYB_E_RANGE outside it. */
 MYB_API MYB_NODISCARD myb_status myb_rkn12_dense(myb_rkn12* integrator, double t, double* y);
 
 /* As myb_dop853_locate; every iteration costs one dense output. */

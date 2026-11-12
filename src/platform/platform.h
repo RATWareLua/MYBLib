@@ -34,12 +34,14 @@ typedef struct myb_platform_mapping {
 } myb_platform_mapping;
 
 /* path is UTF-8 on every platform. Errors: MYB_E_IO (cannot open or map, empty file),
- * MYB_E_OVERFLOW (does not fit the address space). Output untouched on error. */
-[[nodiscard]] myb_status myb_platform_map_file(const char* path, const myb_allocator* allocator,
-                                               myb_platform_mapping* mapping);
+ * MYB_E_OVERFLOW (does not fit the address space). Output untouched on error. Exported for
+ * the libraries of ext/ that read files (MYB_PRIVATE in cmake/myb.map). */
+[[nodiscard]] MYB_API myb_status myb_platform_map_file(const char* path,
+                                                       const myb_allocator* allocator,
+                                                       myb_platform_mapping* mapping);
 
 /* Releases a view from myb_platform_map_file; accepts a zeroed mapping. */
-void myb_platform_unmap_file(myb_platform_mapping* mapping);
+MYB_API void myb_platform_unmap_file(myb_platform_mapping* mapping);
 
 /* Writes bytes to the standard error descriptor with one unbuffered call; best effort, used
  * only on the fatal-error path. Must not allocate and must not take stdio locks. */

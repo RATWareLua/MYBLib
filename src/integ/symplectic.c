@@ -59,6 +59,14 @@ myb_status myb_symplectic_create(size_t n, int order, const myb_allocator* alloc
       weights = myb_symplectic_order8;
       stages = 27;
       break;
+    case MYB_SYMPLECTIC_6_S7:
+      weights = myb_symplectic_order6_s7;
+      stages = 7;
+      break;
+    case MYB_SYMPLECTIC_8_S15:
+      weights = myb_symplectic_order8_s15;
+      stages = 15;
+      break;
     default:
       return MYB_E_DOMAIN;
   }

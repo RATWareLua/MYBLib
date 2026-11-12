@@ -53,6 +53,9 @@ struct myb_polyhedron {
   tree_node* nodes; /* at most face_count */
   size_t node_count;
   size_t* order; /* the faces, leaf by leaf */
+  /* what tells the inside from the outside at the nearest point (myb_polyhedron_nearest) */
+  size_t* across;         /* 3 per face: the face across its edge from corner j to corner j + 1 */
+  double* corner_normals; /* 3 per vertex: the normals of its faces weighted by their angles */
 };
 
 typedef struct directed {
@@ -115,6 +118,8 @@ void myb_polyhedron_destroy(myb_polyhedron* polyhedron) {
   myb_internal_release(&a, polyhedron->edges);
   myb_internal_release(&a, polyhedron->nodes);
   myb_internal_release(&a, polyhedron->order);
+  myb_internal_release(&a, polyhedron->across);
+  myb_internal_release(&a, polyhedron->corner_normals);
   myb_internal_release(&a, polyhedron);
 }
 
@@ -229,6 +234,35 @@ static myb_status build_tree(myb_polyhedron* p) {
     stack[top++] = node->right;
   }
   return MYB_OK;
+}
+
+/* The corner of face f at the vertex `vertex` (one of its three). */
+static size_t corner_of(const myb_polyhedron* p, size_t f, size_t vertex) {
+  const size_t* v = p->faces + 3 * f;
+  return v[0] == vertex ? 0u : (v[1] == vertex ? 1u : 2u);
+}
+
+/* The normal of every vertex as the sum of the normals of its faces weighted by the angle of
+ * each face at the vertex (G. Thurmer, C. A. Wuthrich, J. Graphics Tools 3, 43, 1998). */
+static void corner_normals(myb_polyhedron* p) {
+  memset(p->corner_normals, 0, 3 * p->vertex_count * sizeof(double));
+  for (size_t f = 0; f < p->face_count; ++f) {
+    const double* n = p->normals + 3 * f;
+    for (size_t j = 0; j < 3; ++j) {
+      const size_t at = p->faces[3 * f + j];
+      const double* v0 = p->vertices + 3 * at;
+      double e1[3];
+      double e2[3];
+      double c[3];
+      sub3(p->vertices + 3 * p->faces[3 * f + (j + 1) % 3], v0, e1);
+      sub3(p->vertices + 3 * p->faces[3 * f + (j + 2) % 3], v0, e2);
+      myb_vec3_cross(e1, e2, c);
+      const double angle = myb_atan2(myb_vec3_norm(c), myb_vec3_dot(e1, e2));
+      for (int i = 0; i < 3; ++i) {
+        p->corner_normals[3 * at + (size_t)i] += angle * n[i];
+      }
+    }
+  }
 }
 
 myb_status myb_polyhedron_create(const double* vertices, size_t vertex_count, const size_t* faces,
@@ -346,12 +380,22 @@ myb_status myb_polyhedron_create(const double* vertices, size_t vertex_count, co
     status = myb_internal_alloc_array(&a, p->edge_count, sizeof(poly_edge), &block);
     if (status == MYB_OK) {
       p->edges = block;
+      status = myb_internal_alloc_array(&a, 3 * face_count, sizeof(size_t), &block);
+    }
+    if (status == MYB_OK) {
+      p->across = block;
+      status = myb_internal_alloc_array(&a, 3 * vertex_count, sizeof(double), &block);
+    }
+    if (status == MYB_OK) {
+      p->corner_normals = block;
     }
   }
   if (status == MYB_OK) {
     for (size_t k = 0; k < p->edge_count; ++k) {
       const directed* x = &d[2 * k];
       const directed* y = &d[2 * k + 1];
+      p->across[3 * x->face + corner_of(p, x->face, x->from)] = y->face;
+      p->across[3 * y->face + corner_of(p, y->face, y->from)] = x->face;
       poly_edge* e = &p->edges[k];
       e->v0 = x->lo;
       e->v1 = x->hi;
@@ -372,6 +416,7 @@ myb_status myb_polyhedron_create(const double* vertices, size_t vertex_count, co
   }
   myb_internal_release(&a, d);
   if (status == MYB_OK) {
+    corner_normals(p);
     status = build_tree(p);
   }
   if (status != MYB_OK) {
@@ -629,6 +674,185 @@ int myb_polyhedron_ray(const myb_polyhedron* polyhedron, const double origin[3],
   return 1;
 }
 
+/* What part of a face holds the point nearest to a position: the inside of the face, an edge
+ * (from corner j to corner j + 1) or a corner. */
+enum { NEAR_FACE = 0, NEAR_EDGE = 1, NEAR_CORNER = 4 };
+
+/* The point q of face f nearest to r, the part of the face it lies in (NEAR_EDGE + j,
+ * NEAR_CORNER + j) and the squared distance: the regions of the corners, the edges and the
+ * inside told apart by the projections on the edges (C. Ericson, Real-Time Collision
+ * Detection, 2005, §5.1.5). */
+static double face_nearest(const myb_polyhedron* p, size_t f, const double r[3], double q[3],
+                           int* part) {
+  const double* a = p->vertices + 3 * p->faces[3 * f];
+  const double* b = p->vertices + 3 * p->faces[3 * f + 1];
+  const double* c = p->vertices + 3 * p->faces[3 * f + 2];
+  double ab[3];
+  double ac[3];
+  double ar[3];
+  double br[3];
+  double cr[3];
+  sub3(b, a, ab);
+  sub3(c, a, ac);
+  sub3(r, a, ar);
+  sub3(r, b, br);
+  sub3(r, c, cr);
+  const double d1 = myb_vec3_dot(ab, ar);
+  const double d2 = myb_vec3_dot(ac, ar);
+  const double d3 = myb_vec3_dot(ab, br);
+  const double d4 = myb_vec3_dot(ac, br);
+  const double d5 = myb_vec3_dot(ab, cr);
+  const double d6 = myb_vec3_dot(ac, cr);
+  const double vc = d1 * d4 - d3 * d2;
+  const double vb = d5 * d2 - d1 * d6;
+  const double va = d3 * d6 - d5 * d4;
+  if (d1 <= 0.0 && d2 <= 0.0) {
+    memcpy(q, a, 3 * sizeof *q);
+    *part = NEAR_CORNER;
+  } else if (d3 >= 0.0 && d4 <= d3) {
+    memcpy(q, b, 3 * sizeof *q);
+    *part = NEAR_CORNER + 1;
+  } else if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
+    const double s = d1 / (d1 - d3);
+    for (int i = 0; i < 3; ++i) {
+      q[i] = a[i] + s * ab[i];
+    }
+    *part = NEAR_EDGE;
+  } else if (d6 >= 0.0 && d5 <= d6) {
+    memcpy(q, c, 3 * sizeof *q);
+    *part = NEAR_CORNER + 2;
+  } else if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
+    const double s = d2 / (d2 - d6);
+    for (int i = 0; i < 3; ++i) {
+      q[i] = a[i] + s * ac[i];
+    }
+    *part = NEAR_EDGE + 2;
+  } else if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0) {
+    const double s = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    for (int i = 0; i < 3; ++i) {
+      q[i] = b[i] + s * (c[i] - b[i]);
+    }
+    *part = NEAR_EDGE + 1;
+  } else {
+    const double sum = va + vb + vc;
+    const double v = vb / sum;
+    const double w = vc / sum;
+    for (int i = 0; i < 3; ++i) {
+      q[i] = a[i] + v * ab[i] + w * ac[i];
+    }
+    *part = NEAR_FACE;
+  }
+  const double d[3] = {r[0] - q[0], r[1] - q[1], r[2] - q[2]};
+  return myb_vec3_dot(d, d);
+}
+
+/* The squared distance from r to a box of the tree (0 inside it). */
+static double box_distance2(const tree_node* node, const double r[3]) {
+  double sum = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    const double below = node->lo[i] - r[i];
+    const double above = r[i] - node->hi[i];
+    const double d = below > 0.0 ? below : (above > 0.0 ? above : 0.0);
+    sum += d * d;
+  }
+  return sum;
+}
+
+myb_status myb_polyhedron_nearest(const myb_polyhedron* polyhedron, const double position[3],
+                                  double point[3], double normal[3], double* distance,
+                                  size_t* face) {
+  MYB_CHECK(polyhedron != NULL && position != NULL);
+  const myb_polyhedron* p = polyhedron;
+  if (!myb_vec3_finite(position)) {
+    return MYB_E_DOMAIN;
+  }
+  double best = (double)INFINITY;
+  size_t best_face = 0;
+  int best_part = NEAR_FACE;
+  double best_point[3] = {0.0, 0.0, 0.0};
+  size_t stack[TREE_STACK];
+  size_t top = 0;
+  stack[top++] = 0;
+  /* bound: the nodes of the tree; a box farther than the best face so far is not opened, and
+   * of two children the nearer is opened first */
+  while (top > 0) {
+    const tree_node* node = &p->nodes[stack[--top]];
+    if (!(box_distance2(node, position) <= best)) {
+      continue;
+    }
+    if (node->count == 0) {
+      MYB_CHECK(top + 2 <= TREE_STACK);
+      const int left_first = box_distance2(&p->nodes[node->left], position) <=
+                             box_distance2(&p->nodes[node->right], position);
+      stack[top++] = left_first ? node->right : node->left;
+      stack[top++] = left_first ? node->left : node->right;
+      continue;
+    }
+    for (size_t k = 0; k < node->count; ++k) {
+      const size_t f = p->order[node->first + k];
+      double q[3];
+      int part = NEAR_FACE;
+      const double d2 = face_nearest(p, f, position, q, &part);
+      /* of faces equally near — an edge or a corner they share — the first in the mesh */
+      if (d2 < best || (d2 == best && f < best_face)) {
+        best = d2;
+        best_face = f;
+        best_part = part;
+        memcpy(best_point, q, sizeof q);
+      }
+    }
+  }
+  if (!(best < (double)INFINITY)) {
+    return MYB_E_DOMAIN;
+  }
+  /* inside or outside: the side of the angle-weighted normal of the part nearest
+   * (J. A. Baerentzen, H. Aanaes, IEEE Trans. Vis. Comput. Graph. 11, 243, 2005) */
+  const double* nf = p->normals + 3 * best_face;
+  double pseudo[3];
+  if (best_part == NEAR_FACE) {
+    memcpy(pseudo, nf, sizeof pseudo);
+  } else if (best_part < NEAR_CORNER) {
+    const double* ng = p->normals + 3 * p->across[3 * best_face + (size_t)(best_part - NEAR_EDGE)];
+    for (int i = 0; i < 3; ++i) {
+      pseudo[i] = nf[i] + ng[i];
+    }
+  } else {
+    const size_t vertex = p->faces[3 * best_face + (size_t)(best_part - NEAR_CORNER)];
+    memcpy(pseudo, p->corner_normals + 3 * vertex, sizeof pseudo);
+  }
+  const double d[3] = {position[0] - best_point[0], position[1] - best_point[1],
+                       position[2] - best_point[2]};
+  const double length = myb_vec3_norm(d);
+  const int inside = myb_vec3_dot(d, pseudo) < 0.0;
+  if (point != NULL) {
+    memcpy(point, best_point, sizeof best_point);
+  }
+  if (distance != NULL) {
+    *distance = inside ? -length : length;
+  }
+  if (face != NULL) {
+    *face = best_face;
+  }
+  if (normal != NULL) {
+    /* the face itself: its normal; an edge or a corner: the line to the position, turned
+     * outward — or the angle-weighted normal for a position on it */
+    const double pn = myb_vec3_norm(pseudo);
+    if (best_part == NEAR_FACE || (!(length > 0.0) && !(pn > 0.0))) {
+      memcpy(normal, nf, 3 * sizeof *normal);
+    } else if (length > 0.0) {
+      const double k = (inside ? -1.0 : 1.0) / length;
+      for (int i = 0; i < 3; ++i) {
+        normal[i] = k * d[i];
+      }
+    } else {
+      for (int i = 0; i < 3; ++i) {
+        normal[i] = pseudo[i] / pn;
+      }
+    }
+  }
+  return MYB_OK;
+}
+
 /* ---- Light on the mesh (myb/surface.h) --------------------------------------------------------- */
 
 /* The force of the light on a part of a face of area `area` at the cosine `cosine` of the
@@ -667,10 +891,139 @@ static myb_status radiation_mesh(const myb_polyhedron* shape, const myb_plate* s
                                  double pressure, const double u[3], int shadows,
                                  double force[3], double torque[3], double* gradient);
 
+enum { MAX_LAG_PHASES = 256 }; /* steps of a rotation of the late re-emission */
+
 myb_status myb_force_radiation_mesh(const myb_polyhedron* shape, const myb_plate* surface,
                                     double pressure, const double u[3], int shadows,
                                     double force[3], double torque[3]) {
   return radiation_mesh(shape, surface, pressure, u, shadows, force, torque, NULL);
+}
+
+/* The light of the moment without the re-emission, plus each element's re-emission answered
+ * late (myb_force_radiation_mesh_lagged). */
+myb_status myb_force_radiation_mesh_lagged(const myb_polyhedron* shape, const myb_plate* surface,
+                                           double pressure, const double u[3],
+                                           const double axis[3], double theta, int phases,
+                                           int shadows, double force[3], double torque[3]) {
+  MYB_CHECK(shape != NULL && surface != NULL && u != NULL && axis != NULL && force != NULL &&
+            torque != NULL && shadows >= 0);
+  const myb_polyhedron* p = shape;
+  if (!(fabs(myb_vec3_dot(axis, axis) - 1.0) <= 1e-12) || !(theta >= 0.0) || !isfinite(theta) ||
+      phases < 8 || phases > MAX_LAG_PHASES) {
+    return MYB_E_DOMAIN;
+  }
+  myb_plate cold = *surface;
+  cold.thermal = 0;
+  myb_status status = radiation_mesh(p, &cold, pressure, u, shadows, force, torque, NULL);
+  if (status != MYB_OK || !surface->thermal) {
+    return status;
+  }
+  const double absorbed = 1.0 - surface->specular - surface->diffuse;
+  /* the kernel of the late answer: emitted(0) = sum_j kernel_j absorbed(phi_j), with
+   * kernel_j = (1/N) [1 + 2 sum_k Re(H_k e^(-i k phi_j)) (+ the Nyquist term)],
+   * H_k = 1 / (1 + theta sqrt(k) (1 + i) / 2); for theta = 0 it picks the moment alone */
+  double kernel[MAX_LAG_PHASES];
+  const int top = (phases - 1) / 2; /* the harmonics below the Nyquist one */
+  for (int step = 0; step < phases; ++step) {
+    double sum = 1.0;
+    for (int h = 1; h <= top; ++h) {
+      const double d_re = 1.0 + 0.5 * theta * sqrt((double)h);
+      const double d_im = 0.5 * theta * sqrt((double)h);
+      const double dd = d_re * d_re + d_im * d_im;
+      const double angle = 6.283185307179586 * (double)((h * step) % phases) / (double)phases;
+      /* Re((d_re - i d_im) / dd * (cos - i sin)): the harmonic k of the past answered now */
+      sum += 2.0 * (d_re * myb_cos(angle) - d_im * myb_sin(angle)) / dd;
+    }
+    if (phases % 2 == 0) {
+      const int h = phases / 2;
+      const double d_re = 1.0 + 0.5 * theta * sqrt((double)h);
+      const double d_im = 0.5 * theta * sqrt((double)h);
+      const double dd = d_re * d_re + d_im * d_im;
+      sum += (step % 2 == 0 ? 1.0 : -1.0) * d_re / dd;
+    }
+    kernel[step] = sum / (double)phases;
+  }
+  double emitted_total[3] = {0.0, 0.0, 0.0};
+  double emitted_moment[3] = {0.0, 0.0, 0.0};
+  const int parts = shadows > 0 ? shadows : 1;
+  const double k = (double)parts;
+  /* the direction of the source at each phase: the body has turned by phi, so the source is
+   * seen turned by -phi about the axis (Rodrigues) */
+  const double s0[3] = {-u[0], -u[1], -u[2]};
+  double along = myb_vec3_dot(axis, s0);
+  double across[3];
+  double third_dir[3];
+  for (int q = 0; q < 3; ++q) {
+    across[q] = s0[q] - along * axis[q];
+  }
+  myb_vec3_cross(axis, across, third_dir);
+  for (size_t f = 0; f < p->face_count; ++f) {
+    const double* n = p->normals + 3 * f;
+    const double* v0 = p->vertices + 3 * p->faces[3 * f];
+    double e1[3];
+    double e2[3];
+    double normal[3];
+    sub3(p->vertices + 3 * p->faces[3 * f + 1], v0, e1);
+    sub3(p->vertices + 3 * p->faces[3 * f + 2], v0, e2);
+    myb_vec3_cross(e1, e2, normal);
+    const double area = 0.5 * myb_vec3_norm(normal);
+    const double part_area = area / (k * k);
+    const double lift = 1.0e-9 * fmax(myb_vec3_norm(e1), myb_vec3_norm(e2));
+    for (int i = 0; i < parts; ++i) {
+      for (int j = 0; j < parts - i; ++j) {
+        for (int turned = 0; turned < 2; ++turned) {
+          if (turned && i + j > parts - 2) {
+            continue;
+          }
+          const double third = turned ? 2.0 / 3.0 : 1.0 / 3.0;
+          const double a = shadows > 0 ? ((double)i + third) / k : 1.0 / 3.0;
+          const double b = shadows > 0 ? ((double)j + third) / k : 1.0 / 3.0;
+          double centre[3];
+          double start[3];
+          for (int q = 0; q < 3; ++q) {
+            centre[q] = v0[q] + a * e1[q] + b * e2[q];
+            start[q] = centre[q] + lift * n[q];
+          }
+          /* what the element emits now: its absorbed power over the rotation weighted by the
+           * kernel of the late answer */
+          double now = 0.0;
+          for (int step = 0; step < phases; ++step) {
+            const double phi = 6.283185307179586 * (double)step / (double)phases;
+            const double cp = myb_cos(phi);
+            const double sp = myb_sin(phi);
+            double to_source[3];
+            for (int q = 0; q < 3; ++q) {
+              to_source[q] = along * axis[q] + cp * across[q] - sp * third_dir[q];
+            }
+            const double cosine = myb_vec3_dot(n, to_source);
+            if (!(cosine > 0.0)) {
+              continue;
+            }
+            if (shadows > 0 && myb_polyhedron_ray(p, start, to_source, NULL, NULL, NULL)) {
+              continue;
+            }
+            now += kernel[step] * absorbed * pressure * part_area * cosine;
+          }
+          /* the recoil of a Lambertian radiator: (2/3) of the power along -n */
+          double push[3];
+          double lever[3];
+          for (int q = 0; q < 3; ++q) {
+            push[q] = -2.0 / 3.0 * now * n[q];
+          }
+          myb_vec3_cross(centre, push, lever);
+          for (int q = 0; q < 3; ++q) {
+            emitted_total[q] += push[q];
+            emitted_moment[q] += lever[q];
+          }
+        }
+      }
+    }
+  }
+  for (int q = 0; q < 3; ++q) {
+    force[q] += emitted_total[q];
+    torque[q] += emitted_moment[q];
+  }
+  return MYB_OK;
 }
 
 myb_status myb_internal_radiation_mesh_gradient(const myb_polyhedron* shape,

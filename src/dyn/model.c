@@ -16,6 +16,7 @@ typedef struct term {
   myb_term_jacobian jacobian;
   void* context;
   int enabled;
+  int position_only; /* declared not to depend on the velocity */
 } term;
 
 typedef struct parameter {
@@ -107,6 +108,21 @@ myb_status myb_force_model_add(myb_force_model* model, const char* name, myb_ter
 size_t myb_force_model_count(const myb_force_model* model) {
   MYB_CHECK(model != NULL);
   return model->count;
+}
+
+void myb_force_model_set_position_only(myb_force_model* model, size_t index, int position_only) {
+  MYB_CHECK(model != NULL && index < model->count);
+  model->terms[index].position_only = position_only != 0;
+}
+
+int myb_force_model_position_only(const myb_force_model* model) {
+  MYB_CHECK(model != NULL);
+  for (size_t k = 0; k < model->count; ++k) {
+    if (model->terms[k].enabled && !model->terms[k].position_only) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 const char* myb_force_model_name(const myb_force_model* model, size_t index) {

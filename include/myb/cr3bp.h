@@ -222,6 +222,129 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_continue(double mu, myb_cr3bp_t
 /* The point of the circle at any angle (rad), by its trigonometric interpolant. */
 MYB_API void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[6]);
 
+/* ---- Stability of a torus and its manifolds -----------------------------------------------------
+ * The motion near a torus is that of a circle near the invariant one under the map that finds
+ * it, F(u) = R(-rho) phi_T(u): a displacement d of the points goes to A d,
+ *   A = R(-rho) diag(Phi_1 .. Phi_n),
+ * Phi_j the transition matrix of the point j over T. In the continuous circle this is the
+ * Floquet problem of an invariant curve (A. Jorba, Nonlinearity 14, 943, 2001): with an
+ * eigenfunction psi, Phi(theta) psi(theta) = lambda psi(theta + rho), comes psi(theta)
+ * exp(i k theta) of the eigenvalue lambda exp(-i k rho), for every k, so that each eigenvalue
+ * of the torus is a circle of n eigenvalues of A (the values at the points and the Fourier
+ * coefficients of their interpolant are one space in two bases: A is the matrix of the turned
+ * linearised map in either). A is symplectic, as R and every Phi_j are: its 6 n eigenvalues
+ * come as lambda, 1 / lambda and their conjugates.
+ *
+ * Of the six circles four are trivial, at the turns exp(i k rho): those of the directions along
+ * the circle and along the flow, which the torus carries into themselves, and two of the
+ * family of tori (a change of the Jacobi constant or of the action changes T and rho), each a
+ * Jordan block of 1 with one of the first two. The last two are the normal behaviour: a pair
+ * exp(+-i sigma) on the unit circle (an elliptic torus, about which tori of three frequencies
+ * lie), or a real pair lambda, 1 / lambda (a hyperbolic torus, with stable and unstable
+ * manifolds of three dimensions; in a phase space of six the normal pair is never complex off
+ * the unit circle). The representative of a real pair is its member at k = 0, real since n is
+ * odd, and lambda is that of the torus.
+ *
+ * The points resolve the members of a circle up to some |k| only: beyond it the eigenvalues
+ * of A are no longer turns of each other, and some leave the unit circle. A member is
+ * resolved when its circle holds more than half the points, a circle being the eigenvalues
+ * joined by turns by +-rho within the tolerance; the trivial circles are those joined to 1.
+ * The Jordan blocks split by the square root of the error of A: 2.6e-6 radially for the tori
+ * below, well within the tolerance of 1e-4.
+ *
+ * Measured, 25 points: about the L1 Lyapunov orbit of the JPL catalogue (lambda = 2446.324 of
+ * its monodromy matrix) Lissajous tori of the sizes 1e-3, 2e-3, 4e-3 (the root mean square
+ * distance of the circle from the orbit; 1e-3 is 384 km) have lambda = 2446.191, 2445.794,
+ * 2444.210: -5.4e-5, -2.2e-4, -8.6e-4 relative, the size squared (ratios 3.997 and 3.988);
+ * every member of the two hyperbolic circles is resolved (50 of 150 eigenvalues), lambda times
+ * 1 / lambda is 1 to 4e-10, A v = lambda v to 4e-9; the map itself by another integrator and
+ * finite differences gives back lambda v to 3.7e-6; 35 points (a matrix of 210, 0.2 s) give
+ * the lambda of 25 to 2e-14. About two L2 halo orbits (stability indices 12.17 and 74.86)
+ * quasi-halo tori of size 1e-3 have the lambda of the orbit to 3.5e-6 and 1.8e-6. About a
+ * distant retrograde orbit all is on the unit circle: 42 elliptic eigenvalues of 126 (21
+ * points), the two circles of the normal pair, the rest trivial or unresolved; at the size
+ * 0.02 a few unresolved eigenvalues are 5.6 % off the unit circle and the torus is still
+ * elliptic. Manifolds: a point displaced by 1e-9 departs from the torus by lambda in a turn
+ * to 3.4e-6 (forward on the unstable manifold, backward on the stable one, against the
+ * eigenfunction interpolated at the angle reached); carried to the section of the Moon
+ * (x = 1 - mu) with displacements of 1e-6 .. 1e-4, the manifolds of a Lissajous torus cross
+ * it where those of its Lyapunov orbit do, out of the plane as the size of the torus and in
+ * it as its square (4e-4 in y, vy at the size 1e-3, ratio 3.994 to the size 2e-3), the
+ * Jacobi constant kept to 4e-15, and the stable one is the mirror image of the unstable one
+ * (the symmetry y, vx, vz, t -> -y, -vx, -vz, -t). */
+
+enum { MYB_CR3BP_MAX_SPECTRUM = 6 * MYB_CR3BP_MAX_CIRCLE };
+
+typedef struct myb_cr3bp_torus_spectrum {
+  size_t count;                      /* 6 points */
+  double re[MYB_CR3BP_MAX_SPECTRUM]; /* every eigenvalue of A, by modulus from the largest */
+  double im[MYB_CR3BP_MAX_SPECTRUM];
+  /* the classes of the eigenvalues; count in all */
+  size_t trivial;    /* resolved, on the circles joined to 1 */
+  size_t elliptic;   /* resolved, on the unit circle, on others */
+  size_t hyperbolic; /* resolved, off the unit circle */
+  size_t unresolved; /* on circles of no more than half the points */
+  double index;      /* (|lambda| + 1 / |lambda|) / 2 of the unstable eigenvalue; 1 without */
+  double unstable;   /* the real eigenvalue of the unstable direction; 0: none */
+  double stable;     /* that of the stable direction; 0: none */
+  /* their eigenfunctions at the points, of unit root mean square over the points, turned so
+   * that the mean of the x component is positive (or zero) */
+  double unstable_direction[6 * MYB_CR3BP_MAX_CIRCLE];
+  double stable_direction[6 * MYB_CR3BP_MAX_CIRCLE];
+  double residual; /* |A v - lambda v| / (|lambda| |v|) of the two directions, the larger */
+  double tail;     /* the share of their energy above half the highest frequency, the larger */
+} myb_cr3bp_torus_spectrum;
+
+/* The spectrum of the torus: its points carried over T with their transition matrices, the
+ * eigenvalues of A, their classes, and the eigenvectors of the hyperbolic pair. `tolerance`
+ * (0: 1e-4) is the distance within which an eigenvalue counts as on the unit circle, at 1, or
+ * a turn of another (relative to its modulus); it must stay well above the splitting of the
+ * Jordan blocks and below the turn itself (|1 - exp(i rho)| > 10 tolerance). The work grows
+ * as (6 points)^3. On an error the spectrum is not usable. Errors: MYB_E_DOMAIN (an invalid
+ * torus or tolerance, a turn rho too near 0), MYB_E_NOCONV (the eigenvalues; or a resolved
+ * circle off the unit circle with no real member: no spectrum of a torus of this problem —
+ * more points, or another tolerance), MYB_E_NOMEM, those of the propagation. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus,
+                                                           double tolerance,
+                                                           myb_cr3bp_torus_spectrum* spectrum);
+
+/* A state on the unstable (unstable != 0) or stable manifold of the torus: the point of the
+ * circle at `angle` displaced by epsilon (in length units, along the position part of the
+ * eigenfunction there, interpolated as the circle is) on the side sign (+1 or -1; +1 is the
+ * side of growing x on the mean over the circle: towards the Moon from a torus about L1). The
+ * unstable manifold leaves the torus forward in time, its distance growing by |lambda| in T
+ * while it is near; the stable one backward. The displacement is that of the linear manifold,
+ * and the circle's own error (1e-11 for the tori above) grows with it: an epsilon well above
+ * that (1e-6 .. 1e-4) when the manifold is followed far. MYB_E_DOMAIN: invalid input, a
+ * spectrum of another number of points, or no hyperbolic pair. */
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_manifold(const myb_cr3bp_torus* torus,
+                                                          const myb_cr3bp_torus_spectrum* spectrum,
+                                                          double angle, int unstable, int sign,
+                                                          double epsilon, double y[6]);
+
+/* ---- Propagation to a time or to a section ---------------------------------------------------
+ * The flow of the problem by IAS15 (myb/integ.h, epsilon 1e-12), from y0 for the time
+ * `duration` (negative: backward), stopping at the first crossing of a plane when a section
+ * is given: y[axis] = value for a component of the state (0 .. 5), crossed with that component
+ * growing in time (direction +1), falling (-1) or either (0); a start on the plane does not
+ * count. The crossing is located on the dense output of the step by the event locator of the
+ * integrators. y (may be y0): the state at the crossing, or at the end; *elapsed (may be
+ * NULL) the time from the start; *crossed (may be NULL) 1 if the plane was reached. For the
+ * manifolds of periodic orbits and of tori carried to a surface of section. Measured: the L1
+ * Lyapunov orbit of the catalogue crosses y = 0 at T / 2 to 1e-15 and at T to 2e-12, the
+ * state returning to 2e-12; against DOP853 over 0.7 T, 9e-13. Errors: MYB_E_DOMAIN (mu,
+ * duration or y0 not finite, an invalid section), MYB_E_NOCONV (more than 10^6 steps), those
+ * of the integrator (MYB_E_STEP_MIN at a collision with a primary). */
+typedef struct myb_cr3bp_section {
+  int axis; /* 0 .. 5 */
+  double value;
+  int direction; /* +1, -1 or 0 */
+} myb_cr3bp_section;
+
+MYB_API MYB_NODISCARD myb_status myb_cr3bp_propagate(double mu, const double y0[6], double duration,
+                                                     const myb_cr3bp_section* section, double y[6],
+                                                     double* elapsed, int* crossed);
+
 #ifdef __cplusplus
 }
 #endif

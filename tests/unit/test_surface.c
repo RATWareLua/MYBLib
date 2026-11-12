@@ -1131,7 +1131,93 @@ static void test_jacobians(void) {
   myb_env_destroy(env);
 }
 
+/* The light of the moment with the heat conducted into the surface: with theta = 0 the light
+ * of the moment; over a turn the torque of the late re-emission averages to that of
+ * myb_force_yorp; the late answer turns the force forward in the sense of the rotation. */
+static void test_lagged_light(void) {
+  myb_polyhedron* shape = NULL;
+  /* a lumpy body: an octahedron stretched unevenly */
+  const double vertices[18] = {1.3, 0.1, 0.0, -0.9, 0.0, 0.2, 0.0, 1.1, 0.1,
+                               0.1, -0.8, 0.0, 0.0, 0.2, 1.2, -0.1, 0.0, -0.7};
+  const size_t faces[24] = {0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5};
+  MT_CHECK(myb_polyhedron_create(vertices, 6, faces, 8, 1.0, NULL, &shape) == MYB_OK);
+  if (shape == NULL) {
+    return;
+  }
+  const myb_plate surface = {.specular = 0.1, .diffuse = 0.2, .thermal = 1};
+  const double axis[3] = {0.0, 0.0, 1.0};
+  const double pressure = 4.56e-6;
+  double worst_same = 0.0;
+  for (int shadows = 0; shadows <= 3; shadows += 3) {
+    const double u0[3] = {-0.6, 0.48, -0.64};
+    double force_a[3];
+    double torque_a[3];
+    double force_b[3];
+    double torque_b[3];
+    MT_CHECK(myb_force_radiation_mesh(shape, &surface, pressure, u0, shadows, force_a,
+                                      torque_a) == MYB_OK);
+    MT_CHECK(myb_force_radiation_mesh_lagged(shape, &surface, pressure, u0, axis, 0.0, 64,
+                                             shadows, force_b, torque_b) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      worst_same = fmax(worst_same, fabs(force_a[i] - force_b[i]) / pressure);
+      worst_same = fmax(worst_same, fabs(torque_a[i] - torque_b[i]) / pressure);
+    }
+  }
+  /* the mean over a turn of the late re-emission against myb_force_yorp */
+  const int phases = 48;
+  const double colatitude = 1.1;
+  double worst_mean = 0.0;
+  for (int k = 0; k < 3; ++k) {
+    const double theta = k == 0 ? 0.0 : (k == 1 ? 0.7 : 3.0);
+    const myb_plate emitting = {.thermal = 1};
+    const myb_plate dark = {.thermal = 0};
+    double mean[3] = {0.0, 0.0, 0.0};
+    for (int step = 0; step < phases; ++step) {
+      const double phi = 6.283185307179586 * ((double)step + 0.5) / phases;
+      const double to_source[3] = {sin(colatitude) * cos(phi), -sin(colatitude) * sin(phi),
+                                   cos(colatitude)};
+      const double u[3] = {-to_source[0], -to_source[1], -to_source[2]};
+      double f_all[3];
+      double t_all[3];
+      double f_dark[3];
+      double t_dark[3];
+      MT_CHECK(myb_force_radiation_mesh_lagged(shape, &emitting, pressure, u, axis, theta,
+                                               phases, 0, f_all, t_all) == MYB_OK);
+      MT_CHECK(myb_force_radiation_mesh(shape, &dark, pressure, u, 0, f_dark, t_dark) == MYB_OK);
+      /* the re-emitted part, into the inertial axes (the body has turned by phi) */
+      const double tb[3] = {t_all[0] - t_dark[0], t_all[1] - t_dark[1], t_all[2] - t_dark[2]};
+      mean[0] += (tb[0] * cos(phi) - tb[1] * sin(phi)) / phases;
+      mean[1] += (tb[0] * sin(phi) + tb[1] * cos(phi)) / phases;
+      mean[2] += tb[2] / phases;
+    }
+    double yorp[3];
+    MT_CHECK(myb_force_yorp(shape, pressure, colatitude, theta, 0, phases, yorp) == MYB_OK);
+    double scale = 0.0;
+    for (int i = 0; i < 3; ++i) {
+      scale = fmax(scale, fabs(yorp[i]));
+    }
+    for (int i = 0; i < 3; ++i) {
+      worst_mean = fmax(worst_mean, fabs(mean[i] - yorp[i]) / scale);
+    }
+  }
+  printf("late re-emission: with theta = 0 the light of the moment to %.1e of the pressure; its "
+         "mean over a turn against myb_force_yorp (theta 0, 0.7, 3) %.1e\n",
+         worst_same, worst_mean);
+  MT_CHECK(worst_same < 4e-15 && worst_mean < 1e-12);
+  /* refused */
+  const double bent[3] = {0.0, 0.6, 0.6};
+  const double u1[3] = {0.0, 0.0, -1.0};
+  double f[3];
+  double tq[3];
+  MT_CHECK(myb_force_radiation_mesh_lagged(shape, &surface, pressure, u1, bent, 1.0, 64, 0, f,
+                                           tq) == MYB_E_DOMAIN);
+  MT_CHECK(myb_force_radiation_mesh_lagged(shape, &surface, pressure, u1, axis, 1.0, 257, 0, f,
+                                           tq) == MYB_E_DOMAIN);
+  myb_polyhedron_destroy(shape);
+}
+
 int main(void) {
+  test_lagged_light();
   setvbuf(stdout, NULL, _IONBF, 0);
   test_bridge_and_yorp();
   test_gas();

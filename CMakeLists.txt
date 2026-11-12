@@ -62,10 +62,12 @@ set(_myb_sources
   src/core/status.c
   src/cr3bp/cr3bp.c
   src/cr3bp/torus.c
+  src/dyn/fmm.c
   src/dyn/model.c
   src/dyn/nbody.c
   src/dyn/system.c
   src/dyn/whfast.c
+  src/env/contact.c
   src/env/env.c
   src/env/terms.c
   src/env/weather.c
@@ -85,10 +87,12 @@ set(_myb_sources
   src/frames/rotation.c
   src/frames/tkframe.c
   src/force/atmosphere.c
+  src/force/entry.c
   src/force/nongrav.c
   src/force/force.c
   src/force/magnetic.c
   src/force/charging.c
+  src/force/contact.c
   src/force/radiation.c
   src/force/surface.c
   src/force/qlaw.c
@@ -139,11 +143,14 @@ set(_myb_sources
   src/num/series.c
   src/observe/observe.c
   src/orbit/events.c
+  src/orbit/meteoroid.c
   src/orbit/orbit.c
   src/num/sum.c
+  src/rel/pn_higher.c
   src/rel/rel.c
   src/cmath/cmath.c
   src/time/instant.c
+  src/transfer/chain.c
   src/transfer/indirect.c
   src/transfer/lambert.c
   src/transfer/nlp.c
@@ -235,7 +242,7 @@ if(CMAKE_CXX_COMPILER)
 endif()
 
 # ---- Optional modules of particular bodies (ext/) -------------------------------------
-option(MYB_BUILD_EXT "Build the body-specific models of ext/ (NRLMSISE-00, SGP4, troposphere, ionosphere)" ON)
+option(MYB_BUILD_EXT "Build the body-specific models of ext/ (NRLMSISE-00, SGP4, troposphere, ionosphere, JB2008)" ON)
 if(MYB_BUILD_EXT)
   add_subdirectory(ext)
 endif()

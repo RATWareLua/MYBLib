@@ -26,8 +26,12 @@ struct myb_ionex {
   int nlon;
   int nmaps;
   int global; /* the longitudes cover 360 degrees */
+  int dimension;  /* 2 or 3 */
+  int nhgt;       /* the heights of three-dimensional maps; 1 */
+  double dhgt;    /* their step, m */
   double* epochs; /* MJD of each map */
-  double* tec;    /* electrons/m^2, [map][lat][lon]; NaN where missing */
+  double* tec;    /* electrons/m^2, [map][lat][lon]; of three-dimensional maps the densities,
+                     electrons/m^3, [map][height][lat][lon]; NaN where missing */
 };
 
 myb_status myb_iono_pierce_point(double latitude, double longitude, double azimuth,
@@ -143,6 +147,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
   int in_other = 0;  /* inside an RMS or height map */
   long map = -1;
   long row = -1;
+  long level = 0;
   long col = 0;
   long line_number = 0;
   size_t pos = 0;
@@ -154,20 +159,24 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
     ++line_number;
     if (in_header) {
       if (label_is(line, len, "END OF HEADER")) {
-        if ((have & 31) != 31 || dimension != 2.0) {
+        if ((have & 31) != 31 || (dimension != 2.0 && dimension != 3.0)) {
           myb_internal_diag(diag, line_number,
-                            dimension != 2.0 ? "three-dimensional maps are not supported"
-                                             : "incomplete header");
-          st = dimension != 2.0 ? MYB_E_DOMAIN : MYB_E_FORMAT;
+                            (have & 31) != 31 ? "incomplete header" : "a map dimension not 2 or 3");
+          st = MYB_E_FORMAT;
           goto fail;
         }
         const long nlat = count_of(lat[0], lat[1], lat[2]);
         const long nlon = count_of(lon[0], lon[1], lon[2]);
-        if (nlat < 2 || nlon < 2 || x->nmaps < 1) {
+        const long nhgt = dimension == 3.0 ? count_of(hgt[0], hgt[1], hgt[2]) : 1;
+        if (nlat < 2 || nlon < 2 || x->nmaps < 1 ||
+            (dimension == 3.0 && (nhgt < 2 || !(hgt[2] > 0.0)))) {
           myb_internal_diag(diag, line_number, "invalid grid");
           st = MYB_E_FORMAT;
           goto fail;
         }
+        x->dimension = (int)dimension;
+        x->nhgt = (int)nhgt;
+        x->dhgt = hgt[2] * 1000.0;
         x->nlat = (int)nlat;
         x->nlon = (int)nlon;
         x->lat1 = lat[0];
@@ -177,7 +186,8 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
         x->global = fabs(fabs(lon[1] - lon[0]) - 360.0) < 1e-9;
         x->height = hgt[0] * 1000.0;
         size_t cells = 0;
-        if (__builtin_mul_overflow((size_t)x->nmaps, (size_t)nlat * (size_t)nlon, &cells)) {
+        if (__builtin_mul_overflow((size_t)x->nmaps * (size_t)nhgt, (size_t)nlat * (size_t)nlon,
+                                   &cells)) {
           st = MYB_E_OVERFLOW;
           goto fail;
         }
@@ -260,6 +270,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
         map = (long)n - 1;
         in_tec = 1;
         row = -1;
+        level = 0;
       } else if (label_is(line, len, "START OF RMS MAP") ||
                  label_is(line, len, "START OF HEIGHT MAP")) {
         in_other = 1;
@@ -308,6 +319,15 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
         st = MYB_E_FORMAT;
         goto fail;
       }
+      if (x->dimension == 3) {
+        const double z = (f[4] - hgt[0]) / hgt[2];
+        level = (long)floor(z + 0.5);
+        if (level < 0 || level >= x->nhgt || fabs(z - (double)level) > 1e-6) {
+          myb_internal_diag(diag, line_number, "a height off the grid");
+          st = MYB_E_FORMAT;
+          goto fail;
+        }
+      }
       col = 0;
       continue;
     }
@@ -327,10 +347,14 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
       if (!field(line, len, 5 * k, 5, &v)) {
         break;
       }
-      const size_t idx = ((size_t)map * (size_t)x->nlat + (size_t)row) * (size_t)x->nlon +
-                         (size_t)col;
+      const size_t idx =
+          (((size_t)map * (size_t)x->nhgt + (size_t)level) * (size_t)x->nlat + (size_t)row) *
+              (size_t)x->nlon +
+          (size_t)col;
       const double tecu = exponent < 0.0 ? v / power : v * power;
-      x->tec[idx] = v == 9999.0 ? (double)NAN : tecu * TECU;
+      /* of three-dimensional maps the density at the node times DHGT */
+      const double content = tecu * TECU;
+      x->tec[idx] = v == 9999.0 ? (double)NAN : x->dimension == 3 ? content / x->dhgt : content;
       ++col;
     }
   }
@@ -369,8 +393,14 @@ void myb_ionex_shell(const myb_ionex* maps, double* radius, double* height) {
   *height = maps->height;
 }
 
-/* bilinear value of map m at latitude, longitude in degrees; NaN outside or missing */
-static double map_value(const myb_ionex* x, int m, double lat_deg, double lon_deg) {
+int myb_ionex_dimension(const myb_ionex* maps) {
+  MYB_CHECK(maps != NULL);
+  return maps->dimension;
+}
+
+/* bilinear value of level k of map m at latitude, longitude in degrees; NaN outside or
+ * missing */
+static double level_value(const myb_ionex* x, int m, int k, double lat_deg, double lon_deg) {
   double lon = lon_deg;
   if (x->global) {
     const double lo = fmin(x->lon1, x->lon1 + (x->nlon - 1) * x->dlon);
@@ -387,7 +417,8 @@ static double map_value(const myb_ionex* x, int m, double lat_deg, double lon_de
   j = j < 0 ? 0 : j > x->nlat - 2 ? x->nlat - 2 : j;
   const double fp = p - i;
   const double fq = q - j;
-  const double* t = x->tec + (size_t)m * (size_t)x->nlat * (size_t)x->nlon;
+  const double* t =
+      x->tec + ((size_t)m * (size_t)x->nhgt + (size_t)k) * (size_t)x->nlat * (size_t)x->nlon;
   const size_t n = (size_t)x->nlon;
   const size_t i0 = (size_t)i;
   const size_t j0 = (size_t)j;
@@ -397,6 +428,19 @@ static double map_value(const myb_ionex* x, int m, double lat_deg, double lon_de
   const double e11 = t[(j0 + 1) * n + i0 + 1];
   return (1.0 - fp) * (1.0 - fq) * e00 + fp * (1.0 - fq) * e10 + fq * (1.0 - fp) * e01 +
          fp * fq * e11;
+}
+
+/* the vertical content of map m: of three-dimensional maps the sum of the densities times
+ * DHGT over the heights */
+static double map_value(const myb_ionex* x, int m, double lat_deg, double lon_deg) {
+  if (x->dimension != 3) {
+    return level_value(x, m, 0, lat_deg, lon_deg);
+  }
+  double sum = 0.0;
+  for (int k = 0; k < x->nhgt; ++k) {
+    sum += level_value(x, m, k, lat_deg, lon_deg);
+  }
+  return sum * x->dhgt;
 }
 
 myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd, double latitude, double longitude,
@@ -481,9 +525,12 @@ static myb_status grid_value(const myb_iono_grid* g, int m, double h, double q, 
   if (!(q >= -1e-9 && q <= g->latitudes - 1 + 1e-9)) {
     return MYB_E_RANGE;
   }
-  const double turn = (double)g->longitudes;
-  const int round = fabs((double)g->longitudes * g->longitude_step - TWO_PI) <
-                    1e-9 * g->longitude_step;
+  /* round: the columns span a turn, or a turn and a step with the last the first again */
+  const double tiny = 1e-9 * g->longitude_step;
+  const int closed = fabs((double)(g->longitudes - 1) * g->longitude_step - TWO_PI) < tiny;
+  const int round = closed || fabs((double)g->longitudes * g->longitude_step - TWO_PI) < tiny;
+  const int period = closed ? g->longitudes - 1 : g->longitudes;
+  const double turn = (double)period;
   if (round) {
     p -= turn * floor(p / turn);
   } else if (!(p >= -1e-9 && p <= turn - 1.0 + 1e-9)) {
@@ -494,8 +541,8 @@ static myb_status grid_value(const myb_iono_grid* g, int m, double h, double q, 
   int i = (int)floor(p);
   k = k < 0 ? 0 : k > g->heights - 2 ? g->heights - 2 : k;
   j = j < 0 ? 0 : j > g->latitudes - 2 ? g->latitudes - 2 : j;
-  i = i < 0 ? 0 : i > g->longitudes - (round ? 1 : 2) ? g->longitudes - (round ? 1 : 2) : i;
-  const int i1 = i + 1 == g->longitudes ? 0 : i + 1;
+  i = i < 0 ? 0 : i > period - (round ? 1 : 2) ? period - (round ? 1 : 2) : i;
+  const int i1 = i + 1 == period ? 0 : i + 1;
   const double fh = h - k;
   const double fq = q - j;
   const double fp = p - i;
@@ -510,7 +557,31 @@ static myb_status grid_value(const myb_iono_grid* g, int m, double h, double q, 
       sum += (a ? fh : 1.0 - fh) * (b ? fq : 1.0 - fq) * along;
     }
   }
+  if (!isfinite(sum)) {
+    return MYB_E_RANGE; /* a missing value around */
+  }
   *value = sum;
+  return MYB_OK;
+}
+
+myb_status myb_ionex_density_grid(const myb_ionex* maps, myb_iono_grid* grid) {
+  MYB_CHECK(maps != NULL && grid != NULL);
+  if (maps->dimension != 3 || !(maps->dlon > 0.0)) {
+    return MYB_E_DOMAIN;
+  }
+  grid->radius = maps->radius;
+  grid->latitude = maps->lat1 * DEG;
+  grid->latitude_step = maps->dlat * DEG;
+  grid->latitudes = maps->nlat;
+  grid->longitude = maps->lon1 * DEG;
+  grid->longitude_step = maps->dlon * DEG;
+  grid->longitudes = maps->nlon;
+  grid->height = maps->height;
+  grid->height_step = maps->dhgt;
+  grid->heights = maps->nhgt;
+  grid->epochs = maps->epochs;
+  grid->maps = maps->nmaps;
+  grid->density = maps->tec;
   return MYB_OK;
 }
 
@@ -548,15 +619,22 @@ myb_status myb_iono_grid_density(void* grid, double mjd, const double r[3], doub
   const double turn = TWO_PI / g->longitude_step; /* steps of longitude in a day */
   double first = 0.0;
   double second = 0.0;
-  myb_status status = grid_value(g, i, h, q, p + (mjd - t0) * turn, &first);
-  if (status == MYB_OK) {
-    status = grid_value(g, i + 1, h, q, p + (mjd - t1) * turn, &second);
+  const myb_status s0 = grid_value(g, i, h, q, p + (mjd - t0) * turn, &first);
+  const myb_status s1 = grid_value(g, i + 1, h, q, p + (mjd - t1) * turn, &second);
+  if (s0 == MYB_OK && s1 == MYB_OK) {
+    *density = ((t1 - mjd) * first + (mjd - t0) * second) / (t1 - t0);
+    return MYB_OK;
   }
-  if (status != MYB_OK) {
-    return status;
+  /* at the epoch of a map the other one has no part: a value missing there is not needed */
+  if (mjd == t0 && s0 == MYB_OK) {
+    *density = first;
+    return MYB_OK;
   }
-  *density = ((t1 - mjd) * first + (mjd - t0) * second) / (t1 - t0);
-  return MYB_OK;
+  if (mjd == t1 && s1 == MYB_OK) {
+    *density = second;
+    return MYB_OK;
+  }
+  return s0 != MYB_OK ? s0 : s1;
 }
 
 /* ---- The integrals along a ray --------------------------------------------------------------- */

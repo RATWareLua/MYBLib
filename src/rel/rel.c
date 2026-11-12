@@ -317,6 +317,14 @@ static void pn_coefficients(unsigned orders, double nu, double u, double rd, dou
     aa += a35 / c7;
     bb += b35 / c7;
   }
+  if (orders & MYB_PN_4) {
+    double a4 = 0.0;
+    double b4 = 0.0;
+    myb_internal_pn4_coefficients(nu, u, rd, v2, log_r, &a4, &b4);
+    const double c8 = c4 * c4;
+    aa += a4 / c8;
+    bb += b4 / c8;
+  }
   *aa_out = aa;
   *bb_out = bb;
 }
@@ -346,10 +354,10 @@ static myb_status pn_binary(const myb_pn_binary* b, double newton, const double 
   const double r = sqrt(r2);
   if (!(gm1 > 0.0) || !(gm2 > 0.0) || !(c > 0.0) || !(r > 0.0) || !isfinite(r) ||
       !isfinite(gm1 + gm2 + c) || !myb_vec3_finite(v) || !myb_vec3_finite(s1) ||
-      !myb_vec3_finite(s2) || (orders & ~(unsigned)MYB_PN_ALL) != 0u) {
+      !myb_vec3_finite(s2) || (orders & ~MYB_PN_KNOWN) != 0u) {
     return MYB_E_DOMAIN;
   }
-  if ((orders & MYB_PN_3) && !(b->r0 > 0.0 && b->r0 < 1e300)) {
+  if ((orders & (MYB_PN_3 | MYB_PN_4)) && !(b->r0 > 0.0 && b->r0 < 1e300)) {
     return MYB_E_DOMAIN;
   }
   if ((orders & MYB_PN_SS) && !(b->kappa1 >= 0.0 && b->kappa1 < 1e300 && b->kappa2 >= 0.0 &&
@@ -362,7 +370,7 @@ static myb_status pn_binary(const myb_pn_binary* b, double newton, const double 
   const double rd = myb_vec3_dot(n, v);
   const double v2 = myb_vec3_dot(v, v);
   const double u = gm / r;
-  const double log_r = (orders & MYB_PN_3) ? myb_log(r / b->r0) : 0.0;
+  const double log_r = (orders & (MYB_PN_3 | MYB_PN_4)) ? myb_log(r / b->r0) : 0.0;
   double aa = 0.0;
   double bb = 0.0;
   pn_coefficients(orders, nu, u, rd, v2, c, log_r, &aa, &bb);
@@ -430,6 +438,15 @@ static myb_status pn_binary(const myb_pn_binary* b, double newton, const double 
     for (int i = 0; i < 3; ++i) {
       w1[i] += gm2 * gm2 * h * (3.0 * n2 * n[i] - s2[i]) + qm1 * n[i];
       w2[i] += gm1 * gm1 * h * (3.0 * n1 * n[i] - s1[i]) + qm2 * n[i];
+    }
+  }
+  if (orders & MYB_PN_HIGHER) {
+    /* 4PN with its tail, the higher spin-orbit terms and their radiation reaction
+     * (rel/pn_higher.c); on its domain error (a tail on an unbound or nearly parabolic
+     * osculating orbit) the outputs are not meaningful, as for any error */
+    const myb_status st = myb_internal_pn_higher(b, x, v, s1, s2, a, w1, w2);
+    if (st != MYB_OK) {
+      return st;
     }
   }
   if (dchi1 != NULL) {

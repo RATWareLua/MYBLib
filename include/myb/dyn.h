@@ -6,7 +6,9 @@
  * body 0, then body 1, ...; m, m/s, m/s^2) in an inertial frame. Bodies 0 .. massive-1 attract;
  * the following test bodies feel the massive ones and attract nothing.
  *
- * Accelerations are direct sums over all pairs, without approximation: for receiver i
+ * Accelerations are direct sums over all pairs, without approximation (unless the fast
+ * multipole method is asked for: myb_nbody_set_approximation, an approximate level): for
+ * receiver i
  *   a_i = sum_j GM_j (x_j - x_i) / |x_j - x_i|^3,
  * the terms added in increasing j with compensated summation (Sum2: Ogita, Rump, Oishi, SIAM
  * J. Sci. Comput. 26, 1955, 2005), so the sum is accurate to about one ulp whatever the number
@@ -97,7 +99,8 @@ MYB_API MYB_NODISCARD myb_status myb_nbody_set_relativity(myb_nbody* nbody, cons
  * RKN12, Gauss-Jackson and the symplectic compositions; t is not used by Newtonian gravity).
  * Separations must lie within 1e-150 .. 1e150 m. Errors: MYB_E_DOMAIN (two interacting bodies
  * at the same place, or a non-finite position or result); a is then unspecified. No memory
- * is allocated. */
+ * is allocated — unless an approximation is set (myb_nbody_set_approximation below): then the
+ * sums are approximate and its tree may grow (MYB_E_NOMEM). */
 MYB_API MYB_NODISCARD myb_status myb_nbody_acceleration(void* nbody, double t, const double* x,
                                                         double* a);
 
@@ -152,6 +155,76 @@ MYB_API MYB_NODISCARD myb_status myb_nbody_pn_invariants_of(const myb_nbody* nbo
                                                             const double* x, const double* v,
                                                             myb_nbody_pn_invariants* invariants);
 
+/* ---- An approximate level: the fast multipole method ----------------------------------------
+ * APPROXIMATE, and off unless asked for: exact direct summation stays the default, and a
+ * system that was never given an approximation computes the same bits as before it existed.
+ *
+ * myb_nbody_set_approximation(nbody, p, theta) makes the Newtonian sum of every body that has
+ * no excluded source (the all-to-all part of the graph) come from a fast multipole method:
+ * an adaptive octree, solid-harmonic expansions to the order p, the dual tree walk of
+ * W. Dehnen (J. Comput. Phys. 179, 27, 2002; Comput. Astrophys. Cosmol. 1, 1, 2014) with the
+ * acceptance criterion r_A + r_B < theta |z_A - z_B| (r the radius of a cell about its centre
+ * of GM z) and the near field summed directly (L. Greengard, V. Rokhlin, J. Comput. Phys. 73,
+ * 325, 1987, for the method; dyn/fmm.c gives every formula). The order and the opening angle
+ * set the error, which falls like theta^p; measured relative force errors (rms over the
+ * bodies of |a - a_direct| / |a_direct|; the largest over the bodies is 10 to 50 times more)
+ * for 10^4 bodies (tests/unit/test_fmm.c):
+ *
+ *             uniform cube                      Plummer sphere
+ *    p    theta 0.3   0.5      0.7          0.3       0.5      0.7
+ *    4    2.5e-5    4.3e-4   2.1e-3       1.3e-4    2.7e-3   1.1e-2
+ *    6    8.5e-7    4.5e-5   5.1e-4       2.9e-6    3.3e-4   2.9e-3
+ *    8    1.6e-8    4.3e-6   1.1e-4       7.9e-8    4.3e-5   8.8e-4
+ *   10    8.1e-10   7.1e-7   3.6e-5       2.2e-9    5.1e-6   2.3e-4
+ *   12    3.8e-11   9.7e-8   1.1e-5       5.3e-13   5.8e-7   7.0e-5
+ *   16    1.2e-14   1.4e-9   1.3e-6       3.2e-15   3.0e-10  1.2e-6
+ *
+ * and nearly the same for 100, 1000 and 20000 bodies (p = 8, theta 0.5: 6e-6 .. 4e-5). The
+ * rounding of the direct sum, 2e-15, is the floor. The force error of a Barnes-Hut tree
+ * (1e-3 .. 1e-4, why it was kept out of the library) is that of p = 2 .. 4 here.
+ *
+ * What stays exact: the bodies with an excluded source (myb_nbody_set_interaction with
+ * MYB_INTERACTION_NONE) keep the direct sum, so the graph is honoured; the test bodies feel
+ * the expansions as the massive ones do. With the 1PN terms (myb_nbody_set_relativity) the
+ * potentials U_i and the 1PN terms stay direct sums over all pairs — O(N^2) — and only take
+ * the Newtonian accelerations a_j of the sources from the FMM (an error of the same relative
+ * size in a term that is c^-2 smaller). Every level of myb/system.h above the point masses
+ * is untouched.
+ *
+ * Momentum: every interaction of two cells is mutual (one expansion both ways), so
+ * sum GM_i a_i vanishes to rounding whatever p and theta: |sum GM_i a_i| / sum GM_i |a_i|
+ * <= 1e-16 over the table above, and the momentum of an integration changes by 2e-17 of
+ * sum GM |v|. Energy is not conserved exactly (the approximate force is not the gradient of
+ * one potential, and it jumps where the walk changes): along six dynamical times of a Plummer
+ * sphere of 512 bodies the expansions alone inject about 3e-5 (p 4), 4e-7 (p 8) and 4e-8
+ * (p 12) of |E| at theta 0.5 — far below what close passes cost a fixed-step integration of
+ * point masses (half of |E| there, with the direct sums as with the FMM).
+ *
+ * Cost, one thread, p 8, theta 0.5 (an i5-9300H shared with other work, +-30 %; the direct
+ * sum vectorised): 10 and 16 us per body for 10^4 bodies (cube, Plummer) against 55 .. 65 us
+ * for the direct sum; 17 and 25 us for 10^5 against about 600 us — from 10^4 to 10^5 bodies
+ * the time per body grows 1.6 to 1.7 times, the direct sum's 10 times; the pairs summed
+ * directly per body stay within a factor 2.2 (they follow the filling of the leaves) and the
+ * cell interactions below 5 per body. Below a few thousand bodies most pairs are cheaper
+ * summed directly and the gain is 2 to 3 times. The evaluation is serial (the pool of
+ * myb_nbody_set_pool is not used by it) and its order of operations is fixed: the same input
+ * gives the same bits. myb_nbody_acceleration and myb_nbody_acceleration_xv then allocate
+ * when the tree outgrows its memory (MYB_E_NOMEM). The Wisdom-Holman integrators refuse a
+ * system with an approximation (myb_wh_start: MYB_E_DOMAIN): there the error would be relative
+ * to the full force, the central body's included, which the splitting subtracts.
+ *
+ * order: 0 (back to exact direct summation; theta is not read) or 1 .. MYB_NBODY_FMM_MAX_ORDER;
+ * theta: 0 < theta < 1. Errors: MYB_E_DOMAIN (order or theta outside), MYB_E_NOMEM,
+ * MYB_E_OVERFLOW (the system keeps its former setting). */
+enum { MYB_NBODY_FMM_MAX_ORDER = 20 };
+
+MYB_API MYB_NODISCARD myb_status myb_nbody_set_approximation(myb_nbody* nbody, int order,
+                                                             double theta);
+
+/* The order of the approximation, 0 if the sums are exact; *theta (if theta is not NULL) its
+ * opening angle, 0 if exact. */
+MYB_API int myb_nbody_approximation(const myb_nbody* nbody, double* theta);
+
 /* ---- Wisdom-Holman splitting integrators ----------------------------------------------------
  * H = H_Kepler + H_interaction in canonical Jacobi coordinates (Wisdom & Holman 1991): body 0
  * is the central body (GM > 0), the massive bodies follow in order (best accuracy from the
@@ -199,7 +272,8 @@ typedef struct myb_wh_stats {
 typedef struct myb_wh myb_wh;
 
 /* The system must outlive the integrator. Errors: MYB_E_DOMAIN (options, GM_0 = 0, 1PN
- * terms in the system), MYB_E_OVERFLOW, MYB_E_NOMEM. */
+ * terms in the system), MYB_E_OVERFLOW, MYB_E_NOMEM. myb_wh_start refuses (MYB_E_DOMAIN) a
+ * system with an approximation (myb_nbody_set_approximation). */
 MYB_API MYB_NODISCARD myb_status myb_wh_create(myb_nbody* system, const myb_wh_options* options,
                                                const myb_allocator* allocator, myb_wh** wh);
 

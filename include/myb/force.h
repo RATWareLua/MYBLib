@@ -463,9 +463,9 @@ MYB_API void myb_force_plasma_stream(double rho0, double r0, double speed,
  * A/m^2, at the body's distance), times (1 + chi_p) e^(-chi_p) when phi > 0 holds them back
  * (chi_p = e phi / (k T_p)). The total current makes the body float at the potential where it
  * vanishes; the charge is then Q = 4 pi eps0 a phi (a sphere far from others), and the
- * charge-to-mass ratio for myb_lorentz_acceleration Q / m. Secondary emission by electron
- * impact (important for some materials above ~100 eV) and the thick-sheath limit (a much
- * larger than the Debye length) are not modelled. */
+ * charge-to-mass ratio for myb_lorentz_acceleration Q / m. That is the model of a sphere small
+ * against the Debye length; myb_charging_model adds the secondary electrons and the other
+ * limit, a sphere large against it (below). */
 typedef struct myb_plasma_species {
   double charge;      /* C (-e for electrons) */
   double mass;        /* kg */
@@ -497,6 +497,73 @@ MYB_API MYB_NODISCARD myb_status myb_charging_equilibrium(const myb_plasma_speci
                                                           size_t count,
                                                           const myb_photoemission* photo,
                                                           double radius, double* potential);
+
+/* The Debye length (m) of the plasma: sqrt(eps0 / sum q^2 n / (k T)). 0 for no species. */
+MYB_API double myb_debye_length(const myb_plasma_species* species, size_t count);
+
+/* Secondary electrons released by the impact of the electrons of the plasma, after E. J.
+ * Sternglass (Westinghouse Res. Lab. Sci. Pap. 1772, 1954; the form of E. C. Whipple, Rep.
+ * Prog. Phys. 44, 1197, 1981, and of NASCAP): the yield at the impact energy E
+ *   delta(E) = e^2 delta_max (E / E_max) exp(-2 sqrt(E / E_max))
+ * (Sternglass's 7.4 is e^2 = 7.389 here, so that the largest yield is delta_max at E_max),
+ * for typical surfaces delta_max 0.5 .. 3 and E_max 0.2 .. 0.8 keV (aluminium about 0.97 at
+ * 300 eV, Kapton 2.1 at 150 eV). The secondaries leave with a few eV (k T_s) and, as the
+ * photoelectrons, are held back by a positive potential: a fraction (1 + chi_s) e^(-chi_s)
+ * escapes, chi_s = e phi / (k T_s). For a Maxwellian of electrons the incident energies are
+ * weighted by their flux, E exp(-(E - e phi) / k T) above max(0, e phi) for the sphere of
+ * orbit-motion-limited collection; the drift of the electrons is neglected. */
+typedef struct myb_secondary_emission {
+  double max_yield;   /* delta_max */
+  double max_energy;  /* E_max, J */
+  double temperature; /* k T of the secondaries, J */
+  double charge;      /* elementary charge, C (MYB_CONST_E) */
+} myb_secondary_emission;
+
+/* The yield delta(E) at the impact energy (J). */
+MYB_API double myb_secondary_yield(const myb_secondary_emission* emission, double energy);
+
+/* The two limits of the sheath:
+ *  - MYB_SHEATH_THICK (the default): the sphere small against the Debye length, the
+ *    orbit-motion-limited currents above;
+ *  - MYB_SHEATH_THIN: the sphere large against it (a >> lambda_D): the sheath a thin shell on
+ *    the surface, which collects no more of an attracted species than reaches it at zero
+ *    potential (the current at chi = 0, the drift included) — or, for attracted ions, the
+ *    flux of Bohm n e^(-1/2) sqrt(k T_e / m) through the whole surface if larger (D. Bohm,
+ *    1949; T_e the hottest species of the other sign) — while a repelled species is held
+ *    back as before (e^(-chi)); the secondaries made by attracted electrons come with the
+ *    energies the sheath gives them, E + e phi.
+ * Between the limits (a ~ lambda_D) neither holds. */
+enum { MYB_SHEATH_THICK = 0, MYB_SHEATH_THIN = 1 };
+
+typedef struct myb_charging_model {
+  const myb_photoemission* photo;          /* NULL: no sunlight */
+  const myb_secondary_emission* secondary; /* NULL: no secondary electrons */
+  int sheath;                              /* MYB_SHEATH_THICK or MYB_SHEATH_THIN */
+} myb_charging_model;
+
+/* The total current (A) as myb_charging_current, with the model. Errors: MYB_E_DOMAIN (invalid
+ * input, an unknown sheath). */
+MYB_API MYB_NODISCARD myb_status myb_charging_current_model(const myb_plasma_species* species,
+                                                            size_t count,
+                                                            const myb_charging_model* model,
+                                                            double radius, double potential,
+                                                            double* current);
+
+enum { MYB_CHARGING_MAX_EQUILIBRIA = 3 };
+
+/* The floating potentials (V) with the model: with secondary emission the current need not
+ * fall with the potential everywhere, and more than one balance may exist. The roots of the
+ * current are looked for over +-200 times the largest k T / |q| in steps of an eighth of it
+ * and closed by bisection to adjacent doubles; those where the current falls with the
+ * potential (stable) are written in increasing order — each the last double with a positive
+ * current — and *found receives their number. For Maxwellians on the orbit-motion-limited
+ * sphere the impact energies of the repelled electrons do not depend on the potential, so a
+ * single balance is the rule (with or without secondaries: none of a grid of two-temperature
+ * plasmas gave two); a strong emitter floats positive at a few k T_s where the electrons release
+ * more than one secondary each. Errors: MYB_E_DOMAIN (invalid input; no root in the range). */
+MYB_API MYB_NODISCARD myb_status myb_charging_equilibria(
+    const myb_plasma_species* species, size_t count, const myb_charging_model* model,
+    double radius, double potentials[MYB_CHARGING_MAX_EQUILIBRIA], size_t* found);
 
 #ifdef __cplusplus
 }

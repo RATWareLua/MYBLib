@@ -3,7 +3,7 @@
 #   myb::myb           the static library (always)
 #   myb::myb_shared    the shared library (if it was built: MYB_BUILD_SHARED)
 #   myb::cpp           the C++17 header myb/myb.hpp over myb::myb
-#   myb::<ext>         optional models: nrlmsise00, sgp4, troposphere, ionosphere
+#   myb::<ext>         optional models: nrlmsise00, sgp4, troposphere, ionosphere, jb2008
 #   myb::<ext>_shared  the same on top of myb::myb_shared
 #   myb_DATA_DIR       the data kernels (time scales, IAU/IERS series, constants)
 @PACKAGE_INIT@

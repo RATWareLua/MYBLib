@@ -101,6 +101,7 @@ set(_myb_ext_text_nrlmsise00 "NRLMSISE-00 model of the Earth's upper atmosphere 
 set(_myb_ext_text_sgp4 "SGP4/SDP4 propagation of two-line element sets for myb")
 set(_myb_ext_text_troposphere "Tropospheric delay of radio and optical signals (IERS Conventions 2010) for myb")
 set(_myb_ext_text_ionosphere "Ionospheric total electron content maps (IONEX) for myb")
+set(_myb_ext_text_jb2008 "JB2008 model of the Earth's thermosphere, implemented from the papers, for myb")
 foreach(MYB_PC_EXT IN LISTS _myb_ext_modules)
   set(MYB_PC_EXT_DESCRIPTION "${_myb_ext_text_${MYB_PC_EXT}}")
   if(NOT MYB_PC_EXT_DESCRIPTION)

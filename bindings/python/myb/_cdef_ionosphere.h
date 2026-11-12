@@ -12,6 +12,7 @@ typedef struct myb_ionex myb_ionex;
                                                 myb_ionex** maps, myb_diag* diag);
             void myb_ionex_destroy(myb_ionex* maps);
             void myb_ionex_shell(const myb_ionex* maps, double* radius, double* height);
+            int myb_ionex_dimension(const myb_ionex* maps);
                           myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
                                                 double latitude, double longitude, double* vtec);
 typedef myb_status (*myb_electron_density)(void* context, double mjd, const double r[3],
@@ -40,6 +41,8 @@ typedef struct myb_iono_grid {
 } myb_iono_grid;
                           myb_status myb_iono_grid_density(void* grid, double mjd,
                                                        const double r[3], double* density);
+                          myb_status myb_ionex_density_grid(const myb_ionex* maps,
+                                                        myb_iono_grid* grid);
 typedef struct myb_iono_ray {
   double content;
   double field;

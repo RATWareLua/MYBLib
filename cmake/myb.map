@@ -419,6 +419,10 @@ MYB_1.1 {
 
 MYB_1.2 {
   global:
+    myb_ablation_mass;
+    myb_ablation_rate;
+    myb_ablation_rhs;
+    myb_air_heat_ratio;
     myb_approach_find;
     myb_approach_orbits;
     myb_attitude_fixed;
@@ -426,6 +430,12 @@ MYB_1.2 {
     myb_attitude_spin;
     myb_attitude_sun_nadir;
     myb_budget_linear;
+    myb_chain_evaluate;
+    myb_chain_guess;
+    myb_chain_size;
+    myb_chain_solve;
+    myb_charging_current_model;
+    myb_charging_equilibria;
     myb_cip_tabulate;
     myb_ck_create;
     myb_ck_destroy;
@@ -434,7 +444,10 @@ MYB_1.2 {
     myb_ck_pointing_at;
     myb_ck_segment;
     myb_ck_segment_count;
+    myb_ck_writer_add_chebyshev;
     myb_ck_writer_add_intervals;
+    myb_ck_writer_add_minisegments;
+    myb_ck_writer_add_packets;
     myb_ck_writer_add_pointings;
     myb_ck_writer_create;
     myb_ck_writer_destroy;
@@ -443,15 +456,26 @@ MYB_1.2 {
     myb_ck_writer_write_file;
     myb_collision_probability;
     myb_collision_probability_chan;
+    myb_collision_probability_long;
     myb_collision_probability_max;
+    myb_collision_rate;
     myb_conjunction_find;
+    myb_conjunction_long;
+    myb_contact_damping;
+    myb_contact_force;
+    myb_contact_restitution;
+    myb_contact_surface_nearest;
     myb_cr3bp_orbit_continue;
     myb_cr3bp_orbit_correct;
     myb_cr3bp_orbit_from_state;
+    myb_cr3bp_propagate;
     myb_cr3bp_torus_continue;
     myb_cr3bp_torus_from_orbit;
+    myb_cr3bp_torus_manifold;
+    myb_cr3bp_torus_stability;
     myb_cr3bp_torus_state;
     myb_cw_stm;
+    myb_debye_length;
     myb_density_exponential;
     myb_ellipsoid_limb;
     myb_ellipsoid_nearest;
@@ -470,6 +494,7 @@ MYB_1.2 {
     myb_env_state;
     myb_env_time;
     myb_event_altitude;
+    myb_event_contact;
     myb_event_eclipse;
     myb_event_elevation;
     myb_event_plane;
@@ -494,10 +519,15 @@ MYB_1.2 {
     myb_force_model_bind_parameter;
     myb_force_model_break;
     myb_force_model_break_count;
+    myb_force_model_position_only;
+    myb_force_model_set_position_only;
+    myb_force_newtonian_mesh;
+    myb_force_newtonian_plates;
     myb_force_nongrav;
     myb_force_nongrav_delayed;
     myb_force_planet_radiation_gradient;
     myb_force_radiation_mesh;
+    myb_force_radiation_mesh_lagged;
     myb_force_radiation_moving;
     myb_force_tidal_lag;
     myb_force_yarkovsky;
@@ -518,12 +548,16 @@ MYB_1.2 {
     myb_gas_knudsen;
     myb_gas_sphere_cd;
     myb_gravity_field_gradient;
+    myb_heating_sutton_graves;
     myb_illumination_angles;
     myb_indirect_sample;
     myb_indirect_solve;
+    myb_iod_double_r;
     myb_iod_gauss;
     myb_iod_gibbs;
+    myb_iod_gooding;
     myb_iod_herrick_gibbs;
+    myb_iod_laplace;
     myb_ks_element_from_cartesian;
     myb_ks_element_rhs;
     myb_ks_element_to_cartesian;
@@ -539,6 +573,14 @@ MYB_1.2 {
     myb_measure_range;
     myb_measure_range_rate;
     myb_measure_state;
+    myb_meteoroid_flux;
+    myb_meteoroid_mass;
+    myb_meteoroid_next;
+    myb_meteoroid_propagate;
+    myb_meteoroid_rate;
+    myb_nbody_approximation;
+    myb_nbody_set_approximation;
+    myb_newtonian_cp_max;
     myb_nlp_solve;
     myb_nongrav_g;
     myb_nongrav_marsden;
@@ -605,6 +647,7 @@ MYB_1.2 {
     myb_pck_writer_write_file;
     myb_polyhedron_face_count;
     myb_polyhedron_face_normal;
+    myb_polyhedron_nearest;
     myb_polyhedron_ray;
     myb_polyhedron_solid_angle;
     myb_qlaw_arrived;
@@ -630,11 +673,16 @@ MYB_1.2 {
     myb_sclk_partitions;
     myb_sclk_time_system;
     myb_sclk_to_time;
+    myb_secondary_yield;
     myb_shadow_fraction_many;
     myb_shadow_fraction_refracted;
     myb_shadow_margin;
     myb_sims_flanagan_mismatch;
     myb_sims_flanagan_solve;
+    myb_site_atmosphere_grid_load;
+    myb_site_atmosphere_grid_load_file;
+    myb_site_atmosphere_load;
+    myb_site_atmosphere_load_file;
     myb_site_displacement;
     myb_site_grid_at;
     myb_site_grid_destroy;
@@ -671,6 +719,7 @@ MYB_1.2 {
     myb_station_state;
     myb_system_acceleration;
     myb_system_add_action;
+    myb_system_add_contact;
     myb_system_add_distortion;
     myb_system_add_field;
     myb_system_add_figures;
@@ -692,6 +741,7 @@ MYB_1.2 {
     myb_system_nbody;
     myb_system_pack_rotation;
     myb_system_pack_spins;
+    myb_system_partials;
     myb_system_present;
     myb_system_radius;
     myb_system_set_field;
@@ -710,6 +760,7 @@ MYB_1.2 {
     myb_table_row;
     myb_table_rows;
     myb_table_write;
+    myb_term_contact;
     myb_term_de_sitter;
     myb_term_de_sitter_jacobian;
     myb_term_drag;
@@ -764,8 +815,8 @@ MYB_1.2 {
     myb_yarkovsky_season_harmonics;
 } MYB_1.1;
 
-# What the libraries of ext/ are built on (src/core/alloc.h, src/core/check.h): not an API,
-# no promise between releases.
+# What the libraries of ext/ are built on (src/core/alloc.h, src/core/check.h,
+# src/platform/platform.h): not an API, no promise between releases.
 MYB_PRIVATE {
   global:
     myb_internal_alloc_array;
@@ -774,4 +825,6 @@ MYB_PRIVATE {
     myb_internal_diag;
     myb_internal_diag_clear;
     myb_internal_release;
+    myb_platform_map_file;
+    myb_platform_unmap_file;
 };

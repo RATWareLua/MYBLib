@@ -19,6 +19,7 @@
 #include "myb/ccsds.h"
 #include "myb/cmath.h"
 #include "myb/conjunction.h"
+#include "myb/contact.h"
 #include "myb/cr3bp.h"
 #include "myb/dyn.h"
 #include "myb/env.h"
@@ -34,6 +35,7 @@
 #include "myb/kepler.h"
 #include "myb/kin.h"
 #include "myb/lambert.h"
+#include "myb/meteoroid.h"
 #include "myb/model.h"
 #include "myb/num.h"
 #include "myb/observe.h"
@@ -48,6 +50,7 @@
 #include "myb/system.h"
 #include "myb/thrust.h"
 #include "myb/time.h"
+#include "myb_jb2008.h"
 #include "myb/transfer.h"
 #include "myb/uncert.h"
 #include "myb/weather.h"
@@ -55,7 +58,7 @@
 #include "myb_sgp4.h"
 #include "myb_troposphere.h"
 
-static const uint64_t golden_hash = UINT64_C(0x8a11e2afe9e666fa);
+static const uint64_t golden_hash = UINT64_C(0x22590af49224a138);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -4212,6 +4215,519 @@ static void workload_phase20(hasher* h) {
   }
 }
 
+
+/* ---- Phase 22 ---------------------------------------------------------------------------------- */
+
+static myb_status repro_two_body_position(void* context, double t, const double* x, double* a) {
+  (void)context;
+  (void)t;
+  const double r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+  const double k = -3.986004418e14 / (r * r * r);
+  for (int i = 0; i < 3; ++i) {
+    a[i] = k * x[i];
+  }
+  return MYB_OK;
+}
+
+static myb_status repro_line(void* context, double t, double mean[6], double covariance[36]) {
+  const double* m = context; /* mean of (X, V), then the 36 of their covariance */
+  for (int i = 0; i < 3; ++i) {
+    mean[i] = m[i] + t * m[3 + i];
+    mean[3 + i] = m[3 + i];
+  }
+  const double* p = m + 6;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      double v = p[6 * i + j];
+      if (i < 3) {
+        v += t * p[6 * (i + 3) + j];
+      }
+      if (j < 3) {
+        v += t * p[6 * i + j + 3];
+      }
+      if (i < 3 && j < 3) {
+        v += t * t * p[6 * (i + 3) + j + 3];
+      }
+      covariance[6 * i + j] = v;
+    }
+  }
+  return MYB_OK;
+}
+
+static void repro_place(double latitude, double longitude, double t, double out[3]) {
+  const double radius = 6378137.0;
+  const double angle = longitude + 7.292115e-5 * t;
+  out[0] = radius * myb_cos(latitude) * myb_cos(angle);
+  out[1] = radius * myb_cos(latitude) * myb_sin(angle);
+  out[2] = radius * myb_sin(latitude);
+}
+
+/* A planet on a circle about the Sun, in a plane turned about the x-axis by p[2] (p: radius,
+ * phase at J2000, tilt). */
+static myb_status repro_planet(void* context, myb_time t, double y[6]) {
+  const double* p = context;
+  const double sun = 1.32712440018e20;
+  const double n = sqrt(sun / (p[0] * p[0] * p[0]));
+  const double v = n * p[0];
+  const double a = p[1] + n * myb_time_seconds(t);
+  const double c = myb_cos(p[2]);
+  const double s = myb_sin(p[2]);
+  y[0] = p[0] * myb_cos(a);
+  y[1] = p[0] * myb_sin(a) * c;
+  y[2] = p[0] * myb_sin(a) * s;
+  y[3] = -v * myb_sin(a);
+  y[4] = v * myb_cos(a) * c;
+  y[5] = v * myb_cos(a) * s;
+  return MYB_OK;
+}
+
+static void workload_phase22(hasher* h) {
+  myb_diag diag = {0};
+  const double mu = 3.986004418e14;
+  /* CK of type 5 (written by CSPICE): pointings with angular velocities */
+  {
+    myb_ck* ck = NULL;
+    MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
+    MT_CHECK(myb_ck_load_file(ck, MYB_TEST_DATA_DIR "/ck/t5.bc", &diag) == MYB_OK);
+    static const int32_t instruments[3] = {-9099031, -9099032, -9099036};
+    for (int k = 0; k < 3; ++k) {
+      myb_ck_pointing p;
+      const myb_status st = myb_ck_pointing_at(ck, instruments[k], 1.0e6 + 3.3e4 * k, 1.0e6, 0, &p);
+      hash_double(h, (double)st);
+      if (st == MYB_OK) {
+        for (int i = 0; i < 9; ++i) {
+          hash_double(h, p.rotation.m[i]);
+        }
+        hash_double(h, p.ticks);
+      }
+    }
+    myb_ck_destroy(ck);
+  }
+  /* three-dimensional IONEX maps */
+  {
+    FILE* f = fopen(MYB_TEST_DATA_DIR "/ionosphere/synthetic3d.inx", "rb");
+    MT_CHECK(f != NULL);
+    if (f != NULL) {
+      static char text[65536];
+      const size_t size = fread(text, 1, sizeof text, f);
+      fclose(f);
+      myb_ionex* maps = NULL;
+      MT_CHECK(myb_ionex_load(text, size, NULL, &maps, &diag) == MYB_OK);
+      if (maps != NULL) {
+        myb_iono_grid grid;
+        MT_CHECK(myb_ionex_density_grid(maps, &grid) == MYB_OK);
+        const double r[3] = {6.65e6, 1.2e5, 4.3e5};
+        double n = 0.0;
+        MT_CHECK(myb_iono_grid_density(&grid, 60310.0 + 0.7 / 24.0, r, &n) == MYB_OK);
+        hash_double(h, n);
+        double vtec = 0.0;
+        MT_CHECK(myb_ionex_vtec(maps, 60310.0 + 1.3 / 24.0, 0.07, 0.6, &vtec) == MYB_OK);
+        hash_double(h, vtec);
+        myb_ionex_destroy(maps);
+      }
+    }
+  }
+  /* the atmospheric tides of a station from a file and from a grid */
+  {
+    double c[12];
+    MT_CHECK(myb_site_atmosphere_load_file(MYB_TEST_DATA_DIR "/site/atmosphere.atl", "beta", c,
+                                           &diag) == MYB_OK);
+    for (int i = 0; i < 12; ++i) {
+      hash_double(h, c[i]);
+    }
+    myb_site_grid* grid = NULL;
+    MT_CHECK(myb_site_atmosphere_grid_load_file(MYB_TEST_DATA_DIR "/site/atmosphere_grid.dat",
+                                                NULL, &grid, &diag) == MYB_OK);
+    if (grid != NULL) {
+      MT_CHECK(myb_site_grid_at(grid, 0.2247, 0.8577, c) == MYB_OK);
+      for (int i = 0; i < 12; ++i) {
+        hash_double(h, c[i]);
+      }
+      myb_site_grid_destroy(grid);
+    }
+  }
+  /* orbits from three sights: Laplace, the double-r iteration, Gooding over a turn */
+  {
+    const myb_elements el = {.p = 7.0e6 * (1.0 - 0.02 * 0.02), .e = 0.02, .i = 0.9, .raan = 1.3,
+                             .argp = 0.4, .nu = 0.5};
+    myb_pv middle;
+    MT_CHECK(myb_pv_from_elements(mu, &el, &middle) == MYB_OK);
+    const double spans[2] = {600.0, 4000.0};
+    for (int k = 0; k < 2; ++k) {
+      const double t[3] = {-0.45 * spans[k], 0.0, 0.55 * spans[k]};
+      double observer[3][3];
+      double sight[3][3];
+      double range[3];
+      for (int j = 0; j < 3; ++j) {
+        myb_pv at;
+        MT_CHECK(myb_kepler_propagate(mu, &middle, t[j], &at) == MYB_OK);
+        repro_place(0.7, -1.9, t[j], observer[j]);
+        double d[3];
+        for (int i = 0; i < 3; ++i) {
+          d[i] = at.r[i] - observer[j][i];
+        }
+        range[j] = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        for (int i = 0; i < 3; ++i) {
+          sight[j][i] = d[i] / range[j];
+        }
+      }
+      myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS];
+      size_t found = 0;
+      if (k == 0) {
+        MT_CHECK(myb_iod_laplace(mu, t, observer, sight, solutions, &found) == MYB_OK);
+        hash3(h, solutions[0].r);
+        hash3(h, solutions[0].v);
+      }
+      myb_pv first;
+      MT_CHECK(myb_kepler_propagate(mu, &middle, t[0], &first) == MYB_OK);
+      const double distance[2] = {1.02 * sqrt(first.r[0] * first.r[0] + first.r[1] * first.r[1] +
+                                              first.r[2] * first.r[2]),
+                                  0.98 * 7.0e6};
+      myb_iod_solution one;
+      MT_CHECK(myb_iod_double_r(mu, t, observer, sight, distance, &one) == MYB_OK);
+      hash3(h, one.r);
+      hash3(h, one.v);
+      const double ranges[2] = {1.02 * range[0], 0.98 * range[2]};
+      MT_CHECK(myb_iod_gooding(mu, t, observer, sight, ranges, 0, 0, &one) == MYB_OK);
+      hash3(h, one.r);
+      hash3(h, one.v);
+    }
+  }
+  /* compositions of 7 and 15 stages; RKN12 and its interpolant */
+  {
+    const myb_elements el = {.p = 8.0e6 * (1.0 - 0.3 * 0.3), .e = 0.3, .i = 0.6, .raan = 1.1,
+                             .argp = 0.4, .nu = 0.3};
+    myb_pv pv;
+    MT_CHECK(myb_pv_from_elements(mu, &el, &pv) == MYB_OK);
+    const double y0[6] = {pv.r[0], pv.r[1], pv.r[2], pv.v[0], pv.v[1], pv.v[2]};
+    const int schemes[2] = {MYB_SYMPLECTIC_6_S7, MYB_SYMPLECTIC_8_S15};
+    for (int k = 0; k < 2; ++k) {
+      myb_symplectic* s = NULL;
+      MT_CHECK(myb_symplectic_create(3, schemes[k], NULL, &s) == MYB_OK);
+      MT_CHECK(myb_symplectic_start(s, repro_two_body_position, NULL, 0.0, y0) == MYB_OK);
+      MT_CHECK(myb_symplectic_integrate(s, 7000.0, 50.0) == MYB_OK);
+      const double* y = myb_symplectic_state(s);
+      hash3(h, y);
+      hash3(h, y + 3);
+      myb_symplectic_destroy(s);
+    }
+    const myb_rkn12_options o = {.rtol = 1e-13, .atol = 1e-6, .interpolant = 1};
+    myb_rkn12* r = NULL;
+    MT_CHECK(myb_rkn12_create(3, &o, NULL, &r) == MYB_OK);
+    MT_CHECK(myb_rkn12_start(r, repro_two_body_position, NULL, 0.0, y0) == MYB_OK);
+    for (int k = 0; k < 4; ++k) {
+      const double before = myb_rkn12_time(r);
+      MT_CHECK(myb_rkn12_step(r, 1.0e5) == MYB_OK);
+      double y[6];
+      MT_CHECK(myb_rkn12_dense(r, before + 0.37 * (myb_rkn12_time(r) - before), y) == MYB_OK);
+      hash3(h, y);
+      hash3(h, y + 3);
+    }
+    hash_double(h, (double)myb_rkn12_statistics(r).evaluations);
+    myb_rkn12_destroy(r);
+  }
+  /* a long encounter */
+  {
+    double m[42] = {150.0, -10.0, 5.0, -0.05, 0.0, 0.0};
+    const double s[6] = {30.0, 20.0, 15.0, 0.05, 0.03, 0.02};
+    for (int i = 0; i < 6; ++i) {
+      m[6 + 7 * i] = s[i] * s[i];
+    }
+    m[6 + 3] = m[6 + 18] = 0.3 * 30.0 * 0.05;
+    double p = 0.0;
+    double error = 0.0;
+    MT_CHECK(myb_collision_probability_long(repro_line, m, 0.0, 6000.0, 50.0, 10.0, &p, &error) ==
+             MYB_OK);
+    hash_double(h, p);
+  }
+  /* charging: secondary electrons, the thin sheath */
+  {
+    const double qe = 1.602176634e-19;
+    const myb_plasma_species plasma[2] = {
+        {.charge = -qe, .mass = 9.1093837139e-31, .density = 1e6, .temperature = 30.0 * qe},
+        {.charge = qe, .mass = 1.67262192595e-27, .density = 1e6, .temperature = 30.0 * qe}};
+    const myb_secondary_emission kapton = {.max_yield = 2.1, .max_energy = 150.0 * qe,
+                                           .temperature = 2.0 * qe, .charge = qe};
+    const myb_charging_model models[2] = {{.secondary = &kapton},
+                                          {.secondary = &kapton, .sheath = MYB_SHEATH_THIN}};
+    for (int k = 0; k < 2; ++k) {
+      double phi[MYB_CHARGING_MAX_EQUILIBRIA];
+      size_t found = 0;
+      MT_CHECK(myb_charging_equilibria(plasma, 2, &models[k], 0.5, phi, &found) == MYB_OK);
+      hash_double(h, phi[0]);
+    }
+    hash_double(h, myb_debye_length(plasma, 2));
+  }
+  /* the light of the moment with the heat conducted into the surface */
+  {
+    myb_polyhedron* shape = NULL;
+    const double vertices[18] = {1.3, 0.1, 0.0, -0.9, 0.0, 0.2, 0.0, 1.1, 0.1,
+                                 0.1, -0.8, 0.0, 0.0, 0.2, 1.2, -0.1, 0.0, -0.7};
+    const size_t faces[24] = {0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4,
+                              2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5};
+    MT_CHECK(myb_polyhedron_create(vertices, 6, faces, 8, 1.0, NULL, &shape) == MYB_OK);
+    if (shape != NULL) {
+      const myb_plate surface = {.specular = 0.1, .diffuse = 0.2, .thermal = 1};
+      const double axis[3] = {0.0, 0.0, 1.0};
+      const double u[3] = {-0.6, 0.48, -0.64};
+      double force[3];
+      double torque[3];
+      MT_CHECK(myb_force_radiation_mesh_lagged(shape, &surface, 4.56e-6, u, axis, 1.3, 48, 2,
+                                               force, torque) == MYB_OK);
+      hash3(h, force);
+      hash3(h, torque);
+      myb_polyhedron_destroy(shape);
+    }
+  }
+  /* a spinning body hit, the merger; the derivatives of a pair */
+  {
+    const double gm[3] = {6.0e10, 1.5e10, 3.986004418e14};
+    myb_system* s = NULL;
+    MT_CHECK(myb_system_create(3, gm, NULL, &s) == MYB_OK);
+    const myb_system_rotation top = {.moments = {0.30e10, 0.32e10, 0.40e10}};
+    MT_CHECK(myb_system_set_rotation(s, 0, &top) == MYB_OK);
+    MT_CHECK(myb_system_set_radius(s, 0, 9.0e4) == MYB_OK);
+    MT_CHECK(myb_system_set_radius(s, 1, 6.0e4) == MYB_OK);
+    const size_t n = myb_system_coordinates(s);
+    double y[36] = {0.0};
+    const double x0[9] = {4.0e8, 0.0, 0.0, 4.0e8 + 3.0e6, 1.0e5, 2.0e4, 0.0, 0.0, 0.0};
+    const double v0[9] = {0.0, 1000.0, 0.0, -150.0, 1000.0, 3.0, 0.0, 0.0, 0.0};
+    memcpy(y, x0, sizeof x0);
+    memcpy(y + n, v0, sizeof v0);
+    double q0[4] = {0.9, -0.1, 0.3, 0.2};
+    (void)myb_quat_normalize(q0);
+    const double w0[3] = {2.0e-5, -1.0e-5, 1.0e-4};
+    MT_CHECK(myb_system_pack_rotation(s, 0, q0, w0, NULL, y) == MYB_OK);
+    const myb_ias15_options o = {.epsilon = 1e-10};
+    myb_ias15* in = NULL;
+    MT_CHECK(myb_system_integrator(s, &o, NULL, &in) == MYB_OK);
+    MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y) == MYB_OK);
+    myb_system_event e;
+    MT_CHECK(myb_system_advance(s, in, 1.0e5, 0.0, &e) == MYB_OK);
+    hash_double(h, e.t);
+    myb_system_merger merger;
+    MT_CHECK(myb_system_merge(s, in, 0, 1, &merger) == MYB_OK);
+    hash3(h, merger.spin);
+    double q[4];
+    double w[3];
+    MT_CHECK(myb_system_unpack_rotation(s, 0, myb_ias15_state(in), q, w, NULL) == MYB_OK);
+    hash3(h, w);
+    myb_ias15_destroy(in);
+    myb_system_destroy(s);
+    const double pair_gm[2] = {3.986004418e14, 1.0e9};
+    MT_CHECK(myb_system_create(2, pair_gm, NULL, &s) == MYB_OK);
+    double z0[12] = {0.0, 0.0, 0.0, 7.0e6, 1.0e6, 0.5e6, 0.0, 0.0, 0.0, -900.0, 7300.0, 1200.0};
+    double phi[144];
+    const size_t heavy[1] = {0};
+    double sens[12];
+    MT_CHECK(myb_system_partials(s, &o, 0.0, z0, 2000.0, heavy, 1, NULL, phi, sens) == MYB_OK);
+    hash_double(h, phi[12 * 3 + 9]);
+    hash_double(h, phi[12 * 10 + 4]);
+    hash_double(h, sens[5]);
+    myb_system_destroy(s);
+  }
+  /* JB2008 from the papers */
+  {
+    const myb_jb2008_indices x = {.f10 = 140.0, .f10_average = 130.0, .s10 = 135.0,
+                                  .s10_average = 128.0, .m10 = 132.0, .m10_average = 129.0,
+                                  .y10 = 126.0, .y10_average = 127.0, .dtc = 30.0};
+    static const double heights[4] = {150.0, 400.0, 900.0, 1800.0};
+    for (int k = 0; k < 4; ++k) {
+      myb_jb2008_output out;
+      MT_CHECK(myb_jb2008(54000.5 + 37.3 * k, 1.0, 0.2, 1.5 + 0.7 * k, 0.3 - 0.2 * k, heights[k],
+                          &x, &out) == MYB_OK);
+      hash_double(h, out.density);
+      hash_double(h, out.temperature);
+    }
+  }
+  /* contact: a lander's legs on an ellipsoid, the restitution of the law; impacts of dust */
+  {
+    const myb_contact_surface ground = {.shape = MYB_CONTACT_ELLIPSOID,
+                                        .radii = {1200.0, 900.0, 700.0}};
+    const myb_contact_law law = {.stiffness = 4.0e4, .exponent = 1.5, .damping = 0.8,
+                                 .friction = 0.5, .slip = 1e-3};
+    const myb_contact_point legs[3] = {{{1.0, 0.0, -1.2}, 0.1},
+                                       {{-0.5, 0.87, -1.2}, 0.1},
+                                       {{-0.5, -0.87, -1.2}, 0.1}};
+    const double x[3] = {0.0, 0.0, 701.25};
+    const double v[3] = {0.03, -0.01, -0.2};
+    const double attitude[9] = {1.0, 0.0, 0.0, 0.0, myb_cos(0.1), myb_sin(0.1),
+                                0.0, -myb_sin(0.1), myb_cos(0.1)};
+    const double omega[3] = {0.01, 0.0, 0.02};
+    myb_contact_result r;
+    MT_CHECK(myb_contact_force(&ground, &law, legs, 3, x, v, attitude, omega, &r) == MYB_OK);
+    hash3(h, r.force);
+    hash3(h, r.torque);
+    hash_double(h, r.energy);
+    hash_double(h, r.gap);
+    double e = 0.0;
+    MT_CHECK(myb_contact_restitution(0.8, 0.7, &e) == MYB_OK);
+    hash_double(h, e);
+    double chi = 0.0;
+    MT_CHECK(myb_contact_damping(0.6, 0.7, &chi) == MYB_OK);
+    hash_double(h, chi);
+    hash_double(h, myb_meteoroid_flux(1.0e-9));
+    const myb_meteoroid_options dust = {.cross_section = 12.0, .mass_min = 1e-12,
+                                        .mass_max = 1e-3, .object_mass = 500.0};
+    myb_rng rng;
+    myb_rng_seed(&rng, 2022);
+    double now = 0.0;
+    for (int k = 0; k < 3; ++k) {
+      myb_meteoroid_impact hit;
+      MT_CHECK(myb_meteoroid_next(&dust, &rng, now, &hit) == MYB_OK);
+      hash_double(h, hit.t);
+      hash_double(h, hit.mass);
+      hash3(h, hit.dv);
+      now = hit.t;
+    }
+  }
+  /* the stability of a torus about the L1 Lyapunov orbit, a point of its unstable manifold
+   * carried to the section of the Moon */
+  {
+    const double em = 1.215058560962404e-02;
+    const myb_cr3bp_correction symmetric = {.symmetry = MYB_CR3BP_SYMMETRY_XZ, .fixed = 0};
+    double lyapunov[6] = {8.2522726142834313e-01, 0.0, 0.0, 0.0, 1.0748883813645686e-01, 0.0};
+    double period = 0.0;
+    MT_CHECK(myb_cr3bp_correct(em, &symmetric, lyapunov, &period) == MYB_OK);
+    static myb_cr3bp_torus torus;
+    static myb_cr3bp_torus_spectrum spectrum;
+    MT_CHECK(myb_cr3bp_torus_from_orbit(em, lyapunov, period, 25, 0, 1e-3, &torus) == MYB_OK);
+    MT_CHECK(myb_cr3bp_torus_continue(em, &torus, MYB_CR3BP_TORUS_JACOBI, 0.0, 0.0, 0) ==
+             MYB_OK);
+    MT_CHECK(myb_cr3bp_torus_stability(em, &torus, 0.0, &spectrum) == MYB_OK);
+    hash_double(h, (double)spectrum.hyperbolic);
+    hash_double(h, (double)spectrum.elliptic);
+    hash_double(h, spectrum.unstable);
+    hash_double(h, spectrum.index);
+    double y[6];
+    MT_CHECK(myb_cr3bp_torus_manifold(&torus, &spectrum, 0.4, 1, 1, 1e-5, y) == MYB_OK);
+    hash3(h, y);
+    hash3(h, y + 3);
+    const myb_cr3bp_section moon = {.axis = 0, .value = 1.0 - em, .direction = 0};
+    double at[6];
+    double elapsed = 0.0;
+    int crossed = 0;
+    MT_CHECK(myb_cr3bp_propagate(em, y, 8.0, &moon, at, &elapsed, &crossed) == MYB_OK);
+    hash3(h, at);
+    hash3(h, at + 3);
+    hash_double(h, elapsed);
+    hash_double(h, (double)crossed);
+  }
+  /* a compact binary at 4PN with the tail, the spin-orbit terms to 3.5PN and their radiation
+   * reaction: a circular, an eccentric and a precessing state */
+  {
+    myb_pn_binary b = {.gm1 = 0.6, .gm2 = 0.4, .c = 1.0, .r0 = 3.0, .kappa1 = 1.0,
+                       .kappa2 = 4.5,
+                       .orders = MYB_PN_ALL | MYB_PN_4 | MYB_PN_4RR | MYB_PN_SO25 |
+                                 MYB_PN_SO35 | MYB_PN_SORR};
+    static const double states[3][6] = {{40.0, 0.0, 0.0, 0.0, 0.158113883, 0.0},
+                                        {30.0, 4.0, 0.5, 0.01, 0.2, 0.003},
+                                        {55.0, -7.0, 2.0, -0.02, 0.12, 0.01}};
+    const double c1[3] = {0.3, -0.25, 0.6};
+    const double c2[3] = {0.35, 0.2, -0.4};
+    for (int k = 0; k < 3; ++k) {
+      double a[3];
+      double d1[3];
+      double d2[3];
+      MT_CHECK(myb_pn_binary_evaluate(&b, states[k], states[k] + 3, c1, c2, a, d1, d2) ==
+               MYB_OK);
+      hash3(h, a);
+      hash3(h, d1);
+      hash3(h, d2);
+    }
+  }
+  /* a chain of legs from the Earth by Venus to Mars: the guess, the program and its
+   * derivatives there */
+  {
+    const double day = 86400.0;
+    static double earth[3] = {1.495978707e11, 0.0, 0.0};
+    static double venus[3] = {0.723332 * 1.495978707e11, 250.0 * 0.017453292519943295,
+                                    0.0};
+    static double mars[3] = {1.523679 * 1.495978707e11, 270.0 * 0.017453292519943295,
+                                   0.0323};
+    myb_chain chain = {.mu = 1.32712440018e20, .epoch = myb_time_from_seconds(0.0),
+                       .thrust = 1.0, .exhaust = 30000.0, .mass0 = 1000.0, .legs = 2,
+                       .launch = 2500.0, .arrival = 0.0};
+    chain.segments[0] = chain.segments[1] = 6;
+    chain.bodies[0] = (myb_chain_body){repro_planet, earth, 3.986004418e14, 6678.0e3};
+    chain.bodies[1] = (myb_chain_body){repro_planet, venus, 3.24858592e14, 6351.8e3};
+    chain.bodies[2] = (myb_chain_body){repro_planet, mars, 4.282837e13, 3696.0e3};
+    chain.departure[0] = 100.0 * day;
+    chain.departure[1] = 140.0 * day;
+    chain.flight[0][0] = 150.0 * day;
+    chain.flight[0][1] = 190.0 * day;
+    chain.flight[1][0] = 200.0 * day;
+    chain.flight[1][1] = 240.0 * day;
+    size_t unknowns = 0;
+    size_t equalities = 0;
+    size_t inequalities = 0;
+    MT_CHECK(myb_chain_size(&chain, &unknowns, &equalities, &inequalities) == MYB_OK);
+    static double x[64];
+    static double constraints[32];
+    static double gradient[64];
+    static double jacobian[32 * 64];
+    MT_CHECK(unknowns <= 64 && equalities + inequalities <= 32);
+    MT_CHECK(myb_chain_guess(&chain, x) == MYB_OK);
+    for (size_t i = 0; i < unknowns; i += 5) {
+      hash_double(h, x[i]);
+    }
+    double propellant = 0.0;
+    MT_CHECK(myb_chain_evaluate(&chain, x, &propellant, constraints, gradient, jacobian, NULL) ==
+             MYB_OK);
+    hash_double(h, propellant);
+    for (size_t r = 0; r < equalities + inequalities; ++r) {
+      hash_double(h, constraints[r]);
+      hash_double(h, jacobian[r * unknowns + r % unknowns]);
+    }
+    for (size_t j = 0; j < unknowns; j += 3) {
+      hash_double(h, gradient[j]);
+    }
+  }
+  /* the fast multipole method: 600 bodies in a cube, p 8, theta 0.5 */
+  {
+    enum { CLOUD = 600 };
+    static double gm[CLOUD];
+    static double x[3 * CLOUD];
+    static double a[3 * CLOUD];
+    myb_rng rng;
+    myb_rng_seed(&rng, 88);
+    for (size_t k = 0; k < CLOUD; ++k) {
+      gm[k] = 1.0 + myb_rng_uniform(&rng);
+      for (int i = 0; i < 3; ++i) {
+        x[3 * k + (size_t)i] = myb_rng_uniform(&rng) - 0.5;
+      }
+    }
+    myb_nbody* s = NULL;
+    MT_CHECK(myb_nbody_create(CLOUD, 0, gm, NULL, &s) == MYB_OK);
+    MT_CHECK(myb_nbody_set_approximation(s, 8, 0.5) == MYB_OK);
+    MT_CHECK(myb_nbody_acceleration(s, 0.0, x, a) == MYB_OK);
+    for (size_t k = 0; k < CLOUD; k += 97) {
+      hash3(h, a + 3 * k);
+    }
+    /* the expansions were used: the sums differ from the exact ones */
+    static double exact[3 * CLOUD];
+    MT_CHECK(myb_nbody_set_approximation(s, 0, 0.0) == MYB_OK);
+    MT_CHECK(myb_nbody_acceleration(s, 0.0, x, exact) == MYB_OK);
+    size_t differ = 0;
+    for (size_t i = 0; i < 3 * CLOUD; ++i) {
+      differ += mt_bits(a[i]) != mt_bits(exact[i]);
+    }
+    printf("phase 22: the FMM differs from the exact sums in %zu of %d components\n", differ,
+           3 * CLOUD);
+    MT_CHECK(differ > 0);
+    myb_nbody_destroy(s);
+  }
+  /* entry: the continuum on plates, the heating */
+  {
+    double cp = 0.0;
+    MT_CHECK(myb_newtonian_cp_max(7.3, 1.38, &cp) == MYB_OK);
+    hash_double(h, cp);
+    double q = 0.0;
+    MT_CHECK(myb_heating_sutton_graves(1.7415e-4, 3.0e-4, 1.0, 7500.0, &q) == MYB_OK);
+    hash_double(h, q);
+  }
+}
+
 int main(void) {
   hasher h = {.state = UINT64_C(0xCBF29CE484222325), .values = 0};
   mt_rng rng = {.state = UINT64_C(20261107)};
@@ -4285,8 +4801,13 @@ int main(void) {
   if (upto >= 20) {
     workload_phase20(&h);
   }
+  if (upto >= 22) { /* phase 22 came before 21 */
+    workload_phase22(&h);
+  }
   uint64_t expected = golden_hash;
-  if (upto == 19) {
+  if (upto == 20 || upto == 21) {
+    expected = UINT64_C(0x8a11e2afe9e666fa);
+  } else if (upto == 19) {
     expected = UINT64_C(0xb22481187ba3923a);
   } else if (passes == 171) {
     expected = UINT64_C(0xb76153a8dca45827);

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Quasi-periodic orbits of the circular restricted three-body problem (myb/cr3bp.h):
- * invariant circles of the flow over a time T, and their families. */
+ * invariant circles of the flow over a time T, their families, their stability and their
+ * manifolds. */
 #include <math.h> /* sqrt, fabs, fmax */
 #include <string.h>
 
@@ -250,21 +251,27 @@ static void make_unit(size_t count, double* v) {
   }
 }
 
+/* The force model of the problem (its context the double *mu, which must outlive it) and
+ * the variational equations on it. */
+static myb_status flow_open(double* mu, myb_force_model** model, myb_variational** var) {
+  myb_status st = myb_force_model_create(NULL, model);
+  if (st == MYB_OK) {
+    st = myb_force_model_add(*model, "cr3bp", myb_cr3bp_term, myb_cr3bp_term_jacobian, mu, NULL);
+  }
+  const myb_variational_options o = {.epsilon = 1e-12};
+  if (st == MYB_OK) {
+    st = myb_variational_create(*model, &o, NULL, var);
+  }
+  return st;
+}
+
 static myb_status solver_open(solver* s, double mu, size_t points, void** block) {
   memset(s, 0, sizeof *s);
   *block = NULL;
   s->mu = mu;
   s->points = points;
   s->unknowns = 6 * points + EXTRA;
-  myb_status st = myb_force_model_create(NULL, &s->model);
-  if (st == MYB_OK) {
-    st = myb_force_model_add(s->model, "cr3bp", myb_cr3bp_term, myb_cr3bp_term_jacobian, &s->mu,
-                             NULL);
-  }
-  const myb_variational_options o = {.epsilon = 1e-12};
-  if (st == MYB_OK) {
-    st = myb_variational_create(s->model, &o, NULL, &s->var);
-  }
+  myb_status st = flow_open(&s->mu, &s->model, &s->var);
   const size_t n = points;
   const size_t m = s->unknowns;
   const size_t doubles = 3 * n * n + 6 * n + 36 * n + 5 * 6 * n + 7 * m + m * m;
@@ -544,17 +551,389 @@ myb_status myb_cr3bp_torus_from_orbit(double mu, const double y0[6], double peri
   return MYB_OK;
 }
 
-void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[6]) {
-  MYB_CHECK(torus != NULL && y != NULL && torus->points >= 1 && torus->points <= MAX_POINTS &&
-            torus->points % 2 == 1);
-  const size_t n = torus->points;
+/* The trigonometric interpolant of values of six components at the n points, at an angle. */
+static void interpolate(size_t n, const double* values, double angle, double y[6]) {
   memset(y, 0, 6 * sizeof *y);
   for (size_t j = 0; j < n; ++j) {
     double value = 0.0;
     double slope = 0.0;
     kernel(n, angle - two_pi * (double)j / (double)n, &value, &slope);
     for (size_t k = 0; k < 6; ++k) {
-      y[k] += value * torus->states[6 * j + k];
+      y[k] += value * values[6 * j + k];
     }
   }
+}
+
+void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[6]) {
+  MYB_CHECK(torus != NULL && y != NULL && torus->points >= 1 && torus->points <= MAX_POINTS &&
+            torus->points % 2 == 1);
+  interpolate(torus->points, torus->states, angle, y);
+}
+
+/* ---- Stability and manifolds -------------------------------------------------------------------
+ * The linearised map A = R(-rho) diag(Phi_j) of myb/cr3bp.h is assembled from the transition
+ * matrices of the points over T (the variational equations of the corrector, IAS15 at 1e-12)
+ * and its 6 n eigenvalues found by the QR iteration of myb/num.h in its form without the
+ * limit on the order (n = 35: a matrix of 210, 0.35 MB, two copies). The eigenvalues are
+ * sorted by modulus, from the largest.
+ *
+ * The classes come from the circles themselves (classify below): an eigenvalue whose turn by
+ * +-rho is not in the spectrum, within the tolerance, is one the points do not resolve.
+ * Measured: about the L1 Lyapunov orbit (25 points, sizes 1e-3 .. 4e-3) the members of a
+ * circle away from its ends are turns of each other to 1e-9 .. 1e-6, those at the ends and
+ * the spurious ones to 1e-5 .. 3e-3; the Jordan blocks of 1 split radially by 2.6e-6.
+ *
+ * The hyperbolic pair: of the resolved real eigenvalues off the unit circle, on each side the
+ * farthest from it — the k = 0 member of its circle, the only real one since n is odd (but
+ * for a turn k rho of pi, which makes -lambda real too: then the one whose eigenvector, by
+ * inverse iteration on A and taken to the Fourier coefficients of its six components, has
+ * the lowest mean frequency |k|, weighted by the energy of the harmonics). A resolved circle
+ * off the unit circle with no real member on its side is no spectrum of a torus of the
+ * problem (MYB_E_NOCONV). */
+
+static const double default_tolerance = 1e-4; /* on the unit circle */
+
+typedef struct spectrum_work {
+  double* turn;        /* n x n: R(-rho) */
+  double* phis;        /* 36 n: the transition matrices of the points over T */
+  double* map;         /* 6 n x 6 n: A */
+  double* work;        /* 6 n x 6 n: the copy the eigenvalues destroy, then inverse iteration */
+  double* trial;       /* 6 n: a candidate eigenvector (and the reflectors of the QR iteration) */
+  double* image;       /* 6 n: A v */
+  unsigned char* kind; /* 6 n: the classes of the eigenvalues */
+  size_t* parent;      /* 6 n: their sets */
+  size_t* size;        /* 6 n */
+} spectrum_work;
+
+/* The Fourier content of a real function of the angle given at the n points (six components
+ * each): the mean frequency |k| weighted by the energy of the harmonics, and the share of the
+ * energy above half the highest frequency (n - 1) / 2. */
+static void frequency_content(size_t n, const double* v, double* mean, double* tail) {
+  double c[MAX_POINTS];
+  double s[MAX_POINTS];
+  for (size_t j = 0; j < n; ++j) {
+    c[j] = myb_cos(two_pi * (double)j / (double)n);
+    s[j] = myb_sin(two_pi * (double)j / (double)n);
+  }
+  const size_t top = (n - 1) / 2;
+  double total = 0.0;
+  double weighted = 0.0;
+  double upper = 0.0;
+  for (size_t k = 0; k <= top; ++k) {
+    double energy = 0.0;
+    for (size_t a = 0; a < 6; ++a) {
+      double re = 0.0;
+      double im = 0.0;
+      for (size_t j = 0; j < n; ++j) {
+        const size_t at = (k * j) % n; /* exp(-i k theta_j) */
+        re += v[6 * j + a] * c[at];
+        im -= v[6 * j + a] * s[at];
+      }
+      energy += re * re + im * im;
+    }
+    if (k > 0) {
+      energy *= 2.0; /* with the harmonic -k of a real function */
+    }
+    total += energy;
+    weighted += (double)k * energy;
+    if (2 * k > top) {
+      upper += energy;
+    }
+  }
+  *mean = total > 0.0 ? weighted / total : 0.0;
+  *tail = total > 0.0 ? upper / total : 0.0;
+}
+
+/* The direction turned to a positive mean x component and scaled to unit root mean square
+ * over the points; |A v - lambda v| / (|lambda| |v|). */
+static double finish_direction(size_t n, const double* map, double lambda, double* v,
+                               double* image) {
+  const size_t m = 6 * n;
+  double along_x = 0.0;
+  double sum = 0.0;
+  for (size_t j = 0; j < n; ++j) {
+    along_x += v[6 * j];
+  }
+  for (size_t k = 0; k < m; ++k) {
+    sum += v[k] * v[k];
+  }
+  const double scale = (along_x < 0.0 ? -1.0 : 1.0) * sqrt((double)n / sum);
+  for (size_t k = 0; k < m; ++k) {
+    v[k] *= scale;
+  }
+  double miss = 0.0;
+  double size = 0.0;
+  for (size_t r = 0; r < m; ++r) {
+    double s = 0.0;
+    for (size_t c = 0; c < m; ++c) {
+      s += map[r * m + c] * v[c];
+    }
+    image[r] = s - lambda * v[r];
+    miss += image[r] * image[r];
+    size += v[r] * v[r];
+  }
+  return sqrt(miss / size) / fabs(lambda);
+}
+
+/* Whether the eigenvalue f is the eigenvalue e turned by +rho or -rho (cos rho = c, sin
+ * rho = sn), within near |lambda_e|. */
+static int is_turn(const myb_cr3bp_torus_spectrum* s, size_t e, size_t f, double c, double sn,
+                   double near) {
+  const double re = s->re[e];
+  const double im = s->im[e];
+  const double limit = near * myb_hypot(re, im);
+  return myb_hypot(s->re[f] - (re * c - im * sn), s->im[f] - (re * sn + im * c)) <= limit ||
+         myb_hypot(s->re[f] - (re * c + im * sn), s->im[f] - (im * c - re * sn)) <= limit;
+}
+
+enum { KIND_UNRESOLVED = 0, KIND_OFF = 1, KIND_ON = 2, KIND_TRIVIAL = 3 };
+
+/* The root of the set of e (union-find with path halving). */
+static size_t root_of(size_t* parent, size_t e) {
+  /* bound: the path halves at every step; at most as many steps as eigenvalues */
+  while (parent[e] != e) {
+    parent[e] = parent[parent[e]];
+    e = parent[e];
+  }
+  return e;
+}
+
+/* The classes of the eigenvalues, from their circles: two eigenvalues are joined when one is
+ * the other turned by +-rho within the tolerance, and the sets so joined are the circles —
+ * near their ends the members drift along the circle together, each still a turn of its
+ * neighbour. A set of more than half the points is resolved (the four trivial circles make
+ * one set, the others one each); the smaller ones are the spurious eigenvalues of high
+ * frequency and the loose ends. A resolved set holding 1 is trivial; the others are on the
+ * unit circle (elliptic) or off it (hyperbolic). parent, size: count values each. */
+static void classify(myb_cr3bp_torus_spectrum* s, size_t points, double rho, double near,
+                     unsigned char* kind, size_t* parent, size_t* size) {
+  const size_t m = s->count;
+  const double c = myb_cos(rho);
+  const double sn = myb_sin(rho);
+  for (size_t e = 0; e < m; ++e) {
+    parent[e] = e;
+    size[e] = 0;
+    kind[e] = KIND_ON;
+  }
+  for (size_t e = 0; e < m; ++e) {
+    for (size_t f = e + 1; f < m; ++f) {
+      if (is_turn(s, e, f, c, sn, near)) {
+        const size_t a = root_of(parent, e);
+        const size_t b = root_of(parent, f);
+        if (a != b) {
+          parent[a > b ? a : b] = a > b ? b : a;
+        }
+      }
+    }
+  }
+  for (size_t e = 0; e < m; ++e) {
+    const size_t r = root_of(parent, e);
+    ++size[r];
+    if (myb_hypot(s->re[e] - 1.0, s->im[e]) <= near) {
+      kind[r] = KIND_TRIVIAL; /* the mark of the set, at its root */
+    }
+  }
+  /* at the roots, the code of the set: 0 unresolved, 1 resolved, 2 resolved and trivial */
+  for (size_t r = 0; r < m; ++r) {
+    if (parent[r] == r) {
+      size[r] = 2 * size[r] > points ? (kind[r] == KIND_TRIVIAL ? 2u : 1u) : 0u;
+    }
+  }
+  s->trivial = s->elliptic = s->hyperbolic = s->unresolved = 0;
+  for (size_t e = 0; e < m; ++e) {
+    const size_t code = size[root_of(parent, e)];
+    const double modulus = myb_hypot(s->re[e], s->im[e]);
+    unsigned char k = KIND_UNRESOLVED;
+    if (code == 2) {
+      k = KIND_TRIVIAL;
+    } else if (code == 1) {
+      k = fabs(modulus - 1.0) <= near ? KIND_ON : KIND_OFF;
+    }
+    kind[e] = k;
+    s->unresolved += k == KIND_UNRESOLVED;
+    s->hyperbolic += k == KIND_OFF;
+    s->elliptic += k == KIND_ON;
+    s->trivial += k == KIND_TRIVIAL;
+  }
+}
+
+static myb_status spectrum_compute(myb_variational* var, const myb_cr3bp_torus* torus, double near,
+                                   const spectrum_work* w, myb_cr3bp_torus_spectrum* out) {
+  const size_t n = torus->points;
+  const size_t m = 6 * n;
+  for (size_t j = 0; j < n; ++j) {
+    myb_status st = myb_variational_start(var, 0.0, torus->states + 6 * j);
+    if (st == MYB_OK) {
+      st = myb_variational_integrate(var, torus->period);
+    }
+    if (st != MYB_OK) {
+      return st;
+    }
+    myb_variational_get(var, NULL, w->phis + 36 * j, NULL);
+  }
+  turn_matrix(n, torus->rotation, w->turn, NULL);
+  for (size_t i = 0; i < n; ++i) {
+    for (size_t j = 0; j < n; ++j) {
+      const double r = w->turn[i * n + j];
+      const double* phi = w->phis + 36 * j;
+      for (size_t a = 0; a < 6; ++a) {
+        double* row = w->map + (6 * i + a) * m + 6 * j;
+        for (size_t b = 0; b < 6; ++b) {
+          row[b] = r * phi[6 * a + b];
+        }
+      }
+    }
+  }
+  memcpy(w->work, w->map, m * m * sizeof *w->work);
+  myb_status st = myb_internal_eigenvalues(m, w->work, out->re, out->im, w->trial);
+  if (st != MYB_OK) {
+    return st;
+  }
+  out->count = m;
+  /* by modulus, from the largest (insertion: m^2 / 2 comparisons at most) */
+  for (size_t k = 1; k < m; ++k) {
+    const double re = out->re[k];
+    const double im = out->im[k];
+    const double modulus = myb_hypot(re, im);
+    size_t at = k;
+    /* bound: at most k shifts */
+    for (; at > 0 && myb_hypot(out->re[at - 1], out->im[at - 1]) < modulus; --at) {
+      out->re[at] = out->re[at - 1];
+      out->im[at] = out->im[at - 1];
+    }
+    out->re[at] = re;
+    out->im[at] = im;
+  }
+  classify(out, n, torus->rotation, near, w->kind, w->parent, w->size);
+  int off_above = 0;
+  int off_below = 0;
+  for (size_t e = 0; e < m; ++e) {
+    if (w->kind[e] == KIND_OFF) {
+      off_above = off_above || myb_hypot(out->re[e], out->im[e]) > 1.0;
+      off_below = off_below || myb_hypot(out->re[e], out->im[e]) < 1.0;
+    }
+  }
+  /* the representatives of the hyperbolic pair: real and resolved, the farthest from the
+   * unit circle on each side; of two of one modulus (lambda and -lambda, when a turn k rho
+   * is pi) the one of the lowest frequency */
+  double lowest[2] = {HUGE_VAL, HUGE_VAL}; /* [0]: stable, [1]: unstable */
+  double tails[2] = {0.0, 0.0};
+  double lambdas[2] = {0.0, 0.0};
+  double* directions[2] = {out->stable_direction, out->unstable_direction};
+  memset(out->stable_direction, 0, sizeof out->stable_direction);
+  memset(out->unstable_direction, 0, sizeof out->unstable_direction);
+  for (size_t e = 0; e < m; ++e) {
+    if (out->im[e] != 0.0 || w->kind[e] != KIND_OFF) {
+      continue;
+    }
+    const double modulus = fabs(out->re[e]);
+    const int side = modulus > 1.0 ? 1 : 0;
+    const double best = fabs(lambdas[side]);
+    const double margin = near * fmax(modulus, best);
+    const int farther =
+        lambdas[side] == 0.0 || (side == 1 ? modulus > best + margin : modulus < best - margin);
+    const int level = !farther && fabs(modulus - best) <= margin;
+    if (!farther && !level) {
+      continue;
+    }
+    if (myb_internal_eigenvector_real(m, w->map, out->re[e], w->trial, w->work) != MYB_OK) {
+      continue; /* not an eigenvalue inverse iteration can resolve */
+    }
+    double mean = 0.0;
+    double tail = 0.0;
+    frequency_content(n, w->trial, &mean, &tail);
+    if (farther || mean < lowest[side]) {
+      lowest[side] = mean;
+      tails[side] = tail;
+      lambdas[side] = out->re[e];
+      memcpy(directions[side], w->trial, m * sizeof *w->trial);
+    }
+  }
+  if ((off_above && lambdas[1] == 0.0) || (off_below && lambdas[0] == 0.0)) {
+    return MYB_E_NOCONV;
+  }
+  out->stable = lambdas[0];
+  out->unstable = lambdas[1];
+  out->residual = 0.0;
+  out->tail = fmax(tails[0], tails[1]);
+  for (int side = 0; side < 2; ++side) {
+    if (lambdas[side] != 0.0) {
+      out->residual = fmax(out->residual,
+                           finish_direction(n, w->map, lambdas[side], directions[side], w->image));
+    }
+  }
+  const double big = fabs(out->unstable);
+  out->index = big > 0.0 ? 0.5 * (big + 1.0 / big) : 1.0;
+  return MYB_OK;
+}
+
+myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus, double tolerance,
+                                     myb_cr3bp_torus_spectrum* spectrum) {
+  MYB_CHECK(torus != NULL && spectrum != NULL);
+  if (!torus_valid(mu, torus) || !(tolerance >= 0.0) || !isfinite(tolerance)) {
+    return MYB_E_DOMAIN;
+  }
+  const double near = tolerance > 0.0 ? tolerance : default_tolerance;
+  /* the neighbours of a member of a circle must stand apart from it */
+  if (!(fabs(2.0 * myb_sin(0.5 * torus->rotation)) > 10.0 * near)) {
+    return MYB_E_DOMAIN;
+  }
+  const size_t n = torus->points;
+  const size_t m = 6 * n;
+  /* doubles, then the indices of the sets, then the classes */
+  const size_t indices = (2 * m * sizeof(size_t) + sizeof(double) - 1) / sizeof(double);
+  double context = mu;
+  myb_force_model* model = NULL;
+  myb_variational* var = NULL;
+  void* block = NULL;
+  const myb_allocator a = myb_internal_allocator(NULL);
+  myb_status st = flow_open(&context, &model, &var);
+  if (st == MYB_OK) {
+    st = myb_internal_alloc_array(&a, n * n + 36 * n + 2 * m * m + 2 * m + indices + (m + 7) / 8,
+                                  sizeof(double), &block);
+  }
+  if (st == MYB_OK) {
+    spectrum_work w;
+    w.turn = block;
+    w.phis = w.turn + n * n;
+    w.map = w.phis + 36 * n;
+    w.work = w.map + m * m;
+    w.trial = w.work + m * m;
+    w.image = w.trial + m;
+    w.parent = (size_t*)(void*)(w.image + m);
+    w.size = w.parent + m;
+    w.kind = (unsigned char*)(w.image + m + indices);
+    st = spectrum_compute(var, torus, near, &w, spectrum);
+  }
+  myb_internal_release(&a, block);
+  myb_variational_destroy(var);
+  myb_force_model_destroy(model);
+  return st;
+}
+
+myb_status myb_cr3bp_torus_manifold(const myb_cr3bp_torus* torus,
+                                    const myb_cr3bp_torus_spectrum* spectrum, double angle,
+                                    int unstable, int sign, double epsilon, double y[6]) {
+  MYB_CHECK(torus != NULL && spectrum != NULL && y != NULL);
+  const size_t n = torus->points;
+  if (n < 5 || n > MAX_POINTS || n % 2 == 0 || spectrum->count != 6 * n || !isfinite(angle) ||
+      !(epsilon > 0.0) || !isfinite(epsilon) || (sign != 1 && sign != -1)) {
+    return MYB_E_DOMAIN;
+  }
+  const double lambda = unstable ? spectrum->unstable : spectrum->stable;
+  if (!(fabs(lambda) > 0.0) || !isfinite(lambda)) {
+    return MYB_E_DOMAIN;
+  }
+  double base[6];
+  double d[6];
+  interpolate(n, torus->states, angle, base);
+  interpolate(n, unstable ? spectrum->unstable_direction : spectrum->stable_direction, angle, d);
+  const double norm = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+  if (!(norm > 0.0) || !isfinite(norm)) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < 6; ++k) {
+    y[k] = base[k] + (double)sign * epsilon * d[k] / norm;
+  }
+  return MYB_OK;
 }

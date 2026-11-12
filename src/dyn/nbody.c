@@ -18,7 +18,12 @@
  * With the 1PN terms (myb_nbody_set_relativity) two more passes follow the Newtonian one, both
  * per receiver in increasing source order: the potentials U_i, then the 1PN terms, which need
  * the Newtonian accelerations and potentials of the sources. The 1PN terms enter their own
- * Sum2 accumulator and are added to the Newtonian acceleration once. */
+ * Sum2 accumulator and are added to the Newtonian acceleration once.
+ *
+ * With an approximation set (myb_nbody_set_approximation) the automatic path takes the
+ * Newtonian accelerations of all bodies from the fast multipole method of dyn/fmm.c, then
+ * sums every receiver that has an excluded source again on its own, directly. The other
+ * paths and everything without an approximation are as above, bit for bit. */
 #include <math.h> /* sqrt */
 #include <stdckdint.h>
 #include <string.h>
@@ -26,6 +31,7 @@
 #include "core/alloc.h"
 #include "core/base.h"
 #include "core/pool.h"
+#include "dyn/fmm.h"
 #include "dyn/nbody_internal.h"
 #include "myb/dyn.h"
 #include "myb/num.h"
@@ -79,6 +85,7 @@ struct myb_nbody {
   size_t* pn_first;  /* count + 1, as first[] for explicit_pn */
   double* potential; /* count: U of each body (massive sources) */
   double* newton;    /* 3 count: Newtonian accelerations of the current evaluation */
+  myb_internal_fmm* fmm; /* the approximation, NULL for exact sums */
 };
 
 static int finite(double x) {
@@ -158,6 +165,7 @@ void myb_nbody_destroy(myb_nbody* nbody) {
     return;
   }
   const myb_allocator a = nbody->allocator;
+  myb_internal_fmm_destroy(nbody->fmm);
   myb_internal_release(&a, nbody->excluded);
   myb_internal_release(&a, nbody->explicit_pn);
   myb_internal_release(&a, nbody->pn_first);
@@ -199,6 +207,40 @@ int myb_internal_nbody_relativity(const myb_nbody* nbody, myb_ppn* ppn) {
 void myb_nbody_set_pool(myb_nbody* nbody, myb_pool* pool) {
   MYB_CHECK(nbody != NULL);
   nbody->pool = pool;
+}
+
+myb_status myb_nbody_set_approximation(myb_nbody* nbody, int order, double theta) {
+  MYB_CHECK(nbody != NULL);
+  if (order == 0) {
+    myb_internal_fmm_destroy(nbody->fmm);
+    nbody->fmm = NULL;
+    return MYB_OK;
+  }
+  if (order < 1 || order > MYB_NBODY_FMM_MAX_ORDER || !(theta > 0.0 && theta < 1.0)) {
+    return MYB_E_DOMAIN;
+  }
+  myb_internal_fmm* fmm = NULL;
+  const myb_status status =
+      myb_internal_fmm_create(nbody->count, order, theta, 0, &nbody->allocator, &fmm);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_internal_fmm_destroy(nbody->fmm);
+  nbody->fmm = fmm;
+  return MYB_OK;
+}
+
+int myb_nbody_approximation(const myb_nbody* nbody, double* theta) {
+  MYB_CHECK(nbody != NULL);
+  if (theta != NULL) {
+    *theta = nbody->fmm != NULL ? myb_internal_fmm_theta(nbody->fmm) : 0.0;
+  }
+  return nbody->fmm != NULL ? myb_internal_fmm_order(nbody->fmm) : 0;
+}
+
+myb_internal_fmm* myb_internal_nbody_fmm(myb_nbody* nbody) {
+  MYB_CHECK(nbody != NULL);
+  return nbody->fmm;
 }
 
 /* ---- Interaction graph ------------------------------------------------------------------- */
@@ -752,6 +794,9 @@ myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const doubl
     s->py[i] = x[3 * i + 1];
     s->pz[i] = x[3 * i + 2];
   }
+  if (path == MYB_NBODY_PATH_AUTO && s->fmm != NULL) {
+    path = MYB_NBODY_PATH_FMM;
+  }
   if (path == MYB_NBODY_PATH_AUTO) {
     size_t pairs = 0;
     const int huge = ckd_mul(&pairs, s->count, s->massive);
@@ -765,7 +810,20 @@ myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const doubl
                : MYB_NBODY_PATH_SYMMETRIC;
   }
   double* newtonian = s->relativity ? s->newton : a;
-  if (path == MYB_NBODY_PATH_SYMMETRIC && s->excluded_count == 0) {
+  if (path == MYB_NBODY_PATH_FMM) {
+    MYB_CHECK(s->fmm != NULL);
+    const myb_status status =
+        myb_internal_fmm_evaluate(s->fmm, s->massive, s->gm, s->px, s->py, s->pz, newtonian);
+    if (status != MYB_OK) {
+      return status;
+    }
+    /* receivers with an excluded source: their exact sum, which honours the graph */
+    for (size_t i = 0; i < s->count && s->excluded_count != 0; ++i) {
+      if (s->first[i] != s->first[i + 1]) {
+        sum_receiver(s, i, newtonian);
+      }
+    }
+  } else if (path == MYB_NBODY_PATH_SYMMETRIC && s->excluded_count == 0) {
     sum_symmetric(s, newtonian);
   } else {
     receiver_job job = {.s = s, .a = newtonian, .vector = path != MYB_NBODY_PATH_RECEIVER_SCALAR};

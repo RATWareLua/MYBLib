@@ -807,6 +807,265 @@ myb_status myb_ck_writer_add_intervals(myb_ck_writer* writer,
   return MYB_OK;
 }
 
+/* ---- CK types 4, 5 and 6 ------------------------------------------------------------------ */
+
+/* Type 4 as SPICE lays it out: a generic segment of variable packets with explicit
+ * references. Every packet record is (reference, size, mid, radius, the counts packed with
+ * the base 128, the coefficients); then the packet directory (count + 1 offsets of the
+ * packets' data from the packet area, 1-based), the references, every 100th reference, and
+ * 17 items of metadata. */
+myb_status myb_ck_writer_add_chebyshev(myb_ck_writer* writer,
+                                       const myb_ck_segment_header* header,
+                                       const double* starts, const double* stops,
+                                       const int* counts, const double* coefficients,
+                                       size_t count, int has_rates) {
+  MYB_CHECK(writer != NULL && header != NULL && starts != NULL && stops != NULL &&
+            counts != NULL && coefficients != NULL);
+  myb_spk_writer* w = &writer->w;
+  if (header->name == NULL || !printable(header->name, NAME_CHARS) || count == 0 ||
+      count > SIZE_MAX / 64) {
+    return MYB_E_DOMAIN;
+  }
+  size_t total = 0;   /* coefficients */
+  size_t largest = 0; /* packet */
+  for (size_t k = 0; k < count; ++k) {
+    if (!isfinite(starts[k]) || !isfinite(stops[k]) || !(stops[k] > starts[k]) ||
+        (k > 0 && !(starts[k] >= stops[k - 1]))) {
+      return MYB_E_DOMAIN;
+    }
+    size_t here = 0;
+    for (int i = 0; i < 7; ++i) {
+      const int c = counts[7 * k + (size_t)i];
+      if (c < 0 || c > 19 || (i < 4 && c == 0) || (i >= 4 && (has_rates ? c == 0 : c != 0))) {
+        return MYB_E_DOMAIN;
+      }
+      here += (size_t)c;
+    }
+    for (size_t j = 0; j < here; ++j) {
+      if (!isfinite(coefficients[total + j])) {
+        return MYB_E_DOMAIN;
+      }
+    }
+    total += here;
+    largest = here + 3 > largest ? here + 3 : largest;
+  }
+  const size_t packets = total + 3 * count;
+  const size_t length =
+      packets + 2 * count + (count + 1) + count + (count - 1) / DIRECTORY_SPACING + 17;
+  const myb_status status = reserve(w, length);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* out = w->data + w->words;
+  const double* c = coefficients;
+  for (size_t k = 0; k < count; ++k) {
+    size_t here = 0;
+    double code = 0.0;
+    double scale = 1.0;
+    for (int i = 0; i < 7; ++i) {
+      here += (size_t)counts[7 * k + (size_t)i];
+      code += (double)counts[7 * k + (size_t)i] * scale;
+      scale *= 128.0;
+    }
+    *out++ = starts[k];
+    *out++ = (double)(here + 3);
+    *out++ = 0.5 * (starts[k] + stops[k]);
+    *out++ = 0.5 * (stops[k] - starts[k]);
+    *out++ = code;
+    memcpy(out, c, here * sizeof *out);
+    out += here;
+    c += here;
+  }
+  /* the packet directory: where the data of each packet start, past its two words */
+  double at = 3.0;
+  for (size_t k = 0; k < count; ++k) {
+    *out++ = at;
+    size_t here = 0;
+    for (int i = 0; i < 7; ++i) {
+      here += (size_t)counts[7 * k + (size_t)i];
+    }
+    at += (double)(here + 3 + 2);
+  }
+  *out++ = at;
+  memcpy(out, starts, count * sizeof *out);
+  out += count;
+  for (size_t k = DIRECTORY_SPACING; k < count; k += DIRECTORY_SPACING) {
+    *out++ = starts[k - 1];
+  }
+  const size_t pdrbas = packets + 2 * count;
+  const size_t refbas = pdrbas + count + 1;
+  const double meta[17] = {0.0,
+                           0.0,
+                           (double)(refbas + count),
+                           (double)((count - 1) / DIRECTORY_SPACING),
+                           3.0,
+                           (double)refbas,
+                           (double)count,
+                           (double)pdrbas,
+                           (double)(count + 1),
+                           1.0,
+                           0.0,
+                           (double)count,
+                           0.0,
+                           0.0,
+                           (double)largest,
+                           2.0,
+                           17.0};
+  memcpy(out, meta, sizeof meta);
+  const myb_spk_segment_header h = ck_header(header, has_rates != 0);
+  commit(w, &h, 4, starts[0], stops[count - 1], length);
+  return MYB_OK;
+}
+
+static const size_t ck_packet_size[4] = {8, 4, 14, 7};
+static const int ck_largest_window[4] = {12, 24, 12, 24};
+
+/* Checks a set of packets: subtype, window, rate, increasing ticks, finite values, no zero
+ * quaternion. */
+static int valid_packets(const myb_ck_packets* p, size_t least) {
+  if (p->ticks == NULL || p->packets == NULL || p->subtype < 0 || p->subtype > 3 ||
+      p->window < 2 || p->window % 2 != 0 || p->window > ck_largest_window[p->subtype] ||
+      !(p->seconds_per_tick > 0.0) || !isfinite(p->seconds_per_tick) || p->count < least ||
+      p->count > SIZE_MAX / 64 || !(p->ticks[0] >= 0.0)) {
+    return 0;
+  }
+  const size_t size = ck_packet_size[p->subtype];
+  for (size_t k = 0; k < p->count; ++k) {
+    const double* q = p->packets + k * size;
+    if (!isfinite(p->ticks[k]) || (k > 0 && !(p->ticks[k] > p->ticks[k - 1])) ||
+        !(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3] > 0.0)) {
+      return 0;
+    }
+    for (size_t j = 0; j < size; ++j) {
+      if (!isfinite(q[j])) {
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+/* Packets, their ticks and every 100th tick. */
+static double* put_packets(double* out, const myb_ck_packets* p) {
+  const size_t size = ck_packet_size[p->subtype];
+  memcpy(out, p->packets, p->count * size * sizeof *out);
+  out += p->count * size;
+  memcpy(out, p->ticks, p->count * sizeof *out);
+  out += p->count;
+  for (size_t k = DIRECTORY_SPACING; k < p->count; k += DIRECTORY_SPACING) {
+    *out++ = p->ticks[k - 1];
+  }
+  return out;
+}
+
+myb_status myb_ck_writer_add_packets(myb_ck_writer* writer, const myb_ck_segment_header* header,
+                                     const myb_ck_packets* packets, int has_rates, double start,
+                                     double stop, const double* interval_starts,
+                                     size_t interval_count) {
+  MYB_CHECK(writer != NULL && header != NULL && packets != NULL);
+  myb_spk_writer* w = &writer->w;
+  if (header->name == NULL || !printable(header->name, NAME_CHARS) ||
+      !valid_packets(packets, 1) || !isfinite(start) || !isfinite(stop) || !(stop >= start)) {
+    return MYB_E_DOMAIN;
+  }
+  const size_t n = packets->count;
+  const size_t m = interval_starts != NULL ? interval_count : 1;
+  if (m == 0 || m > n || (interval_starts != NULL && interval_starts[0] != packets->ticks[0])) {
+    return MYB_E_DOMAIN;
+  }
+  size_t at = 0;
+  for (size_t i = 0; interval_starts != NULL && i < m; ++i) {
+    /* bound: the ticks, each passed once over all the starts */
+    while (at < n && packets->ticks[at] < interval_starts[i]) {
+      ++at;
+    }
+    if (at == n || packets->ticks[at] != interval_starts[i]) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  const size_t size = ck_packet_size[packets->subtype];
+  const size_t length = n * (size + 1) + (n - 1) / DIRECTORY_SPACING + m +
+                        (m - 1) / DIRECTORY_SPACING + 5;
+  const myb_status status = reserve(w, length);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* out = put_packets(w->data + w->words, packets);
+  for (size_t i = 0; i < m; ++i) {
+    *out++ = interval_starts != NULL ? interval_starts[i] : packets->ticks[0];
+  }
+  for (size_t i = DIRECTORY_SPACING; i < m; i += DIRECTORY_SPACING) {
+    *out++ = interval_starts[i - 1];
+  }
+  *out++ = packets->seconds_per_tick;
+  *out++ = (double)packets->subtype;
+  *out++ = (double)packets->window;
+  *out++ = (double)m;
+  *out++ = (double)n;
+  const myb_spk_segment_header h = ck_header(header, has_rates != 0);
+  commit(w, &h, 5, start, stop, length);
+  return MYB_OK;
+}
+
+myb_status myb_ck_writer_add_minisegments(myb_ck_writer* writer,
+                                          const myb_ck_segment_header* header,
+                                          const myb_ck_packets* minisegments,
+                                          const double* boundaries, size_t count, int has_rates,
+                                          int select_last, double start, double stop) {
+  MYB_CHECK(writer != NULL && header != NULL && minisegments != NULL && boundaries != NULL);
+  myb_spk_writer* w = &writer->w;
+  if (header->name == NULL || !printable(header->name, NAME_CHARS) || count == 0 ||
+      count > SIZE_MAX / 64 || !isfinite(start) || !isfinite(stop) || !(stop >= start) ||
+      !(boundaries[0] <= start) || !(boundaries[count] >= stop)) {
+    return MYB_E_DOMAIN;
+  }
+  size_t length = 2 * (count + 1) + count / DIRECTORY_SPACING + 2;
+  for (size_t k = 0; k < count; ++k) {
+    const myb_ck_packets* p = &minisegments[k];
+    if (!isfinite(boundaries[k + 1]) || !(boundaries[k + 1] > boundaries[k]) ||
+        !valid_packets(p, 2) || !(p->ticks[0] <= boundaries[k]) ||
+        !(p->ticks[p->count - 1] >= boundaries[k])) {
+      return MYB_E_DOMAIN;
+    }
+    length += p->count * (ck_packet_size[p->subtype] + 1) +
+              (p->count - 1) / DIRECTORY_SPACING + 4;
+  }
+  const myb_status status = reserve(w, length);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double* out = w->data + w->words;
+  double* const begin = out;
+  for (size_t k = 0; k < count; ++k) {
+    const myb_ck_packets* p = &minisegments[k];
+    out = put_packets(out, p);
+    *out++ = p->seconds_per_tick;
+    *out++ = (double)p->subtype;
+    *out++ = (double)p->window;
+    *out++ = (double)p->count;
+  }
+  memcpy(out, boundaries, (count + 1) * sizeof *out);
+  out += count + 1;
+  for (size_t k = DIRECTORY_SPACING; k <= count; k += DIRECTORY_SPACING) {
+    *out++ = boundaries[k - 1];
+  }
+  /* the pointers: 1-based offsets of the mini-segments, and one past the last */
+  double pointer = 1.0;
+  for (size_t k = 0; k < count; ++k) {
+    *out++ = pointer;
+    const myb_ck_packets* p = &minisegments[k];
+    pointer += (double)(p->count * (ck_packet_size[p->subtype] + 1) +
+                        (p->count - 1) / DIRECTORY_SPACING + 4);
+  }
+  *out++ = pointer;
+  *out++ = select_last != 0 ? 1.0 : 0.0;
+  *out++ = (double)count;
+  MYB_CHECK((size_t)(out - begin) == length);
+  const myb_spk_segment_header h = ck_header(header, has_rates != 0);
+  commit(w, &h, 6, start, stop, length);
+  return MYB_OK;
+}
+
 size_t myb_ck_writer_size(const myb_ck_writer* writer) {
   MYB_CHECK(writer != NULL);
   return myb_spk_writer_size(&writer->w);

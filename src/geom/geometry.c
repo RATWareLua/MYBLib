@@ -147,7 +147,13 @@ myb_status myb_ellipsoid_nearest(const double radii[3], const double position[3]
     }
   }
   int converged = 0;
-  /* bound: NEAREST_ITERATIONS; the iteration is monotone and ends when it stops moving */
+  double last_step = 0.0;
+  /* bound: NEAREST_ITERATIONS; the iteration is monotone and ends when it stops moving. Near a
+   * sphere F may round to a positive value far below the resolution of 1, whose Newton step
+   * is then below the resolution of t + a_i^2, the only way t enters F: F comes back nearly
+   * the same and t creeps by such steps until the budget is spent. A t that still moves by
+   * less than the resolution of the smallest t + a_i^2 is the root to the resolution of what
+   * it enters, and is kept */
   for (int iteration = 0; iteration < NEAREST_ITERATIONS && !converged; ++iteration) {
     double f = -1.0;
     double slope = 0.0;
@@ -161,10 +167,11 @@ myb_status myb_ellipsoid_nearest(const double radii[3], const double position[3]
     const double next = slope < 0.0 ? t - f / slope : t;
     converged = !(next > t);
     if (!converged) {
+      last_step = next - t;
       t = next;
     }
   }
-  if (!converged) {
+  if (!converged && !(last_step <= 0x1p-51 * (t + shortest))) {
     return MYB_E_NOCONV;
   }
   double offset2 = 0.0;

@@ -88,6 +88,24 @@ MYB_API int myb_polyhedron_ray(const myb_polyhedron* polyhedron, const double or
  * counts for 2 pi with the sign of a rounding error. */
 MYB_API double myb_polyhedron_solid_angle(const myb_polyhedron* polyhedron, const double r[3]);
 
+/* The point of the mesh nearest to a position, the distance to it (m: positive outside,
+ * negative inside), the outward unit normal there and the face it lies on; any output may be
+ * NULL. The faces are searched in the tree of boxes of myb_polyhedron_ray, nearest boxes
+ * first, and a box farther than the best face found is not opened: tens of faces of a mesh of
+ * a hundred thousand near its surface. Inside or outside is the side of the angle-weighted
+ * normal of the part of the face that holds the point — the face, an edge (the sum of the
+ * normals of its two faces) or a corner (the normals of its faces weighted by their angles
+ * there; J. A. Baerentzen, H. Aanaes, IEEE Trans. Vis. Comput. Graph. 11, 243, 2005): exact
+ * for a closed mesh, whatever its shape. The normal is that of the face for a point inside a
+ * face; on an edge or a corner it is the line from the point to the position, turned outward
+ * (the gradient of the distance), and the angle-weighted normal for a position on the edge or
+ * the corner itself. Of a point shared by faces equally near the face given is the first in
+ * the mesh. Errors: MYB_E_DOMAIN (a position that is not finite). */
+MYB_API MYB_NODISCARD myb_status myb_polyhedron_nearest(const myb_polyhedron* polyhedron,
+                                                        const double position[3],
+                                                        double point[3], double normal[3],
+                                                        double* distance, size_t* face);
+
 /* ---- What an observer sees ------------------------------------------------------------------
  * The functions above take the body where it is. An observer at the model time t sees it
  * where it was, and turned as it was, when the light left it: a light time tau earlier, tau

@@ -12,9 +12,17 @@
  * the angle a about u, which here is the C-matrix. Angular velocities are those of the
  * instrument frame relative to the base frame, in the base frame, rad/s.
  *
- * Segment types read: 1 (pointing at discrete instants), 2 (intervals of constant angular
- * velocity), 3 (interpolation between instants inside intervals). Other types load, and a
- * query that would need one of their segments passes it over. */
+ * Segment types read and written: 1 (pointing at discrete instants), 2 (intervals of constant
+ * angular velocity), 3 (interpolation between instants inside intervals), 4 (Chebyshev series
+ * on intervals, in a generic segment), 5 (sliding windows of Hermite or Lagrange
+ * interpolation inside intervals) and 6 (mini-segments of type 5 data that follow one another
+ * in time). Other types load, and a query that would need one of their segments passes it
+ * over.
+ *
+ * Which pointing a query gets follows ckgpav_c of SPICE, type by type — also where SPICE's
+ * types differ among themselves: when the instant lies in a gap exactly half way between two
+ * intervals, types 1, 2 and 3 take the later one and types 4 and 5 the earlier one; type 6
+ * takes the earlier one unless the gap is at most the tolerance from the next mini-segment. */
 #ifndef MYB_CK_H_
 #define MYB_CK_H_
 
@@ -178,6 +186,69 @@ MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_intervals(
     myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
     const double* stops, const double* quaternions, const double* rates,
     const double* seconds_per_tick, size_t count);
+
+/* A segment of type 4: `count` intervals [starts[k], stops[k]] (stops[k] > starts[k], none
+ * before the end of the previous one; gaps allowed) on each of which the quaternion and, with rates, the
+ * angular velocity (rad/s) are Chebyshev series in s = (ticks - mid) / radius, mid and radius
+ * those of the interval: counts[7 k + i] coefficients of the component i (q0 .. q3, then the
+ * three of the angular velocity; 1 .. 19 each, the last three 0 without rates), the
+ * coefficients of the intervals one after another, of the components of an interval one
+ * after another, from the term T0 on (taken with its full weight). The quaternion is made
+ * unit after the sum. Errors: MYB_E_DOMAIN (the header, counts, intervals, values not
+ * finite), MYB_E_NOMEM, MYB_E_OVERFLOW. */
+MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_chebyshev(
+    myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
+    const double* stops, const int* counts, const double* coefficients, size_t count,
+    int has_rates);
+
+/* Pointings for interpolation in sliding windows (types 5 and 6). Each packet holds, by the
+ * subtype:
+ *   0  the quaternion and its derivative (8 numbers; per second) — Hermite interpolation of
+ *      the quaternion; the angular velocity from the quaternion and its derivative;
+ *   1  the quaternion (4) — Lagrange interpolation; the angular velocity from the derivative
+ *      of the interpolating polynomials;
+ *   2  the quaternion, its derivative, the angular velocity and the angular acceleration (14)
+ *      — Hermite interpolation of both;
+ *   3  the quaternion and the angular velocity (7) — Lagrange interpolation of both.
+ * `window` packets are interpolated (even; 2 .. 12 for the Hermite subtypes, 2 .. 24 for the
+ * Lagrange ones: polynomials of degree 2 window - 1 and window - 1), fewer near the ends of an
+ * interval. Neighbouring quaternions must be the nearer of q and -q to each other for the
+ * Hermite subtypes (the Lagrange ones are turned so by the reader). The interpolation runs in
+ * ticks; seconds_per_tick turns derivatives per second into derivatives per tick. */
+enum { MYB_CK_MAX_WINDOW = 24 };
+
+typedef struct myb_ck_packets {
+  int subtype;             /* 0 .. 3 */
+  int window;
+  double seconds_per_tick; /* > 0 */
+  const double* ticks;     /* count, increasing */
+  const double* packets;   /* count of the subtype's size */
+  size_t count;
+} myb_ck_packets;
+
+/* A segment of type 5 that covers [start, stop]: the packets, interpolated only inside the
+ * intervals that begin at the ticks interval_starts (increasing, each one of the ticks, the
+ * first of them the first tick; NULL: one interval of them all). has_rates: whether the
+ * segment gives angular velocities. Errors: MYB_E_DOMAIN (the header, the subtype, the
+ * window, the rate, ticks not increasing or negative, a zero quaternion, values not finite,
+ * interval starts that are not among the ticks, start > stop), MYB_E_NOMEM, MYB_E_OVERFLOW. */
+MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_packets(
+    myb_ck_writer* writer, const myb_ck_segment_header* header, const myb_ck_packets* packets,
+    int has_rates, double start, double stop, const double* interval_starts,
+    size_t interval_count);
+
+/* A segment of type 6 that covers [start, stop]: `count` mini-segments, the k-th of them
+ * valid between boundaries[k] and boundaries[k + 1] (count + 1 increasing boundaries, the
+ * first at or before start, the last at or after stop). The ticks of a mini-segment begin at
+ * or before its first boundary and reach at least that boundary; they may stop short of the
+ * next one (a gap) or go beyond either (padding that only shapes the interpolation); at least
+ * two packets. select_last != 0: an instant on a common boundary is given by the later
+ * mini-segment, otherwise by the earlier one. Errors as above, and MYB_E_DOMAIN for
+ * boundaries that do not cover the segment or do not match the ticks. */
+MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_minisegments(
+    myb_ck_writer* writer, const myb_ck_segment_header* header,
+    const myb_ck_packets* minisegments, const double* boundaries, size_t count, int has_rates,
+    int select_last, double start, double stop);
 
 MYB_API size_t myb_ck_writer_size(const myb_ck_writer* writer);
 MYB_API MYB_NODISCARD myb_status myb_ck_writer_write(const myb_ck_writer* writer, void* buffer,

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/* Initial orbit determination (myb/iod.h): Gibbs, Herrick-Gibbs, Gauss with refinement. */
+/* Initial orbit determination (myb/iod.h): Gibbs, Herrick-Gibbs; from three sights Gauss,
+ * Laplace, the double-r iteration and Gooding, each with the same refinement. */
 #include <math.h> /* sqrt, fabs */
 #include <string.h>
 
@@ -7,13 +8,18 @@
 #include "myb/cmath.h"
 #include "myb/iod.h"
 #include "myb/kepler.h"
+#include "myb/lambert.h"
 #include "myb/num.h"
 #include "num/vec3.h"
+
+static const double TWO_PI = 6.283185307179586;
 
 enum {
   REFINEMENTS = 50,  /* Newton steps of the refinement of a candidate */
   SCAN = 400,        /* intervals in which the roots of the polynomial of Gauss are looked for */
-  BISECTIONS = 200   /* more than the bits of a double */
+  BISECTIONS = 200,  /* more than the bits of a double */
+  OUTER = 60,        /* Newton steps of the double-r iteration and of Gooding's method */
+  HALVINGS = 30      /* halvings of a step that leaves the lines of sight */
 };
 
 static int usable(const double v[3]) {
@@ -144,11 +150,10 @@ static void across(const double s[3], double a[3], double b[3]) {
   myb_vec3_cross(s, a, b);
 }
 
-/* One candidate: from the distance x at the middle time, through the series of Gauss, to the
- * orbit that passes through the three sights — Newton's method on the six conditions (the
- * object lies on each sight: two components across it vanish) for the six numbers (r, v) at
- * the middle time, with the transition matrix of the two-body motion. 1 if it settled with
- * positive ranges. */
+static int refine(const gauss* g, myb_pv middle, myb_iod_solution* out);
+
+/* One candidate of Gauss: from the distance x at the middle time, through the series of Gauss,
+ * a state at the middle time, then refined. 1 if it settled with positive ranges. */
 static int candidate(const gauss* g, double a_coefficient, double b_coefficient, double x,
                      myb_iod_solution* out) {
   const double mu = g->mu;
@@ -179,7 +184,17 @@ static int candidate(const gauss* g, double a_coefficient, double b_coefficient,
       !myb_vec3_finite(middle.v)) {
     return 0;
   }
-  const double taus[3] = {tau1, 0.0, tau3};
+  return refine(g, middle, out);
+}
+
+/* The orbit through the three sights from a state at the middle time: Newton's method on the
+ * six conditions (the object lies on each sight: two components across it vanish) for the six
+ * numbers (r, v) at the middle time, with the transition matrix of the two-body motion. 1 if
+ * it settled with positive ranges. */
+static int refine(const gauss* g, myb_pv middle, myb_iod_solution* out) {
+  const double mu = g->mu;
+  double range[3];
+  const double taus[3] = {g->tau1, 0.0, g->tau3};
   double basis[3][2][3];
   for (int k = 0; k < 3; ++k) {
     across(g->sight[k], basis[k][0], basis[k][1]);
@@ -262,11 +277,58 @@ static int candidate(const gauss* g, double a_coefficient, double b_coefficient,
   return 1;
 }
 
-myb_status myb_iod_gauss(double mu, const double t[3], const double observer[3][3],
-                         const double sight[3][3],
-                         myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS], size_t* count) {
-  MYB_CHECK(t != NULL && observer != NULL && sight != NULL && solutions != NULL && count != NULL);
-  *count = 0;
+/* The positive roots of x^8 + a x^6 + b x^3 + c (at most three: three changes of sign):
+ * sign changes over a scan in the logarithm of the distance, from a thousandth to a thousand
+ * times the scale of the problem, each closed by bisection. */
+static size_t positive_roots(double a, double b, double c, double scale,
+                             double roots[MYB_IOD_MAX_SOLUTIONS]) {
+  size_t found = 0;
+  double before = scale * 1e-3;
+  double f_before = polynomial(a, b, c, before);
+  const double ratio = myb_exp(myb_log(1e6) / (double)SCAN);
+  for (int k = 0; k < SCAN && found < MYB_IOD_MAX_SOLUTIONS; ++k) {
+    const double after = before * ratio;
+    const double f_after = polynomial(a, b, c, after);
+    if ((f_before < 0.0) != (f_after < 0.0)) {
+      double lo = before;
+      double hi = after;
+      /* bound: BISECTIONS halvings */
+      for (int step = 0; step < BISECTIONS; ++step) {
+        const double mid = lo + 0.5 * (hi - lo);
+        if (mid == lo || mid == hi) {
+          break;
+        }
+        if ((polynomial(a, b, c, mid) < 0.0) == (f_before < 0.0)) {
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+      roots[found++] = hi;
+    }
+    before = after;
+    f_before = f_after;
+  }
+  return found;
+}
+
+/* Two roots may settle on one orbit: solutions[*count] is kept only if it is a new one. */
+static void keep(myb_iod_solution* solutions, size_t* count) {
+  int fresh = 1;
+  const double* r = solutions[*count].r;
+  for (size_t s = 0; s < *count; ++s) {
+    double d[3];
+    for (int i = 0; i < 3; ++i) {
+      d[i] = r[i] - solutions[s].r[i];
+    }
+    fresh = fresh && myb_vec3_norm(d) > 1e-9 * myb_vec3_norm(r);
+  }
+  *count += fresh ? 1u : 0u;
+}
+
+/* The checks common to the methods from three sights; fills the problem. */
+static myb_status sights_problem(double mu, const double t[3], const double observer[3][3],
+                                 const double sight[3][3], gauss* g) {
   if (!(mu > 0.0) || !isfinite(mu) || !(t[0] < t[1]) || !(t[1] < t[2]) || !isfinite(t[0]) ||
       !isfinite(t[2])) {
     return MYB_E_DOMAIN;
@@ -277,8 +339,25 @@ myb_status myb_iod_gauss(double mu, const double t[3], const double observer[3][
       return MYB_E_DOMAIN;
     }
   }
-  gauss g = {.mu = mu, .tau1 = t[0] - t[1], .tau3 = t[2] - t[1], .observer = observer,
-             .sight = sight};
+  memset(g, 0, sizeof *g);
+  g->mu = mu;
+  g->tau1 = t[0] - t[1];
+  g->tau3 = t[2] - t[1];
+  g->observer = observer;
+  g->sight = sight;
+  return MYB_OK;
+}
+
+myb_status myb_iod_gauss(double mu, const double t[3], const double observer[3][3],
+                         const double sight[3][3],
+                         myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS], size_t* count) {
+  MYB_CHECK(t != NULL && observer != NULL && sight != NULL && solutions != NULL && count != NULL);
+  *count = 0;
+  gauss g;
+  const myb_status checked = sights_problem(mu, t, observer, sight, &g);
+  if (checked != MYB_OK) {
+    return checked;
+  }
   double p[3][3];
   myb_vec3_cross(sight[1], sight[2], p[0]);
   myb_vec3_cross(sight[0], sight[2], p[1]);
@@ -306,46 +385,448 @@ myb_status myb_iod_gauss(double mu, const double t[3], const double observer[3][
   if (!isfinite(a + b + c)) {
     return MYB_E_DOMAIN;
   }
-  /* the positive roots: sign changes over a scan in the logarithm of the distance, from a
-   * thousandth to a thousand times the scale of the problem */
-  const double scale = fmax(sqrt(r22), myb_cbrt(mu * tau * tau));
-  double before = scale * 1e-3;
-  double f_before = polynomial(a, b, c, before);
-  const double ratio = myb_exp(myb_log(1e6) / (double)SCAN);
-  for (int k = 0; k < SCAN && *count < MYB_IOD_MAX_SOLUTIONS; ++k) {
-    const double after = before * ratio;
-    const double f_after = polynomial(a, b, c, after);
-    if ((f_before < 0.0) != (f_after < 0.0)) {
-      double lo = before;
-      double hi = after;
-      /* bound: BISECTIONS halvings */
-      for (int step = 0; step < BISECTIONS; ++step) {
-        const double mid = lo + 0.5 * (hi - lo);
-        if (mid == lo || mid == hi) {
-          break;
-        }
-        if ((polynomial(a, b, c, mid) < 0.0) == (f_before < 0.0)) {
-          lo = mid;
-        } else {
-          hi = mid;
-        }
-      }
-      if (candidate(&g, a_coefficient, b_coefficient, hi, &solutions[*count])) {
-        /* two roots may settle on one orbit: it is given once */
-        int fresh = 1;
-        const double* r = solutions[*count].r;
-        for (size_t s = 0; s < *count; ++s) {
-          double d[3];
-          for (int i = 0; i < 3; ++i) {
-            d[i] = r[i] - solutions[s].r[i];
-          }
-          fresh = fresh && myb_vec3_norm(d) > 1e-9 * myb_vec3_norm(r);
-        }
-        *count += fresh ? 1u : 0u;
-      }
+  double roots[MYB_IOD_MAX_SOLUTIONS];
+  const size_t found = positive_roots(a, b, c, fmax(sqrt(r22), myb_cbrt(mu * tau * tau)), roots);
+  for (size_t k = 0; k < found; ++k) {
+    if (candidate(&g, a_coefficient, b_coefficient, roots[k], &solutions[*count])) {
+      keep(solutions, count);
     }
-    before = after;
-    f_before = f_after;
   }
   return *count > 0 ? MYB_OK : MYB_E_NOCONV;
+}
+
+/* ---- Laplace -------------------------------------------------------------------------------- */
+
+/* The first and second derivatives at the middle time of the quadratic through three values
+ * at tau1, 0, tau3. */
+static void derivatives(double tau1, double tau3, const double y[3][3], double first[3],
+                        double second[3]) {
+  const double w1[3] = {-tau3 / (tau1 * (tau1 - tau3)), -(tau1 + tau3) / (tau1 * tau3),
+                        -tau1 / ((tau3 - tau1) * tau3)};
+  const double w2[3] = {2.0 / (tau1 * (tau1 - tau3)), 2.0 / (tau1 * tau3),
+                        2.0 / ((tau3 - tau1) * tau3)};
+  for (int i = 0; i < 3; ++i) {
+    first[i] = w1[0] * y[0][i] + w1[1] * y[1][i] + w1[2] * y[2][i];
+    second[i] = w2[0] * y[0][i] + w2[1] * y[1][i] + w2[2] * y[2][i];
+  }
+}
+
+static double triple(const double a[3], const double b[3], const double c[3]) {
+  double cross[3];
+  myb_vec3_cross(b, c, cross);
+  return myb_vec3_dot(a, cross);
+}
+
+myb_status myb_iod_laplace(double mu, const double t[3], const double observer[3][3],
+                           const double sight[3][3],
+                           myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS], size_t* count) {
+  MYB_CHECK(t != NULL && observer != NULL && sight != NULL && solutions != NULL && count != NULL);
+  *count = 0;
+  gauss g;
+  const myb_status checked = sights_problem(mu, t, observer, sight, &g);
+  if (checked != MYB_OK) {
+    return checked;
+  }
+  /* the sight and the observer at the middle time with their derivatives */
+  const double* l = sight[1];
+  const double* place = observer[1];
+  double l1[3];
+  double l2[3];
+  double place1[3];
+  double place2[3];
+  derivatives(g.tau1, g.tau3, sight, l1, l2);
+  derivatives(g.tau1, g.tau3, observer, place1, place2);
+  /* r = R + rho L, r'' = -mu r / r^3: across L and L' the range, across L and L'' its rate */
+  const double d = 2.0 * triple(l, l1, l2);
+  if (!(fabs(d) > 0.0) || !isfinite(d)) {
+    return MYB_E_DOMAIN; /* the sights do not turn: no curvature to measure */
+  }
+  const double a_range = -2.0 * triple(l, l1, place2) / d;
+  const double b_range = -2.0 * mu * triple(l, l1, place) / d;
+  const double c = myb_vec3_dot(l, place);
+  const double r22 = myb_vec3_dot(place, place);
+  /* r^2 = rho^2 + 2 rho c + R^2 with rho = a + b / r^3: a polynomial of the eighth degree */
+  const double pa = -(a_range * a_range + 2.0 * a_range * c + r22);
+  const double pb = -2.0 * b_range * (a_range + c);
+  const double pc = -b_range * b_range;
+  if (!isfinite(pa + pb + pc)) {
+    return MYB_E_DOMAIN;
+  }
+  const double tau = g.tau3 - g.tau1;
+  double roots[MYB_IOD_MAX_SOLUTIONS];
+  const size_t found =
+      positive_roots(pa, pb, pc, fmax(sqrt(r22), myb_cbrt(mu * tau * tau)), roots);
+  for (size_t k = 0; k < found; ++k) {
+    const double r3 = roots[k] * roots[k] * roots[k];
+    const double rho = a_range + b_range / r3;
+    const double rate = 2.0 * (triple(l, l2, place2) + mu / r3 * triple(l, l2, place)) / d;
+    if (!(rho > 0.0)) {
+      continue;
+    }
+    myb_pv middle;
+    for (int i = 0; i < 3; ++i) {
+      middle.r[i] = place[i] + rho * l[i];
+      middle.v[i] = place1[i] + rate * l[i] + rho * l1[i];
+    }
+    if (myb_vec3_finite(middle.v) && refine(&g, middle, &solutions[*count])) {
+      keep(solutions, count);
+    }
+  }
+  return *count > 0 ? MYB_OK : MYB_E_NOCONV;
+}
+
+/* ---- The double-r iteration --------------------------------------------------------------- */
+
+/* The point of sight k at the distance r from the centre (the far one of the two). 0 if the
+ * line does not reach it. */
+static int at_distance(const gauss* g, int k, double r, double point[3]) {
+  const double c = myb_vec3_dot(g->sight[k], g->observer[k]);
+  const double disc = c * c - myb_vec3_dot(g->observer[k], g->observer[k]) + r * r;
+  if (!(disc >= 0.0) || !(r > 0.0)) {
+    return 0;
+  }
+  const double rho = -c + sqrt(disc);
+  if (!(rho > 0.0)) {
+    return 0;
+  }
+  for (int i = 0; i < 3; ++i) {
+    point[i] = g->observer[k][i] + rho * g->sight[k][i];
+  }
+  return 1;
+}
+
+/* The mean anomaly (elliptic or hyperbolic) of the true anomaly nu. */
+static int mean_of(double nu, double e, double* mean) {
+  double anomaly = 0.0;
+  if (e < 1.0) {
+    return myb_anomaly_eccentric_from_true(nu, e, &anomaly) == MYB_OK &&
+           myb_anomaly_mean_from_eccentric(anomaly, e, mean) == MYB_OK;
+  }
+  return myb_anomaly_hyperbolic_from_true(nu, e, &anomaly) == MYB_OK &&
+         myb_anomaly_mean_from_hyperbolic(anomaly, e, mean) == MYB_OK;
+}
+
+/* The times of flight from the second point to the first and the third along the conic
+ * through the three points (the orbit of Gibbs) for the distances r1, r2 at the first two
+ * times; the middle state. 0 where there is none (a line that misses the distance, the points
+ * on one line, a nearly parabolic conic). */
+static int double_r_times(const gauss* g, double r1, double r2, double times[2], myb_pv* middle) {
+  double p[3][3];
+  if (!at_distance(g, 0, r1, p[0]) || !at_distance(g, 1, r2, p[1])) {
+    return 0;
+  }
+  /* the third point: where its sight meets the plane of the first two */
+  double w[3];
+  myb_vec3_cross(p[0], p[1], w);
+  const double across3 = myb_vec3_dot(g->sight[2], w);
+  if (!(fabs(across3) > 0.0)) {
+    return 0;
+  }
+  const double rho3 = -myb_vec3_dot(g->observer[2], w) / across3;
+  if (!(rho3 > 0.0)) {
+    return 0;
+  }
+  for (int i = 0; i < 3; ++i) {
+    p[2][i] = g->observer[2][i] + rho3 * g->sight[2][i];
+  }
+  memcpy(middle->r, p[1], sizeof middle->r);
+  if (myb_iod_gibbs(g->mu, p[0], p[1], p[2], middle->v, NULL) != MYB_OK) {
+    return 0;
+  }
+  myb_elements el;
+  if (myb_elements_from_pv(g->mu, middle, &el) != MYB_OK || !(fabs(el.e - 1.0) > 1e-9)) {
+    return 0;
+  }
+  double h[3];
+  myb_vec3_cross(middle->r, middle->v, h);
+  double m2 = 0.0;
+  if (!mean_of(el.nu, el.e, &m2)) {
+    return 0;
+  }
+  const double a = el.p / (1.0 - el.e * el.e);
+  const double n = sqrt(g->mu / fabs(a * a * a));
+  for (int s = 0; s < 2; ++s) {
+    const double* q = p[s == 0 ? 0 : 2];
+    double cross[3];
+    myb_vec3_cross(middle->r, q, cross);
+    /* the angle from the second point, in the sense of the motion: back to the first, on to
+     * the third */
+    double angle = myb_atan2(myb_vec3_dot(cross, h) / myb_vec3_norm(h), myb_vec3_dot(middle->r, q));
+    if (s == 0 && angle > 0.0) {
+      angle -= TWO_PI;
+    } else if (s == 1 && angle < 0.0) {
+      angle += TWO_PI;
+    }
+    double m = 0.0;
+    if (!mean_of(el.nu + angle, el.e, &m)) {
+      return 0;
+    }
+    double dm = m - m2;
+    if (el.e < 1.0) {
+      /* the mean anomalies are given within a turn: the difference in the sense of the angle */
+      dm -= TWO_PI * floor(dm / TWO_PI);
+      if (s == 0) {
+        dm -= TWO_PI;
+      }
+    }
+    times[s] = dm / n;
+  }
+  return isfinite(times[0]) && isfinite(times[1]);
+}
+
+myb_status myb_iod_double_r(double mu, const double t[3], const double observer[3][3],
+                            const double sight[3][3], const double distance[2],
+                            myb_iod_solution* solution) {
+  MYB_CHECK(t != NULL && observer != NULL && sight != NULL && distance != NULL &&
+            solution != NULL);
+  gauss g;
+  const myb_status checked = sights_problem(mu, t, observer, sight, &g);
+  if (checked != MYB_OK) {
+    return checked;
+  }
+  if (!(distance[0] > 0.0) || !(distance[1] > 0.0) || !isfinite(distance[0] + distance[1])) {
+    return MYB_E_DOMAIN;
+  }
+  double r[2] = {distance[0], distance[1]};
+  const double span = g.tau3 - g.tau1;
+  myb_pv middle;
+  double times[2];
+  if (!double_r_times(&g, r[0], r[1], times, &middle)) {
+    return MYB_E_NOCONV;
+  }
+  int settled = 0;
+  /* Newton's method on the two times of flight, the derivatives by central differences */
+  for (int step = 0; step < OUTER && !settled; ++step) { /* bound: OUTER */
+    const double f[2] = {times[0] - g.tau1, times[1] - g.tau3};
+    if (fabs(f[0]) + fabs(f[1]) < 1e-11 * span) {
+      settled = 1;
+      break;
+    }
+    double jacobian[4];
+    for (int j = 0; j < 2; ++j) {
+      const double h = 1e-6 * r[j];
+      double up[2] = {r[0], r[1]};
+      double down[2] = {r[0], r[1]};
+      up[j] += h;
+      down[j] -= h;
+      double tu[2];
+      double td[2];
+      myb_pv ignored;
+      if (!double_r_times(&g, up[0], up[1], tu, &ignored) ||
+          !double_r_times(&g, down[0], down[1], td, &ignored)) {
+        return MYB_E_NOCONV;
+      }
+      jacobian[j] = (tu[0] - td[0]) / (2.0 * h);
+      jacobian[2 + j] = (tu[1] - td[1]) / (2.0 * h);
+    }
+    const double det = jacobian[0] * jacobian[3] - jacobian[1] * jacobian[2];
+    if (!(fabs(det) > 0.0) || !isfinite(det)) {
+      return MYB_E_NOCONV;
+    }
+    const double dr[2] = {-(jacobian[3] * f[0] - jacobian[1] * f[1]) / det,
+                          -(-jacobian[2] * f[0] + jacobian[0] * f[1]) / det};
+    /* damped: a step is halved until the lines reach the distances and the error of the times
+     * falls */
+    const double before = fabs(f[0]) + fabs(f[1]);
+    double scale = 1.0;
+    int moved = 0;
+    for (int k = 0; k < HALVINGS && !moved; ++k) { /* bound: HALVINGS */
+      const double next[2] = {r[0] + scale * dr[0], r[1] + scale * dr[1]};
+      double trial[2];
+      myb_pv state;
+      if (double_r_times(&g, next[0], next[1], trial, &state) &&
+          fabs(trial[0] - g.tau1) + fabs(trial[1] - g.tau3) < (1.0 - 0.25 * scale) * before) {
+        r[0] = next[0];
+        r[1] = next[1];
+        times[0] = trial[0];
+        times[1] = trial[1];
+        middle = state;
+        moved = 1;
+      }
+      scale *= 0.5;
+    }
+    if (!moved) {
+      return MYB_E_NOCONV;
+    }
+  }
+  if (!settled && !(fabs(times[0] - g.tau1) + fabs(times[1] - g.tau3) < 1e-9 * span)) {
+    return MYB_E_NOCONV;
+  }
+  return refine(&g, middle, solution) ? MYB_OK : MYB_E_NOCONV;
+}
+
+/* ---- Gooding ------------------------------------------------------------------------------ */
+
+/* The transfer from the first sight at the range rho1 to the third at rho3 (Lambert's problem
+ * with the revolutions and the branch asked, in the sense `retrograde`), the state at the
+ * middle time on it and the two components of its miss across the second sight with their
+ * derivatives in the two ranges. 0 where there is none. */
+static int gooding_miss(const gauss* g, double rho1, double rho3, int revolutions, int branch,
+                        int retrograde, const double basis[2][3], double miss[2],
+                        double jacobian[4], myb_pv* middle) {
+  myb_pv first;
+  double third[3];
+  for (int i = 0; i < 3; ++i) {
+    first.r[i] = g->observer[0][i] + rho1 * g->sight[0][i];
+    third[i] = g->observer[2][i] + rho3 * g->sight[2][i];
+  }
+  myb_lambert_solution found[1 + 2 * 8];
+  size_t count = 0;
+  if (myb_lambert(g->mu, first.r, third, g->tau3 - g->tau1, retrograde, revolutions, found,
+                  1 + 2 * 8, &count) != MYB_OK) {
+    return 0;
+  }
+  int chosen = -1;
+  for (size_t k = 0; k < count; ++k) {
+    if (found[k].revolutions == revolutions && (revolutions == 0 || found[k].branch == branch)) {
+      chosen = (int)k;
+    }
+  }
+  if (chosen < 0) {
+    return 0;
+  }
+  memcpy(first.v, found[chosen].v1, sizeof first.v);
+  /* the transfer and the arc to the middle time with their transition matrices */
+  myb_pv end;
+  double whole[36];
+  double part[36];
+  if (myb_kepler_stm(g->mu, &first, g->tau3 - g->tau1, &end, whole) != MYB_OK ||
+      myb_kepler_stm(g->mu, &first, -g->tau1, middle, part) != MYB_OK) {
+    return 0;
+  }
+  /* v1 as the ends move: d v1 / d r3 = B^-1, d v1 / d r1 = -B^-1 A (A, B the position rows of
+   * the whole transfer) */
+  double b[9];
+  double b_inverse[9] = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      b[3 * i + j] = whole[6 * i + 3 + j];
+    }
+  }
+  if (myb_lu_solve(3, b, b_inverse, 3) != MYB_OK) {
+    return 0;
+  }
+  double dv_dr1[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      double sum = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        sum += b_inverse[3 * i + k] * whole[6 * k + j];
+      }
+      dv_dr1[3 * i + j] = -sum;
+    }
+  }
+  /* d r2 / d rho1 = (C + D dv1/dr1) L1, d r2 / d rho3 = D B^-1 L3 (C, D of the part) */
+  double by1[3];
+  double by3[3];
+  for (int i = 0; i < 3; ++i) {
+    by1[i] = 0.0;
+    by3[i] = 0.0;
+    for (int j = 0; j < 3; ++j) {
+      double through_v1 = 0.0;
+      double through_v3 = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        through_v1 += part[6 * i + 3 + k] * dv_dr1[3 * k + j];
+        through_v3 += part[6 * i + 3 + k] * b_inverse[3 * k + j];
+      }
+      by1[i] += (part[6 * i + j] + through_v1) * g->sight[0][j];
+      by3[i] += through_v3 * g->sight[2][j];
+    }
+  }
+  double d[3];
+  for (int i = 0; i < 3; ++i) {
+    d[i] = middle->r[i] - g->observer[1][i];
+  }
+  if (!(myb_vec3_dot(d, g->sight[1]) > 0.0)) {
+    return 0; /* behind the second observer */
+  }
+  for (int s = 0; s < 2; ++s) {
+    miss[s] = myb_vec3_dot(basis[s], d);
+    jacobian[2 * s] = myb_vec3_dot(basis[s], by1);
+    jacobian[2 * s + 1] = myb_vec3_dot(basis[s], by3);
+  }
+  return isfinite(miss[0] + miss[1] + jacobian[0] + jacobian[1] + jacobian[2] + jacobian[3]);
+}
+
+myb_status myb_iod_gooding(double mu, const double t[3], const double observer[3][3],
+                           const double sight[3][3], const double range[2], int revolutions,
+                           int branch, myb_iod_solution* solution) {
+  MYB_CHECK(t != NULL && observer != NULL && sight != NULL && range != NULL && solution != NULL);
+  gauss g;
+  const myb_status checked = sights_problem(mu, t, observer, sight, &g);
+  if (checked != MYB_OK) {
+    return checked;
+  }
+  if (!(range[0] > 0.0) || !(range[1] > 0.0) || !isfinite(range[0] + range[1]) ||
+      revolutions < 0 || revolutions > 8 || (revolutions > 0 && branch != -1 && branch != 1)) {
+    return MYB_E_DOMAIN;
+  }
+  double basis[2][3];
+  across(sight[1], basis[0], basis[1]);
+  double rho[2] = {range[0], range[1]};
+  double miss[2];
+  double jacobian[4];
+  myb_pv middle;
+  /* the sense of the motion: the one that misses the second sight less at the guess */
+  int retrograde = -1;
+  double least = (double)INFINITY;
+  for (int sense = 0; sense < 2; ++sense) {
+    if (gooding_miss(&g, rho[0], rho[1], revolutions, branch, sense, basis, miss, jacobian,
+                     &middle) &&
+        myb_hypot(miss[0], miss[1]) < least) {
+      least = myb_hypot(miss[0], miss[1]);
+      retrograde = sense;
+    }
+  }
+  if (retrograde < 0) {
+    return MYB_E_NOCONV;
+  }
+  if (!gooding_miss(&g, rho[0], rho[1], revolutions, branch, retrograde, basis, miss, jacobian,
+                    &middle)) {
+    return MYB_E_NOCONV;
+  }
+  int settled = 0;
+  for (int step = 0; step < OUTER && !settled; ++step) { /* bound: OUTER */
+    const double distance = myb_vec3_norm(middle.r);
+    if (myb_hypot(miss[0], miss[1]) < 1e-12 * distance) {
+      settled = 1;
+      break;
+    }
+    const double det = jacobian[0] * jacobian[3] - jacobian[1] * jacobian[2];
+    if (!(fabs(det) > 0.0) || !isfinite(det)) {
+      return MYB_E_NOCONV;
+    }
+    const double dr[2] = {-(jacobian[3] * miss[0] - jacobian[1] * miss[1]) / det,
+                          -(-jacobian[2] * miss[0] + jacobian[0] * miss[1]) / det};
+    /* damped: a step is halved until the ranges are positive, the transfer has the solution
+     * asked and the miss falls */
+    const double before = myb_hypot(miss[0], miss[1]);
+    double scale = 1.0;
+    int moved = 0;
+    for (int k = 0; k < HALVINGS && !moved; ++k) { /* bound: HALVINGS */
+      const double next[2] = {rho[0] + scale * dr[0], rho[1] + scale * dr[1]};
+      double trial_miss[2];
+      double trial_jacobian[4];
+      myb_pv state;
+      if (next[0] > 0.0 && next[1] > 0.0 &&
+          gooding_miss(&g, next[0], next[1], revolutions, branch, retrograde, basis, trial_miss,
+                       trial_jacobian, &state) &&
+          myb_hypot(trial_miss[0], trial_miss[1]) < (1.0 - 0.25 * scale) * before) {
+        rho[0] = next[0];
+        rho[1] = next[1];
+        memcpy(miss, trial_miss, sizeof miss);
+        memcpy(jacobian, trial_jacobian, sizeof jacobian);
+        middle = state;
+        moved = 1;
+      }
+      scale *= 0.5;
+    }
+    if (!moved) {
+      return MYB_E_NOCONV;
+    }
+  }
+  if (!settled && !(myb_hypot(miss[0], miss[1]) < 1e-9 * myb_vec3_norm(middle.r))) {
+    return MYB_E_NOCONV;
+  }
+  return refine(&g, middle, solution) ? MYB_OK : MYB_E_NOCONV;
 }

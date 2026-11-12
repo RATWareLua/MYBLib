@@ -159,6 +159,9 @@ enum { MYB_MODEL_MAX_TERMS = 64, MYB_MODEL_MAX_PARAMETERS = 16, MYB_MODEL_NAME =
                       myb_status myb_force_model_find(const myb_force_model* model,
                                                       const char* name, size_t* index);
         size_t myb_force_model_count(const myb_force_model* model);
+        void myb_force_model_set_position_only(myb_force_model* model, size_t index,
+                                               int position_only);
+        int myb_force_model_position_only(const myb_force_model* model);
         const char* myb_force_model_name(const myb_force_model* model, size_t index);
         int myb_force_model_enabled(const myb_force_model* model, size_t index);
         void myb_force_model_set_enabled(myb_force_model* model, size_t index, int enabled);
@@ -767,6 +770,27 @@ typedef struct myb_ck_segment_header {
     myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
     const double* stops, const double* quaternions, const double* rates,
     const double* seconds_per_tick, size_t count);
+                      myb_status myb_ck_writer_add_chebyshev(
+    myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
+    const double* stops, const int* counts, const double* coefficients, size_t count,
+    int has_rates);
+enum { MYB_CK_MAX_WINDOW = 24 };
+typedef struct myb_ck_packets {
+  int subtype;
+  int window;
+  double seconds_per_tick;
+  const double* ticks;
+  const double* packets;
+  size_t count;
+} myb_ck_packets;
+                      myb_status myb_ck_writer_add_packets(
+    myb_ck_writer* writer, const myb_ck_segment_header* header, const myb_ck_packets* packets,
+    int has_rates, double start, double stop, const double* interval_starts,
+    size_t interval_count);
+                      myb_status myb_ck_writer_add_minisegments(
+    myb_ck_writer* writer, const myb_ck_segment_header* header,
+    const myb_ck_packets* minisegments, const double* boundaries, size_t count, int has_rates,
+    int select_last, double start, double stop);
         size_t myb_ck_writer_size(const myb_ck_writer* writer);
                       myb_status myb_ck_writer_write(const myb_ck_writer* writer, void* buffer,
                                                      size_t size);
@@ -988,6 +1012,7 @@ typedef struct myb_symplectic_stats {
   int64_t steps;
   int64_t evaluations;
 } myb_symplectic_stats;
+enum { MYB_SYMPLECTIC_6_S7 = 607, MYB_SYMPLECTIC_8_S15 = 815 };
                       myb_status myb_symplectic_create(size_t n, int order,
                                                        const myb_allocator* allocator,
                                                        myb_symplectic** integrator);
@@ -1009,6 +1034,7 @@ typedef struct myb_rkn12_options {
   double h_max;
   double h_min;
   int64_t max_steps;
+  int interpolant;
 } myb_rkn12_options;
 typedef struct myb_rkn12_stats {
   int64_t accepted;
@@ -1066,7 +1092,8 @@ typedef struct myb_gauss_jackson_stats {
 typedef struct myb_orbit myb_orbit;
 typedef enum myb_orbit_integrator {
   MYB_ORBIT_IAS15 = 0,
-  MYB_ORBIT_DOP853 = 1
+  MYB_ORBIT_DOP853 = 1,
+  MYB_ORBIT_RKN12 = 2
 } myb_orbit_integrator;
 typedef struct myb_orbit_options {
   double epsilon;
@@ -1139,233 +1166,23 @@ typedef struct myb_conjunction {
                                                       double radius, double t1, double step,
                                                       myb_conjunction* conjunctions,
                                                       size_t capacity, size_t* count);
- void myb_cr3bp_acceleration(double mu, const double x[3], const double v[3], double a[3]);
-        void myb_cr3bp_jacobian(double mu, const double x[3], double dadx[9], double dadv[9]);
-        double myb_cr3bp_jacobi(double mu, const double y[6]);
-                      myb_status myb_cr3bp_term(void* mu, double t, const double x[3],
-                                                const double v[3], double a[3]);
-                      myb_status myb_cr3bp_term_jacobian(void* mu, double t, const double x[3],
-                                                         const double v[3], double dadx[9],
-                                                         double dadv[9]);
-                      myb_status myb_cr3bp_lagrange(double mu, double points[5][3]);
-typedef enum myb_cr3bp_symmetry {
-  MYB_CR3BP_SYMMETRY_XZ = 1,
-  MYB_CR3BP_SYMMETRY_X = 2
-} myb_cr3bp_symmetry;
-typedef struct myb_cr3bp_correction {
-  myb_cr3bp_symmetry symmetry;
-  int fixed;
-  int crossing;
-  double tolerance;
-  int max_iterations;
-} myb_cr3bp_correction;
-                      myb_status myb_cr3bp_correct(double mu,
-                                                   const myb_cr3bp_correction* correction,
-                                                   double y0[6], double* period);
-                      myb_status myb_cr3bp_monodromy(double mu, const double y0[6], double period,
-                                                     double monodromy[36]);
-                      myb_status myb_cr3bp_stability(const double monodromy[36], double re[6],
-                                                     double im[6], double* index);
-                      myb_status myb_cr3bp_manifold(double mu, const double y0[6], double period,
-                                                    double phase, int unstable, int sign,
-                                                    double epsilon, double y[6]);
-                      myb_status myb_cr3bp_richardson(double mu, int point, double az, int branch,
-                                                      double y0[6], double* period);
-                      myb_status myb_cr3bp_from_ephemeris(const double body1[6],
-                                                          const double body2[6], double gm1,
-                                                          double gm2, const double state[6],
-                                                          double rotating[6]);
-                      myb_status myb_cr3bp_to_ephemeris(const double body1[6],
-                                                        const double body2[6], double gm1,
-                                                        double gm2, const double rotating[6],
-                                                        double state[6]);
-enum { MYB_CR3BP_MAX_PATCHES = 10 };
-typedef struct myb_cr3bp_orbit {
-  size_t patches;
-  double states[6 * MYB_CR3BP_MAX_PATCHES];
-  double period;
-  int has_tangent;
-  double tangent[6 * MYB_CR3BP_MAX_PATCHES + 1];
-} myb_cr3bp_orbit;
-                      myb_status myb_cr3bp_orbit_from_state(double mu, const double y0[6],
-                                                            double period, size_t patches,
-                                                            myb_cr3bp_orbit* orbit);
-                      myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_orbit* orbit,
-                                                         double tolerance, int max_iterations);
-                      myb_status myb_cr3bp_orbit_continue(double mu, myb_cr3bp_orbit* orbit,
-                                                          double step, double tolerance,
-                                                          int max_iterations);
-enum { MYB_CR3BP_MAX_CIRCLE = 35 };
-typedef struct myb_cr3bp_torus {
-  size_t points;
-  double states[6 * MYB_CR3BP_MAX_CIRCLE];
-  double period;
-  double rotation;
-  double defect;
-  int has_tangent;
-  double tangent[6 * MYB_CR3BP_MAX_CIRCLE + 2];
-} myb_cr3bp_torus;
-typedef enum myb_cr3bp_torus_family {
-  MYB_CR3BP_TORUS_JACOBI = 0,
-  MYB_CR3BP_TORUS_PERIOD = 1,
-  MYB_CR3BP_TORUS_ROTATION = 2
-} myb_cr3bp_torus_family;
-                      myb_status myb_cr3bp_torus_from_orbit(double mu, const double y0[6],
-                                                            double period, size_t points,
-                                                            int pair, double size,
-                                                            myb_cr3bp_torus* torus);
-                      myb_status myb_cr3bp_torus_continue(double mu, myb_cr3bp_torus* torus,
-                                                          myb_cr3bp_torus_family family,
-                                                          double step, double tolerance,
-                                                          int max_iterations);
-        void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[6]);
-typedef struct myb_pool myb_pool;
-                      myb_status myb_pool_create(int threads, const myb_allocator* allocator,
-                                                 myb_pool** pool);
-        void myb_pool_destroy(myb_pool* pool);
-        int myb_pool_threads(const myb_pool* pool);
-typedef struct myb_ppn {
-  double c;
-  double beta;
-  double gamma;
-} myb_ppn;
-                      myb_status myb_ppn_validate(const myb_ppn* ppn);
-                      myb_status myb_rel_schwarzschild(const myb_ppn* ppn, double gm,
-                                                       const double r[3], const double v[3],
-                                                       double a[3]);
-                      myb_status myb_rel_lense_thirring(const myb_ppn* ppn, double gm,
-                                                        const double j[3], const double r[3],
-                                                        const double v[3], double a[3]);
-                      myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm_external,
-                                                   const double R[3], const double V[3],
-                                                   const double v[3], double a[3]);
-                      myb_status myb_rel_schwarzschild_jacobian(const myb_ppn* ppn, double gm,
-                                                                const double r[3],
-                                                                const double v[3],
-                                                                double dadr[9], double dadv[9]);
-                      myb_status myb_rel_lense_thirring_jacobian(const myb_ppn* ppn, double gm,
-                                                                 const double j[3],
-                                                                 const double r[3],
-                                                                 const double v[3],
-                                                                 double dadr[9], double dadv[9]);
-                      myb_status myb_rel_de_sitter_jacobian(const myb_ppn* ppn,
-                                                            double gm_external,
-                                                            const double R[3], const double V[3],
-                                                            double dadv[9]);
-typedef struct myb_rel_local_frame {
-  double c;
-  double xe[3];
-  double ve[3];
-  double ae[3];
-  double w_ext;
-} myb_rel_local_frame;
-        void myb_rel_global_to_local(const myb_rel_local_frame* frame, const double x[3],
-                                     double out[3]);
-        void myb_rel_local_to_global(const myb_rel_local_frame* frame, const double X[3],
-                                     double out[3]);
-        double myb_rel_local_time_shift(const myb_rel_local_frame* frame, const double x[3]);
-        double myb_rel_proper_time_rate(double c, double v2, double potential);
-enum {
-  MYB_PN_1 = 1,
-  MYB_PN_2 = 2,
-  MYB_PN_25 = 4,
-  MYB_PN_3 = 8,
-  MYB_PN_35 = 16,
-  MYB_PN_SO = 32,
-  MYB_PN_SS = 64,
-  MYB_PN_ALL = 127
-};
-typedef struct myb_pn_binary {
-  double gm1;
-  double gm2;
-  double c;
-  unsigned orders;
-  double r0;
-  double kappa1;
-  double kappa2;
-} myb_pn_binary;
-                      myb_status myb_pn_binary_evaluate(const myb_pn_binary* binary,
-                                                        const double x[3], const double v[3],
-                                                        const double chi1[3],
-                                                        const double chi2[3], double a[3],
-                                                        double dchi1[3], double dchi2[3]);
-                      myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c,
-                                                            unsigned orders, const double x[3],
-                                                            const double v[3], double a[3]);
-        double myb_peters_period_derivative(double gm1, double gm2, double c, double period,
-                                            double e);
-typedef struct myb_nbody myb_nbody;
-typedef enum myb_interaction {
-  MYB_INTERACTION_NONE = 0,
-  MYB_INTERACTION_NEWTON = 1,
-  MYB_INTERACTION_EIH = 2
-} myb_interaction;
-                      myb_status myb_nbody_create(size_t massive, size_t test, const double* gm,
-                                                  const myb_allocator* allocator,
-                                                  myb_nbody** nbody);
-        void myb_nbody_destroy(myb_nbody* nbody);
-        size_t myb_nbody_count(const myb_nbody* nbody);
-        size_t myb_nbody_massive(const myb_nbody* nbody);
-        double myb_nbody_gm(const myb_nbody* nbody, size_t body);
-        void myb_nbody_set_pool(myb_nbody* nbody, myb_pool* pool);
-                      myb_status myb_nbody_set_interaction(myb_nbody* nbody, size_t receiver,
-                                                           size_t source, myb_interaction level);
-                      myb_status myb_nbody_set_relativity(myb_nbody* nbody, const myb_ppn* ppn);
-                      myb_status myb_nbody_acceleration(void* nbody, double t, const double* x,
-                                                        double* a);
-                      myb_status myb_nbody_acceleration_xv(void* nbody, double t, const double* x,
-                                                           const double* v, double* a);
-typedef struct myb_nbody_invariants {
-  myb_dd energy;
-  double momentum[3];
-  double angular_momentum[3];
-  double center[3];
-  double center_velocity[3];
-} myb_nbody_invariants;
-                      myb_status myb_nbody_invariants_of(const myb_nbody* nbody, const double* x,
-                                                         const double* v,
-                                                         myb_nbody_invariants* invariants);
-typedef struct myb_nbody_pn_invariants {
-  myb_dd energy;
-  double momentum[3];
-  double center[3];
-  double center_velocity[3];
-} myb_nbody_pn_invariants;
-                      myb_status myb_nbody_pn_invariants_of(const myb_nbody* nbody,
-                                                            const double* x, const double* v,
-                                                            myb_nbody_pn_invariants* invariants);
-typedef enum myb_wh_scheme {
-  MYB_WH_DKD = 0,
-  MYB_WH_SABA2 = 1,
-  MYB_WH_SABA3 = 2,
-  MYB_WH_SABA4 = 3,
-  MYB_WH_SBAB1 = 4,
-  MYB_WH_SBAB2 = 5,
-  MYB_WH_SBAB3 = 6,
-  MYB_WH_SBAB4 = 7
-} myb_wh_scheme;
-typedef struct myb_wh_options {
-  double h;
-  myb_wh_scheme scheme;
-  int corrector;
-} myb_wh_options;
-typedef struct myb_wh_stats {
-  int64_t steps;
-  int64_t evaluations;
-  int64_t drifts;
-} myb_wh_stats;
-typedef struct myb_wh myb_wh;
-                      myb_status myb_wh_create(myb_nbody* system, const myb_wh_options* options,
-                                               const myb_allocator* allocator, myb_wh** wh);
-        void myb_wh_destroy(myb_wh* wh);
-                      myb_status myb_wh_start(myb_wh* wh, double t0, const double* x,
-                                              const double* v);
-                      myb_status myb_wh_step(myb_wh* wh);
-                      myb_status myb_wh_integrate(myb_wh* wh, double t_end);
-        double myb_wh_time(const myb_wh* wh);
-                      myb_status myb_wh_state(myb_wh* wh, double* x, double* v);
-                      myb_status myb_wh_dense(myb_wh* wh, double t, double* x, double* v);
-        myb_wh_stats myb_wh_statistics(const myb_wh* wh);
+                      myb_status myb_collision_rate(const double mean[6],
+                                                    const double covariance[36], double radius,
+                                                    double* rate);
+typedef myb_status (*myb_relative_gaussian_function)(void* context, double t, double mean[6],
+                                                     double covariance[36]);
+                      myb_status myb_collision_probability_long(myb_relative_gaussian_function f,
+                                                                void* context, double t0,
+                                                                double t1, double step,
+                                                                double radius,
+                                                                double* probability,
+                                                                double* error);
+                      myb_status myb_conjunction_long(myb_orbit* first,
+                                                      const double first_covariance[36],
+                                                      myb_orbit* second,
+                                                      const double second_covariance[36],
+                                                      double radius, double t1, double step,
+                                                      double* probability, double* error);
 typedef struct myb_gravity_field myb_gravity_field;
                       myb_status myb_gravity_field_create(double gm, double radius, int degree,
                                                           const double* c, const double* s,
@@ -1664,6 +1481,104 @@ typedef struct myb_photoemission {
                                                           size_t count,
                                                           const myb_photoemission* photo,
                                                           double radius, double* potential);
+        double myb_debye_length(const myb_plasma_species* species, size_t count);
+typedef struct myb_secondary_emission {
+  double max_yield;
+  double max_energy;
+  double temperature;
+  double charge;
+} myb_secondary_emission;
+        double myb_secondary_yield(const myb_secondary_emission* emission, double energy);
+enum { MYB_SHEATH_THICK = 0, MYB_SHEATH_THIN = 1 };
+typedef struct myb_charging_model {
+  const myb_photoemission* photo;
+  const myb_secondary_emission* secondary;
+  int sheath;
+} myb_charging_model;
+                      myb_status myb_charging_current_model(const myb_plasma_species* species,
+                                                            size_t count,
+                                                            const myb_charging_model* model,
+                                                            double radius, double potential,
+                                                            double* current);
+enum { MYB_CHARGING_MAX_EQUILIBRIA = 3 };
+                      myb_status myb_charging_equilibria(
+    const myb_plasma_species* species, size_t count, const myb_charging_model* model,
+    double radius, double potentials[MYB_CHARGING_MAX_EQUILIBRIA], size_t* found);
+typedef struct myb_ppn {
+  double c;
+  double beta;
+  double gamma;
+} myb_ppn;
+                      myb_status myb_ppn_validate(const myb_ppn* ppn);
+                      myb_status myb_rel_schwarzschild(const myb_ppn* ppn, double gm,
+                                                       const double r[3], const double v[3],
+                                                       double a[3]);
+                      myb_status myb_rel_lense_thirring(const myb_ppn* ppn, double gm,
+                                                        const double j[3], const double r[3],
+                                                        const double v[3], double a[3]);
+                      myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm_external,
+                                                   const double R[3], const double V[3],
+                                                   const double v[3], double a[3]);
+                      myb_status myb_rel_schwarzschild_jacobian(const myb_ppn* ppn, double gm,
+                                                                const double r[3],
+                                                                const double v[3],
+                                                                double dadr[9], double dadv[9]);
+                      myb_status myb_rel_lense_thirring_jacobian(const myb_ppn* ppn, double gm,
+                                                                 const double j[3],
+                                                                 const double r[3],
+                                                                 const double v[3],
+                                                                 double dadr[9], double dadv[9]);
+                      myb_status myb_rel_de_sitter_jacobian(const myb_ppn* ppn,
+                                                            double gm_external,
+                                                            const double R[3], const double V[3],
+                                                            double dadv[9]);
+typedef struct myb_rel_local_frame {
+  double c;
+  double xe[3];
+  double ve[3];
+  double ae[3];
+  double w_ext;
+} myb_rel_local_frame;
+        void myb_rel_global_to_local(const myb_rel_local_frame* frame, const double x[3],
+                                     double out[3]);
+        void myb_rel_local_to_global(const myb_rel_local_frame* frame, const double X[3],
+                                     double out[3]);
+        double myb_rel_local_time_shift(const myb_rel_local_frame* frame, const double x[3]);
+        double myb_rel_proper_time_rate(double c, double v2, double potential);
+enum {
+  MYB_PN_1 = 1,
+  MYB_PN_2 = 2,
+  MYB_PN_25 = 4,
+  MYB_PN_3 = 8,
+  MYB_PN_35 = 16,
+  MYB_PN_SO = 32,
+  MYB_PN_SS = 64,
+  MYB_PN_ALL = 127,
+  MYB_PN_4 = 128,
+  MYB_PN_4RR = 256,
+  MYB_PN_SO25 = 512,
+  MYB_PN_SO35 = 1024,
+  MYB_PN_SORR = 2048
+};
+typedef struct myb_pn_binary {
+  double gm1;
+  double gm2;
+  double c;
+  unsigned orders;
+  double r0;
+  double kappa1;
+  double kappa2;
+} myb_pn_binary;
+                      myb_status myb_pn_binary_evaluate(const myb_pn_binary* binary,
+                                                        const double x[3], const double v[3],
+                                                        const double chi1[3],
+                                                        const double chi2[3], double a[3],
+                                                        double dchi1[3], double dchi2[3]);
+                      myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c,
+                                                            unsigned orders, const double x[3],
+                                                            const double v[3], double a[3]);
+        double myb_peters_period_derivative(double gm1, double gm2, double c, double period,
+                                            double e);
 enum {
   MYB_ENV_MAX_BODIES = 32,
   MYB_ENV_MAX_SCALES = 4,
@@ -1881,6 +1796,253 @@ typedef struct myb_empirical_term {
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);
+typedef enum myb_contact_shape {
+  MYB_CONTACT_PLANE = 0,
+  MYB_CONTACT_ELLIPSOID = 1,
+  MYB_CONTACT_MESH = 2
+} myb_contact_shape;
+typedef struct myb_contact_surface {
+  myb_contact_shape shape;
+  double point[3];
+  double normal[3];
+  double radii[3];
+  const myb_polyhedron* mesh;
+} myb_contact_surface;
+                      myb_status myb_contact_surface_nearest(const myb_contact_surface* surface,
+                                                             const double position[3],
+                                                             double point[3], double normal[3],
+                                                             double* height);
+typedef struct myb_contact_law {
+  double stiffness;
+  double exponent;
+  double damping;
+  double friction;
+  double slip;
+} myb_contact_law;
+typedef struct myb_contact_point {
+  double offset[3];
+  double radius;
+} myb_contact_point;
+typedef struct myb_contact_result {
+  double force[3];
+  double torque[3];
+  double energy;
+  double gap;
+  size_t touching;
+} myb_contact_result;
+                      myb_status myb_contact_force(const myb_contact_surface* surface,
+                                                   const myb_contact_law* law,
+                                                   const myb_contact_point* points, size_t count,
+                                                   const double x[3], const double v[3],
+                                                   const double attitude[9], const double omega[3],
+                                                   myb_contact_result* result);
+                      myb_status myb_contact_restitution(double damping, double speed,
+                                                         double* restitution);
+                      myb_status myb_contact_damping(double restitution, double speed,
+                                                     double* damping);
+typedef struct myb_contact_term {
+  myb_env* env;
+  size_t body;
+  myb_contact_surface surface;
+  myb_contact_law law;
+  double radius;
+} myb_contact_term;
+                      myb_status myb_term_contact(void* term, double t, const double x[3],
+                                                  const double v[3], double a[3]);
+        double myb_event_contact(void* term, double t, const double* y);
+ void myb_cr3bp_acceleration(double mu, const double x[3], const double v[3], double a[3]);
+        void myb_cr3bp_jacobian(double mu, const double x[3], double dadx[9], double dadv[9]);
+        double myb_cr3bp_jacobi(double mu, const double y[6]);
+                      myb_status myb_cr3bp_term(void* mu, double t, const double x[3],
+                                                const double v[3], double a[3]);
+                      myb_status myb_cr3bp_term_jacobian(void* mu, double t, const double x[3],
+                                                         const double v[3], double dadx[9],
+                                                         double dadv[9]);
+                      myb_status myb_cr3bp_lagrange(double mu, double points[5][3]);
+typedef enum myb_cr3bp_symmetry {
+  MYB_CR3BP_SYMMETRY_XZ = 1,
+  MYB_CR3BP_SYMMETRY_X = 2
+} myb_cr3bp_symmetry;
+typedef struct myb_cr3bp_correction {
+  myb_cr3bp_symmetry symmetry;
+  int fixed;
+  int crossing;
+  double tolerance;
+  int max_iterations;
+} myb_cr3bp_correction;
+                      myb_status myb_cr3bp_correct(double mu,
+                                                   const myb_cr3bp_correction* correction,
+                                                   double y0[6], double* period);
+                      myb_status myb_cr3bp_monodromy(double mu, const double y0[6], double period,
+                                                     double monodromy[36]);
+                      myb_status myb_cr3bp_stability(const double monodromy[36], double re[6],
+                                                     double im[6], double* index);
+                      myb_status myb_cr3bp_manifold(double mu, const double y0[6], double period,
+                                                    double phase, int unstable, int sign,
+                                                    double epsilon, double y[6]);
+                      myb_status myb_cr3bp_richardson(double mu, int point, double az, int branch,
+                                                      double y0[6], double* period);
+                      myb_status myb_cr3bp_from_ephemeris(const double body1[6],
+                                                          const double body2[6], double gm1,
+                                                          double gm2, const double state[6],
+                                                          double rotating[6]);
+                      myb_status myb_cr3bp_to_ephemeris(const double body1[6],
+                                                        const double body2[6], double gm1,
+                                                        double gm2, const double rotating[6],
+                                                        double state[6]);
+enum { MYB_CR3BP_MAX_PATCHES = 10 };
+typedef struct myb_cr3bp_orbit {
+  size_t patches;
+  double states[6 * MYB_CR3BP_MAX_PATCHES];
+  double period;
+  int has_tangent;
+  double tangent[6 * MYB_CR3BP_MAX_PATCHES + 1];
+} myb_cr3bp_orbit;
+                      myb_status myb_cr3bp_orbit_from_state(double mu, const double y0[6],
+                                                            double period, size_t patches,
+                                                            myb_cr3bp_orbit* orbit);
+                      myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_orbit* orbit,
+                                                         double tolerance, int max_iterations);
+                      myb_status myb_cr3bp_orbit_continue(double mu, myb_cr3bp_orbit* orbit,
+                                                          double step, double tolerance,
+                                                          int max_iterations);
+enum { MYB_CR3BP_MAX_CIRCLE = 35 };
+typedef struct myb_cr3bp_torus {
+  size_t points;
+  double states[6 * MYB_CR3BP_MAX_CIRCLE];
+  double period;
+  double rotation;
+  double defect;
+  int has_tangent;
+  double tangent[6 * MYB_CR3BP_MAX_CIRCLE + 2];
+} myb_cr3bp_torus;
+typedef enum myb_cr3bp_torus_family {
+  MYB_CR3BP_TORUS_JACOBI = 0,
+  MYB_CR3BP_TORUS_PERIOD = 1,
+  MYB_CR3BP_TORUS_ROTATION = 2
+} myb_cr3bp_torus_family;
+                      myb_status myb_cr3bp_torus_from_orbit(double mu, const double y0[6],
+                                                            double period, size_t points,
+                                                            int pair, double size,
+                                                            myb_cr3bp_torus* torus);
+                      myb_status myb_cr3bp_torus_continue(double mu, myb_cr3bp_torus* torus,
+                                                          myb_cr3bp_torus_family family,
+                                                          double step, double tolerance,
+                                                          int max_iterations);
+        void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[6]);
+enum { MYB_CR3BP_MAX_SPECTRUM = 6 * MYB_CR3BP_MAX_CIRCLE };
+typedef struct myb_cr3bp_torus_spectrum {
+  size_t count;
+  double re[MYB_CR3BP_MAX_SPECTRUM];
+  double im[MYB_CR3BP_MAX_SPECTRUM];
+  size_t trivial;
+  size_t elliptic;
+  size_t hyperbolic;
+  size_t unresolved;
+  double index;
+  double unstable;
+  double stable;
+  double unstable_direction[6 * MYB_CR3BP_MAX_CIRCLE];
+  double stable_direction[6 * MYB_CR3BP_MAX_CIRCLE];
+  double residual;
+  double tail;
+} myb_cr3bp_torus_spectrum;
+                      myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus,
+                                                           double tolerance,
+                                                           myb_cr3bp_torus_spectrum* spectrum);
+                      myb_status myb_cr3bp_torus_manifold(const myb_cr3bp_torus* torus,
+                                                          const myb_cr3bp_torus_spectrum* spectrum,
+                                                          double angle, int unstable, int sign,
+                                                          double epsilon, double y[6]);
+typedef struct myb_cr3bp_section {
+  int axis;
+  double value;
+  int direction;
+} myb_cr3bp_section;
+                      myb_status myb_cr3bp_propagate(double mu, const double y0[6], double duration,
+                                                     const myb_cr3bp_section* section, double y[6],
+                                                     double* elapsed, int* crossed);
+typedef struct myb_pool myb_pool;
+                      myb_status myb_pool_create(int threads, const myb_allocator* allocator,
+                                                 myb_pool** pool);
+        void myb_pool_destroy(myb_pool* pool);
+        int myb_pool_threads(const myb_pool* pool);
+typedef struct myb_nbody myb_nbody;
+typedef enum myb_interaction {
+  MYB_INTERACTION_NONE = 0,
+  MYB_INTERACTION_NEWTON = 1,
+  MYB_INTERACTION_EIH = 2
+} myb_interaction;
+                      myb_status myb_nbody_create(size_t massive, size_t test, const double* gm,
+                                                  const myb_allocator* allocator,
+                                                  myb_nbody** nbody);
+        void myb_nbody_destroy(myb_nbody* nbody);
+        size_t myb_nbody_count(const myb_nbody* nbody);
+        size_t myb_nbody_massive(const myb_nbody* nbody);
+        double myb_nbody_gm(const myb_nbody* nbody, size_t body);
+        void myb_nbody_set_pool(myb_nbody* nbody, myb_pool* pool);
+                      myb_status myb_nbody_set_interaction(myb_nbody* nbody, size_t receiver,
+                                                           size_t source, myb_interaction level);
+                      myb_status myb_nbody_set_relativity(myb_nbody* nbody, const myb_ppn* ppn);
+                      myb_status myb_nbody_acceleration(void* nbody, double t, const double* x,
+                                                        double* a);
+                      myb_status myb_nbody_acceleration_xv(void* nbody, double t, const double* x,
+                                                           const double* v, double* a);
+typedef struct myb_nbody_invariants {
+  myb_dd energy;
+  double momentum[3];
+  double angular_momentum[3];
+  double center[3];
+  double center_velocity[3];
+} myb_nbody_invariants;
+                      myb_status myb_nbody_invariants_of(const myb_nbody* nbody, const double* x,
+                                                         const double* v,
+                                                         myb_nbody_invariants* invariants);
+typedef struct myb_nbody_pn_invariants {
+  myb_dd energy;
+  double momentum[3];
+  double center[3];
+  double center_velocity[3];
+} myb_nbody_pn_invariants;
+                      myb_status myb_nbody_pn_invariants_of(const myb_nbody* nbody,
+                                                            const double* x, const double* v,
+                                                            myb_nbody_pn_invariants* invariants);
+enum { MYB_NBODY_FMM_MAX_ORDER = 20 };
+                      myb_status myb_nbody_set_approximation(myb_nbody* nbody, int order,
+                                                             double theta);
+        int myb_nbody_approximation(const myb_nbody* nbody, double* theta);
+typedef enum myb_wh_scheme {
+  MYB_WH_DKD = 0,
+  MYB_WH_SABA2 = 1,
+  MYB_WH_SABA3 = 2,
+  MYB_WH_SABA4 = 3,
+  MYB_WH_SBAB1 = 4,
+  MYB_WH_SBAB2 = 5,
+  MYB_WH_SBAB3 = 6,
+  MYB_WH_SBAB4 = 7
+} myb_wh_scheme;
+typedef struct myb_wh_options {
+  double h;
+  myb_wh_scheme scheme;
+  int corrector;
+} myb_wh_options;
+typedef struct myb_wh_stats {
+  int64_t steps;
+  int64_t evaluations;
+  int64_t drifts;
+} myb_wh_stats;
+typedef struct myb_wh myb_wh;
+                      myb_status myb_wh_create(myb_nbody* system, const myb_wh_options* options,
+                                               const myb_allocator* allocator, myb_wh** wh);
+        void myb_wh_destroy(myb_wh* wh);
+                      myb_status myb_wh_start(myb_wh* wh, double t0, const double* x,
+                                              const double* v);
+                      myb_status myb_wh_step(myb_wh* wh);
+                      myb_status myb_wh_integrate(myb_wh* wh, double t_end);
+        double myb_wh_time(const myb_wh* wh);
+                      myb_status myb_wh_state(myb_wh* wh, double* x, double* v);
+                      myb_status myb_wh_dense(myb_wh* wh, double t, double* x, double* v);
+        myb_wh_stats myb_wh_statistics(const myb_wh* wh);
 typedef struct myb_site_tides myb_site_tides;
                       myb_status myb_site_tides_create(const myb_kpool* pool, const char* prefix,
                                                        const myb_allocator* allocator,
@@ -1909,6 +2071,14 @@ typedef struct myb_ocean_loading myb_ocean_loading;
         void myb_ocean_loading_destroy(myb_ocean_loading* loading);
         void myb_ocean_loading_at(const myb_site_tides* tides, const myb_ocean_loading* loading,
                                   myb_time t, double dynamical, double displacement[3]);
+                      myb_status myb_site_atmosphere_load(const char* text, size_t size,
+                                                          const char* site,
+                                                          double coefficients[12],
+                                                          myb_diag* diag);
+                      myb_status myb_site_atmosphere_load_file(const char* path,
+                                                               const char* site,
+                                                               double coefficients[12],
+                                                               myb_diag* diag);
 enum { MYB_SITE_GRID_MAX_VALUES = 12 };
 typedef struct myb_site_grid myb_site_grid;
                       myb_status myb_site_grid_load(const char* text, size_t size,
@@ -1921,6 +2091,12 @@ typedef struct myb_site_grid myb_site_grid;
         size_t myb_site_grid_values(const myb_site_grid* grid);
                       myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude,
                                                   double latitude, double* values);
+                      myb_status myb_site_atmosphere_grid_load(const char* text, size_t size,
+                                                               const myb_allocator* allocator,
+                                                               myb_site_grid** grid,
+                                                               myb_diag* diag);
+                      myb_status myb_site_atmosphere_grid_load_file(
+    const char* path, const myb_allocator* allocator, myb_site_grid** grid, myb_diag* diag);
 typedef struct myb_site_loads {
   const myb_ocean_loading* ocean;
   double atmosphere[12];
@@ -1960,6 +2136,10 @@ typedef struct myb_site_input {
                       myb_status myb_force_yorp(const myb_polyhedron* shape, double pressure,
                                                 double sun_colatitude, double theta,
                                                 int shadows, int phases, double torque[3]);
+                      myb_status myb_force_radiation_mesh_lagged(
+    const myb_polyhedron* shape, const myb_plate* surface, double pressure, const double u[3],
+    const double axis[3], double theta, int phases, int shadows, double force[3],
+    double torque[3]);
 typedef struct myb_gas {
   double temperature;
   double molar_mass;
@@ -1974,6 +2154,31 @@ typedef struct myb_gas {
         double myb_gas_knudsen(double density, double molar_mass, double diameter,
                                double length);
         double myb_gas_bridge(double knudsen);
+typedef struct myb_air {
+  double temperature;
+  double molar_mass;
+  double heat_ratio;
+} myb_air;
+typedef myb_status (*myb_air_function)(void* context, myb_time t, const double r[3],
+                                       myb_air* air);
+        double myb_air_heat_ratio(double monatomic, double diatomic);
+                      myb_status myb_newtonian_cp_max(double mach, double heat_ratio,
+                                                      double* cp_max);
+                      myb_status myb_force_newtonian_plates(double density, const myb_air* air,
+                                                            double mass, const myb_plate* plates,
+                                                            size_t count, const double v[3],
+                                                            double a[3]);
+                      myb_status myb_force_newtonian_mesh(const myb_polyhedron* shape,
+                                                          double density, const myb_air* air,
+                                                          const double v[3], int shadows,
+                                                          double force[3], double torque[3]);
+typedef struct myb_continuum {
+  double heat_ratio;
+  myb_air_function air;
+  void* air_context;
+  const myb_polyhedron* shape;
+  int shadows;
+} myb_continuum;
 typedef myb_status (*myb_attitude_function)(void* context, double t, const double x[3],
                                             const double v[3], double m[9]);
                       myb_status myb_attitude_fixed(void* matrix, double t, const double x[3],
@@ -2040,6 +2245,7 @@ typedef struct myb_surface_drag_term {
   double molecule;
   double continuum_cd;
   double continuum_area;
+  const myb_continuum* continuum;
 } myb_surface_drag_term;
                       myb_status myb_term_surface_drag(void* term, double t, const double x[3],
                                                        const double v[3], double a[3]);
@@ -2063,6 +2269,29 @@ typedef struct myb_recoil_term {
                       myb_status myb_term_recoil_jacobian(void* term, double t,
                                                           const double x[3], const double v[3],
                                                           double dadx[9], double dadv[9]);
+                      myb_status myb_heating_sutton_graves(double k, double density,
+                                                           double nose_radius, double speed,
+                                                           double* q);
+typedef struct myb_ablation {
+  myb_env* env;
+  size_t body;
+  myb_density_function density;
+  void* density_context;
+  myb_wind_function wind;
+  void* wind_context;
+  double k;
+  double nose_radius;
+  double area;
+  double heat;
+  myb_force_model* field;
+  double mass;
+} myb_ablation;
+                      myb_status myb_ablation_rate(const myb_ablation* ablation, double t,
+                                                   const double x[3], const double v[3],
+                                                   double* heating, double* rate);
+                      myb_status myb_ablation_rhs(void* ablation, double t, const double* y,
+                                                  double* dydt);
+        double myb_ablation_mass(void* ablation, double t);
 enum { MYB_MEASURE_MAX = 6, MYB_FIT_MAX_BIASES = 32 };
 typedef myb_status (*myb_measure_function)(void* context, double t, const double y[6],
                                            double* values, double* partials);
@@ -2116,6 +2345,7 @@ typedef struct myb_offset_measure {
   myb_attitude_function attitude;
   void* attitude_context;
   double offset[3];
+  double gm;
 } myb_offset_measure;
                       myb_status myb_measure_offset(void* offset, double t, const double y[6],
                                                     double* values, double* partials);
@@ -2249,6 +2479,10 @@ typedef struct myb_shape_event {
                                const double direction[3], double* distance, double point[3],
                                size_t* face);
         double myb_polyhedron_solid_angle(const myb_polyhedron* polyhedron, const double r[3]);
+                      myb_status myb_polyhedron_nearest(const myb_polyhedron* polyhedron,
+                                                        const double position[3],
+                                                        double point[3], double normal[3],
+                                                        double* distance, size_t* face);
                       myb_status myb_view_body(myb_env* env, double t, size_t body,
                                                const double y[6], double c, int aberration,
                                                double position[3], myb_orientation* orientation,
@@ -2283,6 +2517,21 @@ typedef struct myb_iod_solution {
                                                const double sight[3][3],
                                                myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS],
                                                size_t* count);
+                      myb_status myb_iod_laplace(double mu, const double t[3],
+                                                 const double observer[3][3],
+                                                 const double sight[3][3],
+                                                 myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS],
+                                                 size_t* count);
+                      myb_status myb_iod_double_r(double mu, const double t[3],
+                                                  const double observer[3][3],
+                                                  const double sight[3][3],
+                                                  const double distance[2],
+                                                  myb_iod_solution* solution);
+                      myb_status myb_iod_gooding(double mu, const double t[3],
+                                                 const double observer[3][3],
+                                                 const double sight[3][3], const double range[2],
+                                                 int revolutions, int branch,
+                                                 myb_iod_solution* solution);
 typedef struct myb_pv {
   double r[3];
   double v[3];
@@ -2355,6 +2604,85 @@ typedef struct myb_lambert_solution {
                                              double tof, int retrograde, int max_revolutions,
                                              myb_lambert_solution* solutions, size_t capacity,
                                              size_t* count);
+typedef struct myb_variational myb_variational;
+typedef struct myb_variational_options {
+  double epsilon;
+  double h_max;
+  int64_t max_steps;
+} myb_variational_options;
+                      myb_status myb_variational_create(myb_force_model* model,
+                                                        const myb_variational_options* options,
+                                                        const myb_allocator* allocator,
+                                                        myb_variational** variational);
+        void myb_variational_destroy(myb_variational* variational);
+                      myb_status myb_variational_start(myb_variational* variational, double t0,
+                                                       const double y0[6]);
+                      myb_status myb_variational_step(myb_variational* variational,
+                                                      double t_limit);
+                      myb_status myb_variational_integrate(myb_variational* variational,
+                                                           double t_end);
+        double myb_variational_time(const myb_variational* variational);
+        void myb_variational_get(const myb_variational* variational, double y[6], double phi[36],
+                                 double* sensitivity);
+                      myb_status myb_variational_dense(myb_variational* variational, double t,
+                                                       double y[6], double phi[36],
+                                                       double* sensitivity);
+        void myb_covariance_transform(size_t n, const double* m, const double* p, double* out);
+                      myb_status myb_covariance_rtn(const double r[3], const double v[3],
+                                                    const double p[36], double out[36]);
+typedef struct myb_rng {
+  uint64_t s[4];
+  double spare;
+  int has_spare;
+} myb_rng;
+        void myb_rng_seed(myb_rng* rng, uint64_t seed);
+        uint64_t myb_rng_next(myb_rng* rng);
+        double myb_rng_uniform(myb_rng* rng);
+        double myb_rng_normal(myb_rng* rng);
+        void myb_rng_gaussian(myb_rng* rng, size_t n, const double* mean, const double* l,
+                              double* out);
+                      myb_status myb_sample_statistics(size_t count, size_t n,
+                                                       const double* samples, double* mean,
+                                                       double* covariance);
+ double myb_meteoroid_flux(double mass);
+typedef myb_status (*myb_meteoroid_speed_function)(void* context, myb_rng* rng, double t,
+                                                   double* speed);
+typedef myb_status (*myb_meteoroid_direction_function)(void* context, myb_rng* rng, double t,
+                                                       double direction[3]);
+typedef struct myb_meteoroid_options {
+  double cross_section;
+  double mass_min;
+  double mass_max;
+  double distance;
+  double exponent;
+  double speed;
+  myb_meteoroid_speed_function speed_function;
+  void* speed_context;
+  myb_meteoroid_direction_function direction_function;
+  void* direction_context;
+  double enhancement;
+  double object_mass;
+} myb_meteoroid_options;
+typedef struct myb_meteoroid_impact {
+  double t;
+  double mass;
+  double speed;
+  double direction[3];
+  double impulse[3];
+  double dv[3];
+} myb_meteoroid_impact;
+                      myb_status myb_meteoroid_rate(const myb_meteoroid_options* options,
+                                                    double* rate);
+                      myb_status myb_meteoroid_mass(const myb_meteoroid_options* options, double u,
+                                                    double* mass);
+                      myb_status myb_meteoroid_next(const myb_meteoroid_options* options,
+                                                    myb_rng* rng, double t,
+                                                    myb_meteoroid_impact* impact);
+                      myb_status myb_meteoroid_propagate(myb_orbit* orbit,
+                                                         const myb_meteoroid_options* options,
+                                                         myb_rng* rng, double t_end,
+                                                         myb_meteoroid_impact* impacts,
+                                                         size_t capacity, size_t* count);
 typedef struct myb_light_body {
   double gm;
   myb_state_function state;
@@ -2413,6 +2741,10 @@ typedef enum myb_indirect_goal {
   MYB_INDIRECT_FUEL = 0,
   MYB_INDIRECT_TIME = 1
 } myb_indirect_goal;
+typedef enum myb_indirect_arrival {
+  MYB_INDIRECT_RENDEZVOUS = 0,
+  MYB_INDIRECT_ORBIT = 1
+} myb_indirect_arrival;
 typedef struct myb_indirect_problem {
   double mu;
   myb_force_model* field;
@@ -2427,6 +2759,8 @@ typedef struct myb_indirect_problem {
   double smoothing;
   double tolerance;
   int tries;
+  myb_indirect_arrival arrival;
+  double phase;
 } myb_indirect_problem;
 typedef struct myb_indirect_solution {
   double costate[8];
@@ -2436,6 +2770,7 @@ typedef struct myb_indirect_solution {
   double residual;
   int tries;
   int stages;
+  double phase;
 } myb_indirect_solution;
                       myb_status myb_indirect_solve(const myb_indirect_problem* problem,
                                                     const double* guess,
@@ -2447,6 +2782,7 @@ typedef struct myb_indirect_point {
   double throttle;
   double switching;
   double hamiltonian;
+  double costate[7];
 } myb_indirect_point;
                       myb_status myb_indirect_sample(const myb_indirect_problem* problem,
                                                      const myb_indirect_solution* solution,
@@ -2470,6 +2806,7 @@ typedef struct myb_nlp_options {
   double optimality;
   int max_outer;
   int max_inner;
+  double weight;
 } myb_nlp_options;
 typedef struct myb_nlp_result {
   double objective;
@@ -2495,6 +2832,7 @@ typedef struct myb_sims_flanagan {
   double t1;
   double target[6];
   size_t segments;
+  myb_force_model* field;
 } myb_sims_flanagan;
                       myb_status myb_sims_flanagan_mismatch(const myb_sims_flanagan* leg,
                                                             const double* throttles,
@@ -2510,6 +2848,48 @@ typedef struct myb_sims_flanagan_result {
                                                          double* throttles,
                                                          const myb_allocator* allocator,
                                                          myb_sims_flanagan_result* result);
+enum { MYB_CHAIN_MAX_LEGS = 8 };
+typedef struct myb_chain_body {
+  myb_state_function state;
+  void* context;
+  double gm;
+  double periapsis;
+} myb_chain_body;
+typedef struct myb_chain {
+  double mu;
+  myb_force_model* field;
+  myb_time epoch;
+  double thrust;
+  double exhaust;
+  double mass0;
+  size_t legs;
+  size_t segments[MYB_CHAIN_MAX_LEGS];
+  myb_chain_body bodies[MYB_CHAIN_MAX_LEGS + 1];
+  double departure[2];
+  double flight[MYB_CHAIN_MAX_LEGS][2];
+  double launch;
+  double arrival;
+} myb_chain;
+                      myb_status myb_chain_size(const myb_chain* chain, size_t* unknowns,
+                                                size_t* equalities, size_t* inequalities);
+                      myb_status myb_chain_guess(const myb_chain* chain, double* x);
+                      myb_status myb_chain_evaluate(const myb_chain* chain, const double* x,
+                                                    double* propellant, double* constraints,
+                                                    double* gradient, double* jacobian,
+                                                    const myb_allocator* allocator);
+typedef struct myb_chain_result {
+  double mass[MYB_CHAIN_MAX_LEGS + 1];
+  double excess[MYB_CHAIN_MAX_LEGS + 1][2];
+  double turn[MYB_CHAIN_MAX_LEGS + 1];
+  double periapsis[MYB_CHAIN_MAX_LEGS + 1];
+  double mismatch[MYB_CHAIN_MAX_LEGS][6];
+  myb_nlp_result first;
+  myb_nlp_result nlp;
+} myb_chain_result;
+                      myb_status myb_chain_solve(const myb_chain* chain,
+                                                 const myb_nlp_options* options, double* x,
+                                                 const myb_allocator* allocator,
+                                                 myb_chain_result* result);
 typedef myb_status (*myb_perturbation_function)(void* context, double t, const double x[3],
                                                 const double v[3], double a[3]);
 typedef struct myb_regular_problem {
@@ -2569,7 +2949,8 @@ enum {
   MYB_SYSTEM_MAX_DISTORTIONS = 32,
   MYB_SYSTEM_MAX_PN_PAIRS = 16,
   MYB_SYSTEM_MAX_ACTIONS = 64,
-  MYB_SYSTEM_MAX_DRAGS = 64
+  MYB_SYSTEM_MAX_DRAGS = 64,
+  MYB_SYSTEM_MAX_CONTACTS = 16
 };
                       myb_status myb_system_create(size_t bodies, const double* gm,
                                                    const myb_allocator* allocator,
@@ -2648,11 +3029,23 @@ typedef struct myb_system_light {
   double c;
   double mass;
   int shadows;
+  double theta;
+  double spin_axis[3];
+  int phases;
 } myb_system_light;
                       myb_status myb_system_light_action(void* light, double t,
                                                          const myb_system_view* view,
                                                          double acceleration[3],
                                                          double torque[3]);
+typedef struct myb_system_contact {
+  myb_contact_surface surface;
+  myb_contact_law law;
+  const myb_contact_point* points;
+  size_t point_count;
+} myb_system_contact;
+                      myb_status myb_system_add_contact(myb_system* system, size_t body,
+                                                        size_t ground,
+                                                        const myb_system_contact* contact);
         size_t myb_system_coordinates(const myb_system* system);
                       myb_status myb_system_pack_rotation(const myb_system* system, size_t body,
                                                           const double q[4],
@@ -2676,6 +3069,12 @@ typedef struct myb_system_light {
                                                          const double* v, double* a);
                       myb_status myb_system_inertia(myb_system* system, size_t body, double t,
                                                     const double* y, double inertia[9]);
+                      myb_status myb_system_partials(myb_system* system,
+                                                     const myb_ias15_options* options, double t0,
+                                                     const double* y0, double t1,
+                                                     const size_t* bodies, size_t count,
+                                                     double* y1, double* phi,
+                                                     double* sensitivity);
                       myb_status myb_system_set_radius(myb_system* system, size_t body,
                                                        double radius);
         double myb_system_radius(const myb_system* system, size_t body);
@@ -2698,6 +3097,7 @@ typedef struct myb_system_event {
 typedef struct myb_system_merger {
   double energy;
   double angular_momentum[3];
+  double spin[3];
 } myb_system_merger;
                       myb_status myb_system_merge(myb_system* system, myb_ias15* integrator,
                                                   size_t a, size_t b,
@@ -2815,46 +3215,6 @@ typedef struct myb_shoot_options {
                                            size_t m, double* u,
                                            const myb_shoot_options* options, double* work,
                                            int* iterations, double* residual);
-typedef struct myb_variational myb_variational;
-typedef struct myb_variational_options {
-  double epsilon;
-  double h_max;
-  int64_t max_steps;
-} myb_variational_options;
-                      myb_status myb_variational_create(myb_force_model* model,
-                                                        const myb_variational_options* options,
-                                                        const myb_allocator* allocator,
-                                                        myb_variational** variational);
-        void myb_variational_destroy(myb_variational* variational);
-                      myb_status myb_variational_start(myb_variational* variational, double t0,
-                                                       const double y0[6]);
-                      myb_status myb_variational_step(myb_variational* variational,
-                                                      double t_limit);
-                      myb_status myb_variational_integrate(myb_variational* variational,
-                                                           double t_end);
-        double myb_variational_time(const myb_variational* variational);
-        void myb_variational_get(const myb_variational* variational, double y[6], double phi[36],
-                                 double* sensitivity);
-                      myb_status myb_variational_dense(myb_variational* variational, double t,
-                                                       double y[6], double phi[36],
-                                                       double* sensitivity);
-        void myb_covariance_transform(size_t n, const double* m, const double* p, double* out);
-                      myb_status myb_covariance_rtn(const double r[3], const double v[3],
-                                                    const double p[36], double out[36]);
-typedef struct myb_rng {
-  uint64_t s[4];
-  double spare;
-  int has_spare;
-} myb_rng;
-        void myb_rng_seed(myb_rng* rng, uint64_t seed);
-        uint64_t myb_rng_next(myb_rng* rng);
-        double myb_rng_uniform(myb_rng* rng);
-        double myb_rng_normal(myb_rng* rng);
-        void myb_rng_gaussian(myb_rng* rng, size_t n, const double* mean, const double* l,
-                              double* out);
-                      myb_status myb_sample_statistics(size_t count, size_t n,
-                                                       const double* samples, double* mean,
-                                                       double* covariance);
 typedef struct myb_space_weather myb_space_weather;
                       myb_status myb_space_weather_load(const char* text, size_t size,
                                                         const myb_allocator* allocator,

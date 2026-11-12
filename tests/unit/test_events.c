@@ -238,6 +238,48 @@ static void test_breaks_dop853(void) {
   MT_CHECK(spread[1] < spread[0] / 1000.0);
 }
 
+/* The same edges with RKN12: the light without `moving` and the central body depend on the
+ * place alone. */
+static void test_breaks_rkn12(void) {
+  const double span = 2.0 * 86400.0;
+  double reference[6];
+  double spread[2] = {0.0, 0.0};
+  for (int with = 1; with >= 0; --with) {
+    world w;
+    world_init(&w, 1, with);
+    if (with) {
+      run(&w, 1e-13, span, reference, NULL, NULL); /* IAS15 */
+    }
+    myb_force_model_set_position_only(w.model, 0, 1);
+    myb_force_model_set_position_only(w.model, 1, 1);
+    static const double tolerances[3] = {1e-11, 1e-12, 1e-13};
+    for (int k = 0; k < 3; ++k) {
+      const myb_orbit_options options = {.integrator = MYB_ORBIT_RKN12, .rtol = tolerances[k],
+                                         .atol = 1e-3 * tolerances[k]};
+      myb_orbit* orbit = NULL;
+      double y[6];
+      MT_CHECK(myb_orbit_create(w.model, &options, NULL, &orbit) == MYB_OK);
+      MT_CHECK(myb_orbit_start(orbit, 0.0, w.y0, span) == MYB_OK);
+      MT_CHECK(myb_orbit_state(orbit, span, y) == MYB_OK);
+      const double d = distance6(y, reference);
+      spread[with] = fmax(spread[with], d);
+      if (with && k == 2) {
+        printf("RKN12 through the same shadow: %lld steps, %lld breaks, %.2e m from IAS15\n",
+               (long long)myb_orbit_steps(orbit), (long long)myb_orbit_breaks(orbit), d);
+        MT_CHECK(myb_orbit_breaks(orbit) >= 48 && myb_orbit_breaks(orbit) <= 56);
+      }
+      myb_orbit_destroy(orbit);
+    }
+    world_destroy(&w);
+  }
+  printf("  over its tolerances: %.2e m without breaks, %.2e m with\n", spread[0], spread[1]);
+  /* through the penumbrae the three integrators agree to a millimetre (RKN12 at 1e-13 and
+   * DOP853 at 1e-14 to 0.3 mm, each 1 mm from IAS15); a method of order 12 suffers less from
+   * the edges without the breaks than DOP853 does, but still a hundred times more */
+  MT_CHECK(spread[1] < 3e-3);
+  MT_CHECK(spread[1] < spread[0] / 30.0);
+}
+
 /* Phi and the sensitivity to cr across the breaks against differences of propagations. */
 static void test_partials(void) {
   world w;
@@ -995,6 +1037,7 @@ int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_breaks();
   test_breaks_dop853();
+  test_breaks_rkn12();
   test_partials();
   test_kepler_events();
   test_world_events();

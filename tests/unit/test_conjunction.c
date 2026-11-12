@@ -6,7 +6,12 @@
  *  - the probability: a centred round Gaussian (closed form), an offset round one (the series
  *    of Rice, which is Chan's), unequal sigmas against a sum over a fine grid, far tails, the
  *    plane of an encounter from the vectors, the largest probability over the size of the
- *    covariance. */
+ *    covariance;
+ *  - long encounters: a straight line with a certain velocity enters the sphere once, and the
+ *    rate integrated over the time is then the probability of the short encounter exactly; a
+ *    slow encounter with an uncertain velocity against a Monte Carlo count of 2e6 lines (and
+ *    how far the short encounter is there); two orbits crossing fast against their short
+ *    encounter. */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -365,10 +370,236 @@ static void test_carried(void) {
   myb_force_model_destroy(model);
 }
 
+/* Straight relative motion: the position X + V t with (X, V) one Gaussian. */
+typedef struct line_motion {
+  double mean[6];      /* of X and V */
+  double covariance[36];
+} line_motion;
+
+static myb_status line_gaussian(void* context, double t, double mean[6], double covariance[36]) {
+  const line_motion* m = context;
+  for (int i = 0; i < 3; ++i) {
+    mean[i] = m->mean[i] + t * m->mean[3 + i];
+    mean[3 + i] = m->mean[3 + i];
+  }
+  /* (X + V t, V) = M (X, V), M = [[I, t I], [0, I]] */
+  const double* p = m->covariance;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      double v = p[6 * i + j];
+      if (i < 3) {
+        v += t * p[6 * (i + 3) + j];
+      }
+      if (j < 3) {
+        v += t * p[6 * i + j + 3];
+      }
+      if (i < 3 && j < 3) {
+        v += t * t * p[6 * (i + 3) + j + 3];
+      }
+      covariance[6 * i + j] = v;
+    }
+  }
+  return MYB_OK;
+}
+
+static void test_long_line(void) {
+  /* a certain velocity, a constant covariance of the position */
+  line_motion m = {.mean = {-700.0, 35.0, -12.0, 7000.0, 1000.0, 500.0}};
+  const double s[3] = {40.0, 25.0, 60.0};
+  for (int i = 0; i < 3; ++i) {
+    m.covariance[7 * i] = s[i] * s[i];
+  }
+  m.covariance[1] = m.covariance[6] = 0.4 * 40.0 * 25.0;
+  m.covariance[2] = m.covariance[12] = -0.2 * 40.0 * 60.0;
+  const double radius = 20.0;
+  double probability = 0.0;
+  double error = 0.0;
+  MT_CHECK(myb_collision_probability_long(line_gaussian, &m, -0.4, 0.6, 0.004, radius,
+                                          &probability, &error) == MYB_OK);
+  /* the short encounter at the closest approach of the mean motion */
+  const double* x = m.mean;
+  const double* v = m.mean + 3;
+  const double tca = -(x[0] * v[0] + x[1] * v[1] + x[2] * v[2]) / (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  double mean[6];
+  double cov[36];
+  MT_CHECK(line_gaussian(&m, tca, mean, cov) == MYB_OK);
+  double position_cov[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      position_cov[3 * i + j] = cov[6 * i + j];
+    }
+  }
+  myb_encounter e;
+  double short_probability = 0.0;
+  MT_CHECK(myb_encounter_plane(mean, mean + 3, position_cov, radius, &e) == MYB_OK);
+  MT_CHECK(myb_collision_probability(&e, &short_probability) == MYB_OK);
+  printf("a straight line with a certain velocity: the rate integrated %.10e, the short "
+         "encounter %.10e (%.1e apart; the rule's own estimate %.1e)\n",
+         probability, short_probability, fabs(probability / short_probability - 1.0), error);
+  MT_CHECK(fabs(probability / short_probability - 1.0) < 1e-9);
+  /* refused */
+  MT_CHECK(myb_collision_probability_long(line_gaussian, &m, 1.0, 0.0, 0.01, radius,
+                                          &probability, NULL) == MYB_E_DOMAIN);
+  double rate = 0.0;
+  MT_CHECK(myb_collision_rate(m.mean, m.covariance, 0.0, &rate) == MYB_E_DOMAIN);
+  line_motion flat = m;
+  flat.covariance[0] = 0.0;
+  MT_CHECK(myb_collision_rate(flat.mean, flat.covariance, radius, &rate) == MYB_E_DOMAIN);
+}
+
+/* The lower Cholesky factor of a 6 x 6 matrix. */
+static void cholesky6(const double a[36], double l[36]) {
+  memset(l, 0, 36 * sizeof *l);
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j <= i; ++j) {
+      double sum = a[6 * i + j];
+      for (int k = 0; k < j; ++k) {
+        sum -= l[6 * i + k] * l[6 * j + k];
+      }
+      l[6 * i + j] = i == j ? sqrt(sum) : sum / l[6 * j + j];
+    }
+  }
+}
+
+static double normal(myb_rng* rng) {
+  const double u1 = 1.0 - myb_rng_uniform(rng);
+  const double u2 = myb_rng_uniform(rng);
+  return sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
+}
+
+static void test_long_slow(void) {
+  line_motion m = {.mean = {150.0, -10.0, 5.0, -0.05, 0.0, 0.0}};
+  const double s[6] = {30.0, 20.0, 15.0, 0.05, 0.03, 0.02};
+  for (int i = 0; i < 6; ++i) {
+    m.covariance[7 * i] = s[i] * s[i];
+  }
+  m.covariance[3] = m.covariance[18] = 0.3 * 30.0 * 0.05;
+  const double radius = 10.0;
+  const double t1 = 6000.0;
+  double probability = 0.0;
+  double error = 0.0;
+  MT_CHECK(myb_collision_probability_long(line_gaussian, &m, 0.0, t1, 25.0, radius, &probability,
+                                          &error) == MYB_OK);
+  /* Monte Carlo: lines that come within the radius in [0, t1] (none starts inside) */
+  double l[36];
+  cholesky6(m.covariance, l);
+  myb_rng rng;
+  myb_rng_seed(&rng, 20261112);
+  const long samples = 2000000;
+  long hits = 0;
+  for (long k = 0; k < samples; ++k) {
+    double z[6];
+    for (int i = 0; i < 6; ++i) {
+      z[i] = normal(&rng);
+    }
+    double y[6];
+    for (int i = 0; i < 6; ++i) {
+      double sum = m.mean[i];
+      for (int j = 0; j <= i; ++j) {
+        sum += l[6 * i + j] * z[j];
+      }
+      y[i] = sum;
+    }
+    const double vv = y[3] * y[3] + y[4] * y[4] + y[5] * y[5];
+    double tc = -(y[0] * y[3] + y[1] * y[4] + y[2] * y[5]) / vv;
+    tc = fmin(fmax(tc, 0.0), t1);
+    const double d[3] = {y[0] + tc * y[3], y[1] + tc * y[4], y[2] + tc * y[5]};
+    hits += d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < radius * radius ? 1 : 0;
+  }
+  const double counted = (double)hits / (double)samples;
+  const double sigma = sqrt(counted * (1.0 - counted) / (double)samples);
+  /* the short encounter at the closest approach of the mean motion */
+  const double tca = -(m.mean[0] * m.mean[3] + m.mean[1] * m.mean[4]) /
+                     (m.mean[3] * m.mean[3] + m.mean[4] * m.mean[4]);
+  double mean[6];
+  double cov[36];
+  MT_CHECK(line_gaussian(&m, tca, mean, cov) == MYB_OK);
+  double position_cov[9];
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) {
+      position_cov[3 * i + j] = cov[6 * i + j];
+    }
+  }
+  myb_encounter e;
+  double short_probability = 0.0;
+  MT_CHECK(myb_encounter_plane(mean, mean + 3, position_cov, radius, &e) == MYB_OK);
+  MT_CHECK(myb_collision_probability(&e, &short_probability) == MYB_OK);
+  printf("a slow encounter (5 cm/s, as uncertain as itself): the rate integrated %.5e, Monte "
+         "Carlo of 2e6 lines %.5e +- %.1e (%.1f sigma); the short encounter %.5e\n",
+         probability, counted, sigma, fabs(probability - counted) / sigma, short_probability);
+  MT_CHECK(fabs(probability - counted) < 4.0 * sigma);
+  MT_CHECK(fabs(short_probability - counted) > 10.0 * sigma);
+}
+
+/* Two orbits crossing fast: the long encounter is the short one. */
+static void test_long_orbits(void) {
+  const double a = 7.2e6;
+  const double period = 2.0 * PI * sqrt(a * a * a / MU);
+  const double lag = 150.0 / a;
+  const myb_pv start1 = orbit(a, 0.001, 0.2, 0.3, 0.5, -0.9);
+  const myb_pv start2 = orbit(a, 0.001, 1.4, 0.3, 0.5, -0.9 - lag);
+  double p1[36] = {0};
+  double p2[36] = {0};
+  for (int i = 0; i < 3; ++i) {
+    p1[7 * i] = 60.0 * 60.0;
+    p1[7 * (3 + i)] = 0.06 * 0.06;
+    p2[7 * i] = 120.0 * 120.0;
+    p2[7 * (3 + i)] = 0.12 * 0.12;
+  }
+  myb_point_mass_term centre = {MU};
+  myb_force_model* model = NULL;
+  MT_CHECK(myb_force_model_create(NULL, &model) == MYB_OK);
+  MT_CHECK(myb_force_model_add(model, "centre", myb_term_point_mass, myb_term_point_mass_jacobian,
+                               &centre, NULL) == MYB_OK);
+  const myb_orbit_options options = {.epsilon = 1e-11, .variational = 1};
+  myb_orbit* o1 = NULL;
+  myb_orbit* o2 = NULL;
+  MT_CHECK(myb_orbit_create(model, &options, NULL, &o1) == MYB_OK);
+  MT_CHECK(myb_orbit_create(model, &options, NULL, &o2) == MYB_OK);
+  double y1[6];
+  double y2[6];
+  memcpy(y1, start1.r, 3 * sizeof(double));
+  memcpy(y1 + 3, start1.v, 3 * sizeof(double));
+  memcpy(y2, start2.r, 3 * sizeof(double));
+  memcpy(y2 + 3, start2.v, 3 * sizeof(double));
+  MT_CHECK(myb_orbit_start(o1, 0.0, y1, period) == MYB_OK);
+  MT_CHECK(myb_orbit_start(o2, 0.0, y2, period) == MYB_OK);
+  myb_conjunction found[2];
+  size_t count = 0;
+  MT_CHECK(myb_conjunction_find(o1, p1, o2, p2, 15.0, 0.6 * period, 20.0, found, 2, &count) ==
+           MYB_OK);
+  MT_CHECK(count >= 1);
+  /* again, to a little before the first approach, then across it */
+  const double tca = found[0].approach.t;
+  MT_CHECK(myb_orbit_start(o1, 0.0, y1, period) == MYB_OK);
+  MT_CHECK(myb_orbit_start(o2, 0.0, y2, period) == MYB_OK);
+  double y[6];
+  MT_CHECK(myb_orbit_state(o1, tca - 0.3, y) == MYB_OK);
+  MT_CHECK(myb_orbit_state(o2, tca - 0.3, y) == MYB_OK);
+  double probability = 0.0;
+  double error = 0.0;
+  MT_CHECK(myb_conjunction_long(o1, p1, o2, p2, 15.0, tca + 0.3, 0.003, &probability, &error) ==
+           MYB_OK);
+  printf("two orbits crossing at %.0f m/s: the long encounter %.6e (rule %.1e), the short "
+         "%.6e, %.1e apart\n",
+         hypot(hypot(found[0].approach.velocity[0], found[0].approach.velocity[1]),
+               found[0].approach.velocity[2]),
+         probability, error, found[0].probability,
+         fabs(probability / found[0].probability - 1.0));
+  MT_CHECK(fabs(probability / found[0].probability - 1.0) < 1e-4);
+  MT_CHECK(myb_orbit_time(o1) == tca + 0.3);
+  myb_orbit_destroy(o1);
+  myb_orbit_destroy(o2);
+  myb_force_model_destroy(model);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_approaches();
   test_probability();
   test_carried();
+  test_long_line();
+  test_long_slow();
+  test_long_orbits();
   return mt_finish("test_conjunction");
 }

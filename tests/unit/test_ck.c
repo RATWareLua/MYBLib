@@ -7,6 +7,9 @@
  *  - an instrument frame in a graph of frames (sxform_c);
  *  - a CK written here and read by CSPICE (ck_writer_cspice.ref, made from the file this
  *    test writes with MYB_CK_WRITER_DUMP=<path>);
+ *  - a CK of type 5 written by CSPICE (t5.bc, t5_cspice.ref: cspice_ck456.py), and a CK of
+ *    types 4, 5 and 6 written here and read by CSPICE (ck456_cspice.ref, from the file this
+ *    test writes with MYB_CK456_DUMP=<path>);
  *  - what is refused. */
 #include <math.h>
 #include <stdio.h>
@@ -18,6 +21,7 @@
 #include "myb/cmath.h"
 #include "myb/frames.h"
 #include "myb/io.h"
+#include "myb/uncert.h"
 
 #define CK_DIR MYB_TEST_DATA_DIR "/ck/"
 
@@ -396,9 +400,346 @@ static void test_writer(void) {
   MT_CHECK(myb_ck_writer_create("", NULL, &writer) == MYB_E_DOMAIN);
 }
 
+/* Every line "P" of a reference file against a CK. */
+static pointing_stats compare_file(const myb_ck* ck, const char* path) {
+  pointing_stats stats = {0};
+  FILE* f = fopen(path, "r");
+  MT_CHECK(f != NULL);
+  if (f == NULL) {
+    return stats;
+  }
+  char line[2048];
+  /* bound: one iteration per line of the file */
+  while (fgets(line, sizeof line, f) != NULL) {
+    if (line[0] == 'P') {
+      check_pointing(ck, line, &stats);
+    }
+  }
+  fclose(f);
+  return stats;
+}
+
+static void test_type5_by_cspice(void) {
+  myb_ck* ck = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
+  MT_CHECK(myb_ck_load_file(ck, CK_DIR "t5.bc", &diag) == MYB_OK);
+  MT_CHECK(myb_ck_segment_count(ck) == 6);
+  const pointing_stats stats = compare_file(ck, CK_DIR "t5_cspice.ref");
+  printf("CK type 5 written by CSPICE, four subtypes: %d pointings found and %d refused as "
+         "there; matrix %.1e, angular velocity %.1e rad/s, instant %.1e ticks\n",
+         stats.found, stats.missing, stats.matrix, stats.rate, stats.ticks);
+  MT_CHECK(stats.found > 900 && stats.missing > 200);
+  MT_CHECK(stats.matrix < 2e-15 && stats.rate < 5e-16 && stats.ticks == 0.0);
+  myb_ck_destroy(ck);
+}
+
+/* A smooth turning for the packets of types 5 and 6: the quaternion (of length 3), its
+ * derivative per second, the angular velocity and its derivative. */
+static void turning(double seconds, double phase, double out[14]) {
+  const double h = 0.5;
+  double q[3][4];
+  double r[3][3];
+  for (int k = 0; k < 3; ++k) {
+    sample((seconds + (k - 1) * h) / 100000.0, phase, q[k], r[k]);
+  }
+  for (int i = 0; i < 4; ++i) {
+    out[i] = q[1][i];
+    out[4 + i] = (q[2][i] - q[0][i]) / (2.0 * h);
+  }
+  for (int i = 0; i < 3; ++i) {
+    out[8 + i] = r[1][i];
+    out[11 + i] = (r[2][i] - r[0][i]) / (2.0 * h);
+  }
+}
+
+/* Packets of a subtype at the ticks, `seconds_per_tick` apart in time. */
+static void make_packets(int subtype, const double* ticks, int count, double seconds_per_tick,
+                         double phase, double* packets) {
+  static const int size[4] = {8, 4, 14, 7};
+  for (int k = 0; k < count; ++k) {
+    double all[14];
+    turning((ticks[k] - ticks[0]) * seconds_per_tick, phase, all);
+    double* p = packets + size[subtype] * k;
+    if (subtype == 0) {
+      memcpy(p, all, 8 * sizeof(double));
+    } else if (subtype == 1) {
+      memcpy(p, all, 4 * sizeof(double));
+    } else if (subtype == 2) {
+      memcpy(p, all, 14 * sizeof(double));
+    } else {
+      memcpy(p, all, 4 * sizeof(double));
+      memcpy(p + 4, all + 8, 3 * sizeof(double));
+    }
+  }
+}
+
+/* A line "R" of ck456_cspice.ref: a request in a gap answered from the next mini-segment of
+ * a type 6 segment whose rate is not whole. The pointing is the same; CSPICE divides the
+ * angular velocity by the rate rounded, the library by the rate. */
+static void check_rounded(const myb_ck* ck, const char* line, int* lines, double* worst) {
+  const char* p = line + 1;
+  double v[20];
+  int count = 0;
+  /* bound: the numbers of the line */
+  while (count < 20 && next_number(&p, &v[count])) {
+    ++count;
+  }
+  MT_CHECK(count == 20 && v[4] == 1.0);
+  if (count != 20) {
+    return;
+  }
+  myb_ck_pointing pointing;
+  MT_CHECK(myb_ck_pointing_at(ck, (int32_t)v[0], v[1], v[2], (int)v[3], &pointing) == MYB_OK);
+  double e = fabs(pointing.ticks - v[5]);
+  for (int i = 0; i < 9; ++i) {
+    e = fmax(e, fabs(pointing.rotation.m[i] - v[6 + i]));
+  }
+  if (v[3] != 0.0) {
+    const double rate = v[18];
+    const double rounded = v[19];
+    double differs = 0.0;
+    for (int i = 0; i < 3; ++i) {
+      e = fmax(e, fabs(pointing.rate[i] - v[15 + i] * rounded / rate));
+      differs = fmax(differs, fabs(pointing.rate[i] - v[15 + i]));
+    }
+    MT_CHECK(differs > 1e-6);
+  }
+  *worst = fmax(*worst, e);
+  ++*lines;
+}
+
+static void test_types456_writer(void) {
+  myb_rng rng;
+  myb_rng_seed(&rng, 20261112);
+  myb_ck_writer* writer = NULL;
+  MT_CHECK(myb_ck_writer_create("myb test: CK types 4, 5 and 6", NULL, &writer) == MYB_OK);
+  /* type 4: series of varying lengths on intervals with gaps, with rates and without; and
+   * 150 intervals for the directory of references */
+  enum { MAX_COEFFICIENTS = 150 * 7 * 19 };
+  static double coefficients[MAX_COEFFICIENTS];
+  static double starts[150];
+  static double stops[150];
+  static int counts[150 * 7];
+  const struct {
+    int32_t instrument;
+    int intervals;
+    int has_rates;
+    double first;
+  } plan4[3] = {{-9099041, 6, 1, 2.0e7}, {-9099042, 3, 0, 2.1e7}, {-9099046, 150, 1, 2.2e7}};
+  for (int s = 0; s < 3; ++s) {
+    size_t used = 0;
+    for (int k = 0; k < plan4[s].intervals; ++k) {
+      starts[k] = plan4[s].first + 50000.0 * k;
+      stops[k] = starts[k] + (plan4[s].intervals > 10 ? 50000.0 : 30000.0 + 3000.0 * k);
+      for (int i = 0; i < 7; ++i) {
+        const int n = i < 4 ? 3 + (k + 2 * i) % 10 : (plan4[s].has_rates ? 2 + (k + i) % 6 : 0);
+        counts[7 * k + i] = n;
+        for (int j = 0; j < n; ++j) {
+          static const double centre[4] = {0.8, 0.3, -0.4, 0.2};
+          const double scale = i < 4 ? 0.1 / (j + 1) : 1.0e-3 / (j + 1);
+          double c = (2.0 * myb_rng_uniform(&rng) - 1.0) * scale;
+          if (j == 0 && i < 4) {
+            c += centre[i];
+          }
+          coefficients[used++] = c;
+        }
+      }
+    }
+    char name[40];
+    snprintf(name, sizeof name, "type 4, %d intervals", plan4[s].intervals);
+    const myb_ck_segment_header h = {plan4[s].instrument, 1, name};
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, starts, stops, counts, coefficients,
+                                         (size_t)plan4[s].intervals,
+                                         plan4[s].has_rates) == MYB_OK);
+  }
+  /* type 5, subtype 0, with a single-pointing interval */
+  enum { N5 = 130 };
+  static double ticks5[N5];
+  static double packets5[8 * N5];
+  for (int k = 0; k < N5; ++k) {
+    ticks5[k] = 2.5e7 + 1000.0 * k + 200.0 * (k % 4);
+  }
+  make_packets(0, ticks5, N5, 0.1, 0.2, packets5);
+  const double starts5[4] = {ticks5[0], ticks5[50], ticks5[51], ticks5[100]};
+  const myb_ck_packets set5 = {0, 6, 0.1, ticks5, packets5, N5};
+  const myb_ck_segment_header h5 = {-9099043, 1, "type 5 written here"};
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h5, &set5, 1, ticks5[0], ticks5[N5 - 1], starts5,
+                                     4) == MYB_OK);
+  /* type 6: four mini-segments of the four subtypes, with padding and a gap, the later one
+   * taken on a boundary; the third has a rate that is not whole */
+  static double ticks6[4][40];
+  static double packets6[4][14 * 40];
+  const struct {
+    int subtype;
+    int window;
+    double rate;
+    double first;
+    double step;
+    int count;
+  } plan6[4] = {{0, 4, 1.0, 0.0, 1000.0, 40},
+                {3, 8, 2.0, 34000.0, 1500.0, 18},
+                {1, 6, 2.5, 70000.0, 800.0, 40},
+                {2, 4, 0.5, 99000.0, 1200.0, 30}};
+  myb_ck_packets minis[4];
+  for (int m = 0; m < 4; ++m) {
+    for (int k = 0; k < plan6[m].count; ++k) {
+      ticks6[m][k] = 3.0e7 + plan6[m].first + plan6[m].step * k;
+    }
+    make_packets(plan6[m].subtype, ticks6[m], plan6[m].count, plan6[m].rate, 0.1 * m,
+                 packets6[m]);
+    minis[m] = (myb_ck_packets){plan6[m].subtype, plan6[m].window, plan6[m].rate, ticks6[m],
+                                packets6[m], (size_t)plan6[m].count};
+  }
+  const double bounds6[5] = {3.0e7, 3.0e7 + 35000.0, 3.0e7 + 70000.0, 3.0e7 + 100000.0,
+                             3.0e7 + 130000.0};
+  const myb_ck_segment_header h6 = {-9099044, 1, "type 6, four subtypes"};
+  MT_CHECK(myb_ck_writer_add_minisegments(writer, &h6, minis, bounds6, 4, 1, 1, 3.0e7 + 1000.0,
+                                          3.0e7 + 129000.0) == MYB_OK);
+  /* type 6 with 120 short mini-segments, the earlier one taken on a boundary */
+  enum { MINIS = 120 };
+  static double ticks_many[MINIS][3];
+  static double packets_many[MINIS][7 * 3];
+  static myb_ck_packets many[MINIS];
+  static double bounds_many[MINIS + 1];
+  for (int m = 0; m < MINIS; ++m) {
+    bounds_many[m] = 4.0e7 + 3000.0 * m;
+    for (int k = 0; k < 3; ++k) {
+      ticks_many[m][k] = bounds_many[m] + 1000.0 * k + (k == 2 ? 500.0 : 0.0);
+    }
+    make_packets(3, ticks_many[m], 3, 0.25, 0.01 * m, packets_many[m]);
+    many[m] = (myb_ck_packets){3, 2, 0.25, ticks_many[m], packets_many[m], 3};
+  }
+  bounds_many[MINIS] = 4.0e7 + 3000.0 * (double)MINIS;
+  const myb_ck_segment_header h6b = {-9099045, 1, "type 6, 120 mini-segments"};
+  MT_CHECK(myb_ck_writer_add_minisegments(writer, &h6b, many, bounds_many, MINIS, 1, 0,
+                                          bounds_many[0], bounds_many[MINIS]) == MYB_OK);
+
+  /* refused, nothing added */
+  const size_t before = myb_ck_writer_size(writer);
+  const myb_ck_segment_header h = {-9099049, 1, "refused"};
+  int bad_counts[7] = {3, 3, 3, 3, 0, 0, 0};
+  const double one_start = 1.0;
+  const double one_stop = 2.0;
+  MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, &one_start, &one_stop, bad_counts,
+                                       coefficients, 1, 1) == MYB_E_DOMAIN);
+  bad_counts[0] = 20;
+  MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, &one_start, &one_stop, bad_counts,
+                                       coefficients, 1, 0) == MYB_E_DOMAIN);
+  bad_counts[0] = 3;
+  MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, &one_stop, &one_start, bad_counts,
+                                       coefficients, 1, 0) == MYB_E_DOMAIN);
+  myb_ck_packets odd = set5;
+  odd.window = 5;
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h, &odd, 1, ticks5[0], ticks5[N5 - 1], NULL, 0) ==
+           MYB_E_DOMAIN);
+  odd = set5;
+  odd.window = 14;
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h, &odd, 1, ticks5[0], ticks5[N5 - 1], NULL, 0) ==
+           MYB_E_DOMAIN);
+  odd = set5;
+  odd.subtype = 4;
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h, &odd, 1, ticks5[0], ticks5[N5 - 1], NULL, 0) ==
+           MYB_E_DOMAIN);
+  odd = set5;
+  odd.seconds_per_tick = 0.0;
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h, &odd, 1, ticks5[0], ticks5[N5 - 1], NULL, 0) ==
+           MYB_E_DOMAIN);
+  const double off[2] = {ticks5[0], ticks5[3] + 1.0};
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h, &set5, 1, ticks5[0], ticks5[N5 - 1], off, 2) ==
+           MYB_E_DOMAIN);
+  MT_CHECK(myb_ck_writer_add_packets(writer, &h, &set5, 1, ticks5[5], ticks5[2], NULL, 0) ==
+           MYB_E_DOMAIN);
+  double shifted[5];
+  memcpy(shifted, bounds6, sizeof shifted);
+  shifted[1] = 3.0e7 + 33000.0; /* before the first tick of the second mini-segment */
+  MT_CHECK(myb_ck_writer_add_minisegments(writer, &h, minis, shifted, 4, 1, 1, 3.0e7 + 1000.0,
+                                          3.0e7 + 129000.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_ck_writer_add_minisegments(writer, &h, minis, bounds6, 4, 1, 1, 3.0e7 - 1.0,
+                                          3.0e7 + 129000.0) == MYB_E_DOMAIN);
+  myb_ck_packets single[1] = {minis[0]};
+  single[0].count = 1;
+  MT_CHECK(myb_ck_writer_add_minisegments(writer, &h, single, bounds6, 1, 1, 1, 3.0e7,
+                                          3.0e7 + 1.0) == MYB_E_DOMAIN);
+  MT_CHECK(myb_ck_writer_size(writer) == before);
+
+  const size_t bytes = myb_ck_writer_size(writer);
+  unsigned char* image = malloc(bytes);
+  MT_CHECK(image != NULL && myb_ck_writer_write(writer, image, bytes) == MYB_OK);
+  const char* dump = getenv("MYB_CK456_DUMP");
+  if (dump != NULL) {
+    MT_CHECK(myb_ck_writer_write_file(writer, dump) == MYB_OK);
+    printf("dump: %s\n", dump);
+  }
+  myb_ck* ck = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
+  MT_CHECK(myb_ck_load_memory(ck, image, bytes, &diag) == MYB_OK);
+  MT_CHECK(myb_ck_segment_count(ck) == 6);
+  /* type 4 at the middle of an interval (s = 0, where T_j = 1, 0, -1, 0, 1, ...): the series
+   * of the last segment written, made unit */
+  myb_ck_pointing pointing;
+  MT_CHECK(myb_ck_pointing_at(ck, -9099046, 2.2e7 + 25000.0, 0.0, 1, &pointing) == MYB_OK);
+  {
+    double q[4];
+    double rate[3];
+    size_t at = 0;
+    for (int i = 0; i < 7; ++i) {
+      double sum = 0.0;
+      for (int j = 0; j < counts[i]; ++j) {
+        static const double t_at_zero[4] = {1.0, 0.0, -1.0, 0.0};
+        sum += coefficients[at + (size_t)j] * t_at_zero[j % 4];
+      }
+      at += (size_t)counts[i];
+      if (i < 4) {
+        q[i] = sum;
+      } else {
+        rate[i - 4] = sum;
+      }
+    }
+    const double norm = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    double e = 0.0;
+    for (int i = 0; i < 4; ++i) {
+      e = fmax(e, fabs(pointing.q[i] - q[i] / norm));
+    }
+    for (int i = 0; i < 3; ++i) {
+      e = fmax(e, fabs(pointing.rate[i] - rate[i]));
+    }
+    MT_CHECK(e < 1e-15 && pointing.ticks == 2.2e7 + 25000.0);
+  }
+  const pointing_stats stats = compare_file(ck, CK_DIR "ck456_cspice.ref");
+  int rounded = 0;
+  double worst_rounded = 0.0;
+  FILE* f = fopen(CK_DIR "ck456_cspice.ref", "r");
+  if (f != NULL) {
+    char line[2048];
+    /* bound: one iteration per line of the file */
+    while (fgets(line, sizeof line, f) != NULL) {
+      if (line[0] == 'R') {
+        check_rounded(ck, line, &rounded, &worst_rounded);
+      }
+    }
+    fclose(f);
+  }
+  printf("CK types 4, 5 and 6 written here and read by CSPICE: %d pointings found and %d "
+         "refused as there; matrix %.1e, angular velocity %.1e rad/s, instant %.1e ticks; %d "
+         "requests in a gap answered from a mini-segment of rate 2.5, where CSPICE divides by "
+         "3: %.1e\n",
+         stats.found, stats.missing, stats.matrix, stats.rate, stats.ticks, rounded,
+         worst_rounded);
+  MT_CHECK(stats.found > 500 && stats.missing > 50 && rounded > 0);
+  MT_CHECK(stats.matrix < 2e-15 && stats.rate < 1e-16 && stats.ticks == 0.0 &&
+           worst_rounded < 2e-16);
+  myb_ck_destroy(ck);
+  free(image);
+  myb_ck_writer_destroy(writer);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_reference();
   test_writer();
+  test_type5_by_cspice();
+  test_types456_writer();
   return mt_finish("test_ck");
 }

@@ -34,10 +34,15 @@ typedef struct myb_orbit myb_orbit;
 
 typedef enum myb_orbit_integrator {
   MYB_ORBIT_IAS15 = 0, /* the default */
-  MYB_ORBIT_DOP853 = 1 /* the explicit Runge-Kutta pair of myb/integ.h: cheaper per step at
-                          moderate accuracies, for forces of any dependence on the velocity.
-                          With variational != 0 the variations are carried as part of one
-                          system of the first order, under the same tolerances as the state */
+  MYB_ORBIT_DOP853 = 1, /* the explicit Runge-Kutta pair of myb/integ.h: cheaper per step at
+                           moderate accuracies, for forces of any dependence on the velocity.
+                           With variational != 0 the variations are carried as part of one
+                           system of the first order, under the same tolerances as the state */
+  MYB_ORBIT_RKN12 = 2   /* the Runge-Kutta-Nystrom pair RKN12(10) of myb/integ.h with its
+                           interpolant: for very tight tolerances, forces that do not depend on
+                           the velocity only — every enabled term of the model declared so
+                           (myb_force_model_set_position_only), else MYB_E_DOMAIN at the start;
+                           no variational equations */
 } myb_orbit_integrator;
 
 typedef struct myb_orbit_options {
@@ -47,13 +52,14 @@ typedef struct myb_orbit_options {
   int variational;   /* != 0: the variational equations are integrated with the state
                         (myb/uncert.h), for myb_orbit_partials */
   myb_orbit_integrator integrator;
-  double rtol; /* DOP853: relative tolerance; 0 = 1e-12 */
-  double atol; /* DOP853: absolute tolerance (m and m/s); 0 = 1e-9 */
+  double rtol; /* DOP853 and RKN12: relative tolerance; 0 = 1e-12 */
+  double atol; /* DOP853 and RKN12: absolute tolerance (m and m/s); 0 = 1e-9 */
 } myb_orbit_options;
 
 /* The model must outlive the object; with variational != 0 its parameters at this moment are
  * those differentiated. options may be NULL (defaults). Errors: MYB_E_DOMAIN (negative
- * options, an integrator that is not one of the two), MYB_E_NOMEM, MYB_E_OVERFLOW. */
+ * options, an integrator that is not one of the three, RKN12 with variational), MYB_E_NOMEM,
+ * MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_orbit_create(myb_force_model* model,
                                                   const myb_orbit_options* options,
                                                   const myb_allocator* allocator,
@@ -61,8 +67,8 @@ MYB_API MYB_NODISCARD myb_status myb_orbit_create(myb_force_model* model,
 MYB_API void myb_orbit_destroy(myb_orbit* orbit); /* accepts NULL */
 
 /* Starts at t0 from y0 = (x, v) towards t_end != t0, which sets the direction and is never
- * passed. Errors: MYB_E_DOMAIN (times or state not finite, t_end == t0), the statuses of the
- * model. */
+ * passed. Errors: MYB_E_DOMAIN (times or state not finite, t_end == t0; with RKN12 a model with
+ * a term not declared a function of the place alone), the statuses of the model. */
 MYB_API MYB_NODISCARD myb_status myb_orbit_start(myb_orbit* orbit, double t0, const double y0[6],
                                                  double t_end);
 

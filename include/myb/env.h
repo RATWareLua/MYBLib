@@ -142,7 +142,8 @@ typedef struct myb_object {
   double cd;   /* drag coefficient */
   /* a mass that changes: if given, the terms take mass_function(mass_context, t) (kg) at the
    * model time t instead of mass — myb_thrust_mass_at with a myb_thrust (myb/thrust.h) for an
-   * object that burns propellant */
+   * object that burns propellant, myb_ablation_mass with a myb_ablation (myb/surface.h) for
+   * one that the heat of an entry burns away */
   myb_mass_function mass_function;
   void* mass_context;
 } myb_object;

@@ -62,4 +62,10 @@ typedef struct myb_internal_spk_segment {
 [[nodiscard]] myb_status myb_internal_spk_segment_state(const myb_internal_spk_segment* segment,
                                                         myb_time t, double state[6]);
 
+/* Hermite interpolation at 0 of values y_i and derivatives yd_i at the m nodes d_i (m at
+ * most MYB_SPK_MAX_WINDOW; Newton divided differences on the doubled nodes): the value and the
+ * derivative. Shared with the CK reader. */
+void myb_internal_hermite(int m, const double* d, const double* y, const double* yd,
+                          double* value, double* derivative);
+
 #endif /* MYB_SRC_KIN_SPK_SEGMENT_H_ */

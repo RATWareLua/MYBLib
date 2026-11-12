@@ -46,6 +46,16 @@ MYB_API MYB_NODISCARD myb_status myb_force_model_add(myb_force_model* model, con
 MYB_API MYB_NODISCARD myb_status myb_force_model_find(const myb_force_model* model,
                                                       const char* name, size_t* index);
 MYB_API size_t myb_force_model_count(const myb_force_model* model);
+
+/* Declares term `index` a function of the time and the place alone, not of the velocity (a
+ * term is taken to depend on it until declared otherwise): a model whose enabled terms all are
+ * may be integrated by RKN12 (myb/orbit.h). Of the terms of myb/env.h: myb_term_point_mass,
+ * myb_term_third_body, myb_term_field, myb_term_field_indirect, and myb_term_radiation without
+ * `moving`. The declaration is the caller's; it is not checked. */
+MYB_API void myb_force_model_set_position_only(myb_force_model* model, size_t index,
+                                               int position_only);
+/* 1 if every enabled term is declared a function of the place alone. */
+MYB_API int myb_force_model_position_only(const myb_force_model* model);
 MYB_API const char* myb_force_model_name(const myb_force_model* model, size_t index);
 MYB_API int myb_force_model_enabled(const myb_force_model* model, size_t index);
 MYB_API void myb_force_model_set_enabled(myb_force_model* model, size_t index, int enabled);

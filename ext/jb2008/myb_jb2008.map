@@ -1,0 +1,18 @@
+# Symbol versions of libmyb_jb2008.so (ELF: Linux, Android, the BSDs; passed to the linker as
+# --version-script); see ext/nrlmsise00/myb_nrlmsise00.map for the rules.
+
+MYB_JB2008_1.2 {
+  global:
+    myb_jb2008;
+    myb_jb2008_density;
+    myb_jb2008_solar_at;
+    myb_jb2008_solar_destroy;
+    myb_jb2008_solar_load;
+    myb_jb2008_solar_load_file;
+    myb_jb2008_storm_at;
+    myb_jb2008_storm_destroy;
+    myb_jb2008_storm_load;
+    myb_jb2008_storm_load_file;
+  local:
+    *;
+};

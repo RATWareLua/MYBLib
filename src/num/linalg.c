@@ -230,8 +230,8 @@ static void balance(size_t n, double* a) {
   }
 }
 
-/* Householder reduction to upper Hessenberg form (similarity). */
-static void hessenberg(size_t n, double* a) {
+/* Householder reduction to upper Hessenberg form (similarity); v: n doubles of work. */
+static void hessenberg(size_t n, double* a, double* v) {
   for (size_t k = 0; k + 2 < n; ++k) {
     double scale = 0.0;
     for (size_t i = k + 1; i < n; ++i) {
@@ -240,7 +240,6 @@ static void hessenberg(size_t n, double* a) {
     if (scale == 0.0) {
       continue;
     }
-    double v[MAX_N];
     double norm2 = 0.0;
     for (size_t i = k + 1; i < n; ++i) {
       v[i] = a[i * n + k] / scale;
@@ -346,15 +345,16 @@ static void householder3(double x, double y, double z, double* u) {
   u[2] = z;
 }
 
-myb_status myb_eigenvalues(size_t n, double* a, double* re, double* im) {
-  MYB_CHECK(a != NULL && re != NULL && im != NULL && n >= 1 && n <= MAX_N);
+/* The eigenvalues of A of any order; work: n doubles for the reflectors of the Hessenberg
+ * reduction. */
+static myb_status eigenvalues(size_t n, double* a, double* re, double* im, double* work) {
   for (size_t i = 0; i < n * n; ++i) {
     if (!isfinite(a[i])) {
       return MYB_E_DOMAIN;
     }
   }
   balance(n, a);
-  hessenberg(n, a);
+  hessenberg(n, a, work);
   double* h = a;
   size_t hi = n - 1;
   int iterations = 0;
@@ -434,9 +434,26 @@ myb_status myb_eigenvalues(size_t n, double* a, double* re, double* im) {
   return MYB_OK;
 }
 
+myb_status myb_eigenvalues(size_t n, double* a, double* re, double* im) {
+  MYB_CHECK(a != NULL && re != NULL && im != NULL && n >= 1 && n <= MAX_N);
+  double v[MAX_N];
+  return eigenvalues(n, a, re, im, v);
+}
+
+myb_status myb_internal_eigenvalues(size_t n, double* a, double* re, double* im, double* work) {
+  MYB_CHECK(a != NULL && re != NULL && im != NULL && work != NULL && n >= 1);
+  return eigenvalues(n, a, re, im, work);
+}
+
 myb_status myb_eigenvector_real(size_t n, const double* a, double lambda, double* v,
                                 double* work) {
   MYB_CHECK(a != NULL && v != NULL && work != NULL && n >= 1 && n <= MAX_N);
+  return myb_internal_eigenvector_real(n, a, lambda, v, work);
+}
+
+myb_status myb_internal_eigenvector_real(size_t n, const double* a, double lambda, double* v,
+                                         double* work) {
+  MYB_CHECK(a != NULL && v != NULL && work != NULL && n >= 1);
   double norm = 0.0;
   for (size_t i = 0; i < n * n; ++i) {
     norm = fmax(norm, fabs(a[i]));
@@ -455,7 +472,7 @@ myb_status myb_eigenvector_real(size_t n, const double* a, double lambda, double
     for (size_t i = 0; i < n; ++i) {
       m[i * n + i] -= lambda + delta;
     }
-    const myb_status st = myb_lu_solve(n, m, v, 1);
+    const myb_status st = myb_internal_lu_solve(n, m, v, 1);
     if (st != MYB_OK) {
       return st;
     }

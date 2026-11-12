@@ -376,8 +376,11 @@ myb_status myb_wh_start(myb_wh* wh, double t0, const double* x, const double* v)
   MYB_CHECK(wh != NULL && x != NULL && v != NULL);
   myb_wh* w = wh;
   w->started = 0;
-  /* the splitting needs accelerations that depend on the positions only */
-  if (!finite(t0) || myb_internal_nbody_velocity_dependent(w->system)) {
+  /* the splitting needs accelerations that depend on the positions only, and exact: the
+   * error of an approximate sum is relative to the whole force, the central body's included,
+   * which the splitting subtracts */
+  if (!finite(t0) || myb_internal_nbody_velocity_dependent(w->system) ||
+      myb_nbody_approximation(w->system, NULL) != 0) {
     return MYB_E_DOMAIN;
   }
   for (size_t i = 0; i < 3 * w->n; ++i) {
