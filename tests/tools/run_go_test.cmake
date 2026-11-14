@@ -10,7 +10,8 @@
 # Usage: cmake -DGO=<go> -DPKG_CONFIG=<pkg-config> -DPC_DIR=<dir of myb-static.pc>
 #              -DCC=<C compiler> [-DCC_TARGET=<triple>] [-DSYSROOT=<dir>] [-DLDFLAGS=<flags>]
 #              -DWORK_DIR=<dir> -DSOURCE_DIR=<bindings/go> -DREFERENCE=<low_orbit_reference>
-#              -DDATA_DIR=<data> -DTEST_DATA_DIR=<tests/data> -P run_go_test.cmake
+#              -DDATA_DIR=<data> -DTEST_DATA_DIR=<tests/data> [-DPACKAGES=<go packages>]
+#              -P run_go_test.cmake
 foreach(_var GO PKG_CONFIG PC_DIR CC WORK_DIR SOURCE_DIR REFERENCE)
   if(NOT ${_var})
     message(FATAL_ERROR "run_go_test.cmake: ${_var} is not given")
@@ -53,7 +54,10 @@ set(ENV{MYB_GO_REFERENCE} "${REFERENCE}")
 set(ENV{MYB_DATA_DIR} "${DATA_DIR}")
 set(ENV{MYB_TEST_DATA_DIR} "${TEST_DATA_DIR}")
 
-execute_process(COMMAND "${GO}" test -count=1 -v ./...
+if(NOT PACKAGES)
+  set(PACKAGES ./...)
+endif()
+execute_process(COMMAND "${GO}" test -count=1 -v ${PACKAGES}
   WORKING_DIRECTORY "${SOURCE_DIR}" RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "go test failed (${rc})")

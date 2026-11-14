@@ -389,13 +389,18 @@ if(MYB_SANITIZE STREQUAL "")
     target_compile_definitions(go_low_orbit_reference PRIVATE
       $<$<BOOL:${WIN32}>:__USE_MINGW_ANSI_STDIO=1>)
     myb_apply_flags(go_low_orbit_reference)
+    # the package of ext/sgp4 (myb/sgp4) with the library it wraps
+    set(_myb_go_packages ./myb)
+    if(TARGET myb_sgp4)
+      set(_myb_go_packages ./myb/...)
+    endif()
     add_test(NAME test_go_binding
       COMMAND "${CMAKE_COMMAND}" "-DGO=${MYB_GO}" "-DPKG_CONFIG=${MYB_PKG_CONFIG}"
               "-DPC_DIR=${PROJECT_BINARY_DIR}/bindings/go/pkgconfig"
               "-DCC=${CMAKE_C_COMPILER}" "-DCC_TARGET=${CMAKE_C_COMPILER_TARGET}"
               "-DSYSROOT=${CMAKE_SYSROOT}" "-DLDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
               "-DWORK_DIR=${PROJECT_BINARY_DIR}/go" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/bindings/go"
-              "-DREFERENCE=$<TARGET_FILE:go_low_orbit_reference>"
+              "-DREFERENCE=$<TARGET_FILE:go_low_orbit_reference>" "-DPACKAGES=${_myb_go_packages}"
               "-DDATA_DIR=${PROJECT_SOURCE_DIR}/data" "-DTEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
               -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_go_test.cmake")
     set_tests_properties(test_go_binding PROPERTIES TIMEOUT 900)

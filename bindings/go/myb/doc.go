@@ -12,6 +12,14 @@
 // turned into the model of the library inside one call ([NewModel]); a propagation, a search
 // for events, a fit of an orbit is one call more ([Model.Propagate], [Model.Events],
 // [Model.Fit]); a file is read or written in one call ([ParseOEM], [WriteOEM], [WriteSPK]).
+// The same holds for the rest of the library: a system of bodies with its levels made from
+// data and run through its mergers ([NewSystem], [System.Run]), Wisdom-Holman runs
+// ([RunWH]), the filter and the smoother over a batch ([Model.Filter]), the families of
+// periodic orbits and of tori of the restricted problem ([CR3BPFamily],
+// [CR3BPTorusFamily]), Lambert over a grid of dates ([SolveLambertGrid]), conjunctions
+// ([FindConjunctions]), the optimal transfers ([QLawFly], [IndirectSolve],
+// [SimsFlanaganSolve], [Chain.Solve]), and OPM, OMM, SP3, CK and SCLK files; TLE in the
+// package myb/sgp4. Providers of states are data too ([StateSource]: an SPK body, a conic).
 // Whatever goes "per epoch" or "per point" goes as one call over a slice: the ephemerides
 // ([Ephemeris.States]), the rotations of frames ([CIP.TerrestrialMany], [EOP.AtMany],
 // [EarthOrientation.Sample], ...), the time scales ([TimeSystem.ConvertMany]) and Kepler's
@@ -28,7 +36,9 @@
 //
 // # Go functions in the library
 //
-// A term of a model ([GoTerm]) or an event ([GoEvent]) may be a Go function: the library
+// A term of a model ([GoTerm]), an event ([GoEvent]), a provider of states ([GoState]), an
+// action on a body of a system ([ActionLink]), the residual of [Shoot] and the Gaussian of
+// [CollisionProbabilityLong] may be Go functions: the library
 // calls it back through cgo at every evaluation — a separate, plainly slow path (a crossing
 // per call, hundreds of thousands per orbit). A term reports a failure by returning an error:
 // the call of the library stops with its status (that of a [*Error], MYB_E_DOMAIN for any

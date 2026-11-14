@@ -40,19 +40,11 @@ type Body struct {
 	Radius           float64 // m: the sphere that casts shadows
 	Luminosity       float64 // W: the body as a source of light
 	Limb             [2]float64
-	Spin             [3]float64 // m^2/s, body-fixed
-	State            *SPKBody   // nil: the body is the origin
-	StateScale       string     // the scale of the state's argument; "": the model's
+	Spin             [3]float64  // m^2/s, body-fixed
+	State            StateSource // nil: the body is the origin
+	StateScale       string      // the scale of the state's argument; "": the model's
 	Orientation      OrientationSource
 	OrientationScale string // "": the model's
-}
-
-// SPKBody is the state of a body from an ephemeris: target relative to center; Frame != 0
-// requires the segments to be in that frame (NAIF code, 1 = J2000).
-type SPKBody struct {
-	Ephemeris      *Ephemeris
-	Target, Center int32
-	Frame          int32
 }
 
 // Object is the body whose motion is modelled, as the surface forces see it.
@@ -188,47 +180,6 @@ type Parameter struct {
 	Kind  ParameterKind
 	Index int
 	Step  float64
-}
-
-// keeper holds what a description needs while it is passed to C: the objects (handed over to
-// the model when it is made) and the C strings.
-type keeper struct {
-	held    []*object
-	strings []*C.char
-	handles []cgo.Handle
-	state   *callState // of the model the Go terms are for
-}
-
-func (k *keeper) hold(o *object) (unsafe.Pointer, error) {
-	if o == nil {
-		return nil, nil // the description lacks the object: the C side refuses it
-	}
-	p, err := o.acquire()
-	if err != nil {
-		return nil, err
-	}
-	k.held = append(k.held, o)
-	return p, nil
-}
-
-func (k *keeper) cstring(s string) *C.char {
-	c := C.CString(s)
-	k.strings = append(k.strings, c)
-	return c
-}
-
-func (k *keeper) optional(s string) *C.char {
-	if s == "" {
-		return nil
-	}
-	return k.cstring(s)
-}
-
-func (k *keeper) freeStrings() {
-	for _, s := range k.strings {
-		C.free(unsafe.Pointer(s))
-	}
-	k.strings = nil
 }
 
 func cObject(o Object) C.myb_object {
@@ -376,24 +327,18 @@ type Model struct {
 // NewModel makes the environment and the model of a description (one call into C).
 func NewModel(spec ModelSpec) (*Model, error) {
 	const op = "NewModel"
-	k := &keeper{}
-	defer k.freeStrings()
+	k := newKeeper()
 	ok := false
 	defer func() {
 		if !ok {
-			releaseAll(k.held)
-			for _, h := range k.handles {
-				h.Delete()
-			}
+			k.done()
 		}
 	}()
-	state := &callState{}
-	k.state = state
-	options := C.mybgo_model_options{epoch: cTime(spec.Epoch), scale: k.optional(spec.Scale),
-		table_step: C.double(spec.TableStep)}
 	if !validTime(spec.Epoch) {
 		return nil, refuse(op, -1, "an epoch out of range")
 	}
+	options := C.mybgo_model_options{epoch: cTime(spec.Epoch), scale: k.optional(spec.Scale),
+		table_step: C.double(spec.TableStep)}
 	sys, err := k.hold(spec.TimeSystem.obj())
 	if err != nil {
 		return nil, err
@@ -409,20 +354,14 @@ func NewModel(spec ModelSpec) (*Model, error) {
 		d.luminosity = C.double(b.Luminosity)
 		d.limb = [2]C.double{C.double(b.Limb[0]), C.double(b.Limb[1])}
 		d.spin = [3]C.double{C.double(b.Spin[0]), C.double(b.Spin[1]), C.double(b.Spin[2])}
+		if err := describeProvider(b.State, &d.state, k); err != nil {
+			return nil, err
+		}
 		if b.State != nil {
-			d.state_kind = C.MYBGO_STATE_SPK
-			spk, err := k.hold(b.State.Ephemeris.obj())
-			if err != nil {
-				return nil, err
-			}
-			d.spk = (*C.myb_spk)(spk)
-			d.target = C.int32_t(b.State.Target)
-			d.center = C.int32_t(b.State.Center)
-			d.frame = C.int32_t(b.State.Frame)
 			d.state_scale = k.optional(b.StateScale)
 		}
 		if b.Orientation != nil {
-			if err := b.Orientation.describe(d, k); err != nil {
+			if err := b.Orientation.describe(&d.orientation, k); err != nil {
 				return nil, err
 			}
 			d.orientation_scale = k.optional(b.OrientationScale)
@@ -463,29 +402,32 @@ func NewModel(spec ModelSpec) (*Model, error) {
 		(*C.mybgo_term)(first(terms)), C.size_t(len(terms)),
 		(*C.mybgo_parameter)(first(parameters)), C.size_t(len(parameters)), &model, &stage, &item)
 	if status != C.MYB_OK {
-		e := &Error{Status: Status(status), Op: op, Index: -1}
-		switch stage {
-		case C.MYBGO_STAGE_BODY:
-			e.Index, e.Message = int(item), "body"
-		case C.MYBGO_STAGE_TERM:
-			e.Index, e.Message = int(item), "term"
-		case C.MYBGO_STAGE_PARAMETER:
-			e.Index, e.Message = int(item), "parameter"
-		default:
-			e.Message = "environment"
-		}
-		return nil, e
+		return nil, stageError(op, status, stage, item, "body", "term", "parameter")
 	}
-	handles := k.handles
-	m := &Model{state: state, terms: names, parameters: parameterNames}
+	held, handles := k.keep()
+	ok = true
+	m := &Model{state: k.state, terms: names, parameters: parameterNames}
 	m.o = newObject(unsafe.Pointer(model), func(q unsafe.Pointer) {
 		C.mybgo_model_destroy((*C.mybgo_model)(q))
 		for _, h := range handles {
 			h.Delete()
 		}
-	}, k.held...)
-	ok = true
+	}, held...)
 	return m, nil
+}
+
+// stageError is the error of a description that C refused: the record of the stage named.
+func stageError(op string, status C.myb_status, stage C.int, item C.size_t, names ...string) error {
+	e := &Error{Status: Status(status), Op: op, Index: -1, Message: "environment"}
+	switch stage {
+	case C.MYBGO_STAGE_BODY:
+		e.Index, e.Message = int(item), names[0]
+	case C.MYBGO_STAGE_TERM:
+		e.Index, e.Message = int(item), names[1]
+	case C.MYBGO_STAGE_PARAMETER:
+		e.Index, e.Message = int(item), names[2]
+	}
+	return e
 }
 
 // Close releases the model, and with it its hold on the objects it uses.
@@ -891,13 +833,8 @@ type EventResult struct {
 // Events finds the events of an orbit (one call into C).
 func (m *Model) Events(s EventSearch) (*EventResult, error) {
 	const op = "Model.Events"
-	k := &keeper{}
-	defer func() {
-		k.freeStrings()
-		for _, h := range k.handles {
-			h.Delete()
-		}
-	}()
+	k := newKeeper()
+	defer k.done()
 	events := make([]C.mybgo_event, len(s.Events))
 	for i, e := range s.Events {
 		if e == nil {

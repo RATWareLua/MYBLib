@@ -42,15 +42,81 @@ enum {
 enum {
   MYBGO_NAME = 32, /* names of scales, terms and parameters, with the NUL */
 
-  MYBGO_STATE_ORIGIN = 0, /* the body is the origin of the environment */
-  MYBGO_STATE_SPK = 1,    /* a body of an SPK set (myb_spk_body_state) */
+  MYBGO_PROVIDER_NONE = 0,   /* no state: the body is the origin of the environment */
+  MYBGO_PROVIDER_SPK = 1,    /* a body of an SPK set (myb_spk_body_state) */
+  MYBGO_PROVIDER_KEPLER = 2, /* the two-body orbit through a state at an epoch */
+  MYBGO_PROVIDER_GO = 3,     /* a Go function, called back through cgo */
 
-  MYBGO_ORIENTATION_NONE = 0,  /* the body-fixed frame is the inertial axes */
-  MYBGO_ORIENTATION_FIXED = 1, /* a constant rotation */
-  MYBGO_ORIENTATION_CIP = 2,   /* the CIO-based model with observed EOP */
-  MYBGO_ORIENTATION_PCK = 3,   /* a frame of a binary PCK */
-  MYBGO_ORIENTATION_WGCCRE = 4 /* a rotation model of the WGCCRE */
+  MYBGO_ORIENTATION_NONE = 0,   /* the body-fixed frame is the inertial axes */
+  MYBGO_ORIENTATION_FIXED = 1,  /* a constant rotation */
+  MYBGO_ORIENTATION_CIP = 2,    /* the CIO-based model with observed EOP */
+  MYBGO_ORIENTATION_PCK = 3,    /* a frame of a binary PCK */
+  MYBGO_ORIENTATION_WGCCRE = 4, /* a rotation model of the WGCCRE */
+  MYBGO_ORIENTATION_CK = 5      /* the pointing of a CK through its clock (myb_orientation_ck) */
 };
+
+/* A provider of states (myb_state_function of myb/kin.h) described by data. A KEPLER provider
+ * gives myb_kepler_propagate(mu, state, the seconds from epoch to t): the conic of the problem
+ * of two bodies that a C program would write for a planet on its orbit. */
+typedef struct mybgo_provider {
+  int kind; /* MYBGO_PROVIDER_* */
+  const myb_spk* spk;
+  int32_t target;
+  int32_t center;
+  int32_t frame;
+  double mu;
+  double state[6];
+  myb_time epoch;
+  uintptr_t handle;
+} mybgo_provider;
+
+/* myb_state_function; context: const mybgo_provider* (kept where it is while it is used).
+ * Errors: MYB_E_DOMAIN (no provider, an SPK provider without a set), those of the source. */
+myb_status mybgo_provider_state(void* context, myb_time t, double state[6]);
+
+/* The states of a provider at count instants (the array form of a C loop over it). */
+myb_status mybgo_provider_states(const mybgo_provider* provider, const myb_time* t, size_t count,
+                                 double* states, size_t* failed);
+
+/* An orientation provider described by data (myb/frames.h). */
+typedef struct mybgo_orientation {
+  int kind;           /* MYBGO_ORIENTATION_* */
+  myb_rotation fixed; /* FIXED */
+  myb_rotation base;  /* PCK, WGCCRE: inertial axes -> the base of the frame */
+  int has_base;       /* 0: the base is the inertial axes */
+  const myb_cip* cip; /* CIP: the model, the EOP, the time system and the name of TT */
+  const myb_eop* eop;
+  const myb_timesys* timesys;
+  const char* tt_scale;
+  const myb_pck* pck; /* PCK: the set and the frame class */
+  int32_t pck_id;
+  const myb_wgccre* wgccre; /* WGCCRE */
+  const myb_ck* ck;         /* CK: the set, the clock, the instrument, the base frame wanted */
+  const myb_sclk* sclk;
+  int32_t instrument;
+  int32_t ck_base;
+  double tolerance; /* ticks */
+} mybgo_orientation;
+
+/* Where the contexts of an orientation provider live while it is used. */
+typedef struct mybgo_orientation_store {
+  myb_cip_orientation cip;
+  myb_pck_orientation pck;
+  myb_wgccre_orientation wgccre;
+  myb_ck_orientation ck;
+  myb_rotation fixed;
+  myb_rotation base;
+} mybgo_orientation_store;
+
+/* The provider of a record and its context in `store`; *function NULL for NONE. Errors:
+ * MYB_E_DOMAIN (an unknown kind, a missing object), those of finding the scale TT. */
+myb_status mybgo_orientation_of(const mybgo_orientation* orientation,
+                                mybgo_orientation_store* store, myb_orientation_function* function,
+                                void** context);
+
+/* The orientation at count instants (myb_orientation_many). */
+myb_status mybgo_orientation_sample(const mybgo_orientation* orientation, const myb_time* t,
+                                    size_t count, myb_orientation* out, size_t* failed);
 
 typedef struct mybgo_body {
   int64_t id;
@@ -59,23 +125,9 @@ typedef struct mybgo_body {
   double luminosity;
   double limb[2];
   double spin[3];
-  int state_kind; /* MYBGO_STATE_* */
-  const myb_spk* spk;
-  int32_t target;
-  int32_t center;
-  int32_t frame;
-  const char* state_scale; /* NULL: the model's scale */
-  int orientation_kind;    /* MYBGO_ORIENTATION_* */
-  myb_rotation fixed;      /* FIXED */
-  myb_rotation base;       /* PCK, WGCCRE: inertial axes -> the base of the frame */
-  int has_base;            /* 0: the base is the inertial axes */
-  const myb_cip* cip;      /* CIP: the model, the EOP, the time system and the name of TT */
-  const myb_eop* eop;
-  const myb_timesys* timesys;
-  const char* tt_scale;
-  const myb_pck* pck; /* PCK: the set and the frame class */
-  int32_t pck_id;
-  const myb_wgccre* wgccre;      /* WGCCRE */
+  mybgo_provider state;          /* NONE: the body is the origin */
+  const char* state_scale;       /* NULL: the model's scale */
+  mybgo_orientation orientation; /* NONE: the inertial axes */
   const char* orientation_scale; /* NULL: the model's scale */
 } mybgo_body;
 
@@ -168,6 +220,12 @@ void mybgo_model_destroy(mybgo_model* model); /* accepts NULL */
 size_t mybgo_model_parameter_count(const mybgo_model* model);
 void mybgo_model_get_parameters(const mybgo_model* model, double* values);
 myb_status mybgo_model_set_parameters(mybgo_model* model, const double* values);
+
+/* What the tasks of the other parts of the glue take from a model: its force model, its
+ * environment and the count of its bodies. */
+myb_force_model* mybgo_model_force(mybgo_model* model);
+myb_env* mybgo_model_env(mybgo_model* model);
+size_t mybgo_model_bodies(const mybgo_model* model);
 
 /* The sum of the enabled terms at count points: a[3 k ..] at t[k] and the state y[6 k ..].
  * *failed: as for the array forms of the library. */
@@ -320,5 +378,7 @@ myb_status mybgo_spk_write(const char* path, const char* internal_name, size_t s
                            const myb_spk_segment_header* headers, const int* types,
                            const int* degrees, const size_t* counts, const double* epochs,
                            const double* states, void** data, size_t* size, size_t* failed);
+
+#include "glue_tasks.h"
 
 #endif /* MYBGO_GLUE_H_ */

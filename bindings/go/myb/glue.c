@@ -8,42 +8,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "_cgo_export.h" /* mybgoTerm, mybgoEvent: the Go functions called back */
-
-/* ---- Go functions as terms and events ---------------------------------------------------------
- * The context holds the handle of the Go function (runtime/cgo.Handle); the exported Go
- * function finds it, calls it and returns its result. The arguments are copied, so that Go
- * receives pointers it may write through without casting away const. */
-
-typedef struct go_context {
-  uintptr_t handle;
-} go_context;
-
-static myb_status go_term(void* context, double t, const double x[3], const double v[3],
-                          double a[3]) {
-  const go_context* c = context;
-  double xc[3] = {x[0], x[1], x[2]};
-  double vc[3] = {v[0], v[1], v[2]};
-  return (myb_status)mybgoTerm(c->handle, t, xc, vc, a);
-}
-
-static double go_event(void* context, double t, const double* y) {
-  const go_context* c = context;
-  double yc[6];
-  memcpy(yc, y, sizeof yc);
-  return mybgoEvent(c->handle, t, yc);
-}
+#include "glue_internal.h"
 
 /* ---- The model ---------------------------------------------------------------------------------
  */
 
 typedef struct body_store {
-  myb_spk_body spk;
-  myb_cip_orientation cip;
-  myb_pck_orientation pck;
-  myb_wgccre_orientation wgccre;
-  myb_rotation fixed;
-  myb_rotation base;
+  mybgo_provider state;
+  mybgo_orientation_store orientation;
 } body_store;
 
 typedef struct term_store {
@@ -61,7 +33,7 @@ typedef struct term_store {
   myb_object object;
   myb_exponential_atmosphere atmosphere;
   myb_eclipse_event breaks[2 * MYB_ENV_MAX_OCCULTERS];
-  go_context go;
+  mybgo_go_context go;
 } term_store;
 
 struct mybgo_model {
@@ -88,62 +60,22 @@ static myb_status add_body(mybgo_model* m, const mybgo_body* d, body_store* s) {
   b.spin[0] = d->spin[0];
   b.spin[1] = d->spin[1];
   b.spin[2] = d->spin[2];
-  if (d->state_kind == MYBGO_STATE_SPK) {
-    if (d->spk == NULL) {
-      return MYB_E_DOMAIN;
-    }
-    s->spk = (myb_spk_body){
-        .spk = d->spk, .target = d->target, .center = d->center, .frame = d->frame, .graph = NULL};
-    b.state = myb_spk_body_state;
-    b.state_context = &s->spk;
+  if (d->state.kind != MYBGO_PROVIDER_NONE) {
+    s->state = d->state;
+    b.state = mybgo_provider_state;
+    b.state_context = &s->state;
     b.state_scale = d->state_scale;
-  } else if (d->state_kind != MYBGO_STATE_ORIGIN) {
-    return MYB_E_DOMAIN;
   }
-  s->base = d->base;
-  const myb_rotation* base = d->has_base ? &s->base : NULL;
-  switch (d->orientation_kind) {
-    case MYBGO_ORIENTATION_NONE:
-      break;
-    case MYBGO_ORIENTATION_FIXED:
-      s->fixed = d->fixed;
-      b.orientation = myb_orientation_fixed;
-      b.orientation_context = &s->fixed;
-      break;
-    case MYBGO_ORIENTATION_CIP: {
-      if (d->cip == NULL || d->eop == NULL || d->timesys == NULL || d->tt_scale == NULL) {
-        return MYB_E_DOMAIN;
-      }
-      myb_scale tt = {0};
-      const myb_status status = myb_timesys_scale(d->timesys, d->tt_scale, &tt);
-      if (status != MYB_OK) {
-        return status;
-      }
-      s->cip = (myb_cip_orientation){.cip = d->cip, .eop = d->eop, .timesys = d->timesys, .tt = tt};
-      b.orientation = myb_orientation_cip;
-      b.orientation_context = &s->cip;
-      break;
-    }
-    case MYBGO_ORIENTATION_PCK:
-      if (d->pck == NULL) {
-        return MYB_E_DOMAIN;
-      }
-      s->pck = (myb_pck_orientation){.pck = d->pck, .id = d->pck_id, .base = base};
-      b.orientation = myb_orientation_pck;
-      b.orientation_context = &s->pck;
-      break;
-    case MYBGO_ORIENTATION_WGCCRE:
-      if (d->wgccre == NULL) {
-        return MYB_E_DOMAIN;
-      }
-      s->wgccre = (myb_wgccre_orientation){.model = d->wgccre, .base = base};
-      b.orientation = myb_orientation_wgccre;
-      b.orientation_context = &s->wgccre;
-      break;
-    default:
-      return MYB_E_DOMAIN;
+  myb_orientation_function orientation = NULL;
+  void* context = NULL;
+  const myb_status status =
+      mybgo_orientation_of(&d->orientation, &s->orientation, &orientation, &context);
+  if (status != MYB_OK) {
+    return status;
   }
-  if (b.orientation != NULL) {
+  if (orientation != NULL) {
+    b.orientation = orientation;
+    b.orientation_context = context;
     b.orientation_scale = d->orientation_scale;
   }
   size_t index = 0;
@@ -280,7 +212,7 @@ static myb_status add_term(mybgo_model* m, const mybgo_term* d, term_store* s) {
       break;
     case MYBGO_TERM_GO:
       s->go.handle = d->handle;
-      status = myb_force_model_add(m->model, d->name, go_term, NULL, &s->go, &s->index);
+      status = myb_force_model_add(m->model, d->name, mybgo_go_term, NULL, &s->go, &s->index);
       break;
     default:
       return MYB_E_DOMAIN;
@@ -409,6 +341,18 @@ fail:
   return status;
 }
 
+myb_force_model* mybgo_model_force(mybgo_model* model) {
+  return model->model;
+}
+
+myb_env* mybgo_model_env(mybgo_model* model) {
+  return model->env;
+}
+
+size_t mybgo_model_bodies(const mybgo_model* model) {
+  return model->body_count;
+}
+
 size_t mybgo_model_parameter_count(const mybgo_model* model) {
   return myb_force_model_parameter_count(model->model);
 }
@@ -508,7 +452,7 @@ typedef struct event_context {
   myb_station station;
   myb_elevation_event elevation;
   myb_eclipse_event eclipse;
-  go_context go;
+  mybgo_go_context go;
 } event_context;
 
 /* The function and the context of an event description. */
@@ -571,7 +515,7 @@ static myb_status event_of(mybgo_model* m, const mybgo_event* e, event_context* 
       return MYB_OK;
     case MYBGO_EVENT_GO:
       c->go.handle = e->handle;
-      *g = go_event;
+      *g = mybgo_go_event;
       *context = &c->go;
       return MYB_OK;
     default:
@@ -680,8 +624,31 @@ void mybgo_free(void* pointer) {
 
 /* ---- Estimation ---------------------------------------------------------------------------- */
 
-static myb_status measure_of(const mybgo_observation* o, myb_station* stations,
-                             myb_light_measure* light, size_t station_count, myb_observation* out) {
+myb_status mybgo_stations_of(mybgo_model* model, const mybgo_station* stations, size_t count,
+                             const mybgo_light* light, myb_station* st, myb_light_measure* lm) {
+  for (size_t s = 0; s < count; ++s) {
+    const mybgo_station* d = &stations[s];
+    if (!body_index(model, d->body)) {
+      return MYB_E_DOMAIN;
+    }
+    const myb_status status = myb_station_init(&st[s], model->env, d->body, &d->ellipsoid,
+                                               d->longitude, d->latitude, d->height);
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (light != NULL) {
+      lm[s] = (myb_light_measure){.station = &st[s],
+                                  .c = light->c,
+                                  .gm = light->gm,
+                                  .two_way = light->two_way,
+                                  .aberration = light->aberration};
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status mybgo_measure_of(const mybgo_observation* o, myb_station* stations,
+                            myb_light_measure* light, size_t station_count, myb_observation* out) {
   const int with_light = (o->kind & MYBGO_MEASURE_LIGHT) != 0;
   const int kind = o->kind & ~MYBGO_MEASURE_LIGHT;
   out->t = o->t;
@@ -739,27 +706,13 @@ myb_status mybgo_fit(mybgo_model* model, double t0, double* y0, const mybgo_stat
   if (st == NULL || lm == NULL || obs == NULL) {
     goto cleanup;
   }
-  for (size_t s = 0; s < station_count; ++s) {
-    const mybgo_station* d = &stations[s];
-    if (!body_index(model, d->body)) {
-      status = MYB_E_DOMAIN;
-      goto cleanup;
-    }
-    status = myb_station_init(&st[s], model->env, d->body, &d->ellipsoid, d->longitude, d->latitude,
-                              d->height);
-    if (status != MYB_OK) {
-      goto cleanup;
-    }
-    if (light != NULL) {
-      lm[s] = (myb_light_measure){.station = &st[s],
-                                  .c = light->c,
-                                  .gm = light->gm,
-                                  .two_way = light->two_way,
-                                  .aberration = light->aberration};
-    }
+  status = mybgo_stations_of(model, stations, station_count, light, st, lm);
+  if (status != MYB_OK) {
+    goto cleanup;
   }
   for (size_t k = 0; k < count; ++k) {
-    status = measure_of(&observations[k], st, light != NULL ? lm : NULL, station_count, &obs[k]);
+    status =
+        mybgo_measure_of(&observations[k], st, light != NULL ? lm : NULL, station_count, &obs[k]);
     if (status != MYB_OK) {
       *failed = k;
       goto cleanup;

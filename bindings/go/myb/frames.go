@@ -602,12 +602,12 @@ func (p *PCK) RotationMany(id int32, t []Time) ([]Rotation, []int32, error) {
 
 // ---- Orientation providers ------------------------------------------------------------------------
 
-// OrientationSource is the orientation of a body of a model, and a provider that can be
-// sampled over a series of instants in one call (myb_orientation_many).
+// OrientationSource is the orientation of a body (of a model or a system), and a provider that
+// can be sampled over a series of instants in one call (myb_orientation_many).
 type OrientationSource interface {
 	// Sample is the orientation at every instant of a slice.
 	Sample(t []Time) ([]Orientation, error)
-	describe(b *C.mybgo_body, k *keeper) error
+	describe(o *C.mybgo_orientation, k *keeper) error
 }
 
 // FixedOrientation is a constant rotation from the inertial axes to the body-fixed frame.
@@ -640,14 +640,25 @@ type WGCCREOrientation struct {
 	Base  *Rotation
 }
 
-func (f FixedOrientation) describe(b *C.mybgo_body, k *keeper) error {
-	b.orientation_kind = C.MYBGO_ORIENTATION_FIXED
-	b.fixed = *cRotation(&f.Rotation)
+// CKOrientation is the pointing of an instrument of a CK set through the clock of its SCLK
+// kernel (myb_orientation_ck): instants on the clock's scale; Base (0: any) the frame the
+// pointing must be given in; Tolerance (ticks) how far a pointing may be from the instant.
+type CKOrientation struct {
+	CK         *CK
+	SCLK       *SCLK
+	Instrument int32
+	Base       int32
+	Tolerance  float64
+}
+
+func (f FixedOrientation) describe(o *C.mybgo_orientation, k *keeper) error {
+	o.kind = C.MYBGO_ORIENTATION_FIXED
+	o.fixed = *cRotation(&f.Rotation)
 	return nil
 }
 
-func (e EarthOrientation) describe(b *C.mybgo_body, k *keeper) error {
-	b.orientation_kind = C.MYBGO_ORIENTATION_CIP
+func (e EarthOrientation) describe(o *C.mybgo_orientation, k *keeper) error {
+	o.kind = C.MYBGO_ORIENTATION_CIP
 	cip, err := k.hold(e.CIP.obj())
 	if err != nil {
 		return err
@@ -660,48 +671,74 @@ func (e EarthOrientation) describe(b *C.mybgo_body, k *keeper) error {
 	if err != nil {
 		return err
 	}
-	b.cip = (*C.myb_cip)(cip)
-	b.eop = (*C.myb_eop)(eop)
-	b.timesys = (*C.myb_timesys)(sys)
-	b.tt_scale = k.cstring(e.TT)
+	o.cip = (*C.myb_cip)(cip)
+	o.eop = (*C.myb_eop)(eop)
+	o.timesys = (*C.myb_timesys)(sys)
+	o.tt_scale = k.cstring(e.TT)
 	return nil
 }
 
-func (p PCKOrientation) describe(b *C.mybgo_body, k *keeper) error {
-	b.orientation_kind = C.MYBGO_ORIENTATION_PCK
+func (p PCKOrientation) describe(o *C.mybgo_orientation, k *keeper) error {
+	o.kind = C.MYBGO_ORIENTATION_PCK
 	pck, err := k.hold(p.PCK.obj())
 	if err != nil {
 		return err
 	}
-	b.pck = (*C.myb_pck)(pck)
-	b.pck_id = C.int32_t(p.ID)
+	o.pck = (*C.myb_pck)(pck)
+	o.pck_id = C.int32_t(p.ID)
 	if p.Base != nil {
-		b.base = *cRotation(p.Base)
-		b.has_base = 1
+		o.base = *cRotation(p.Base)
+		o.has_base = 1
 	}
 	return nil
 }
 
-func (w WGCCREOrientation) describe(b *C.mybgo_body, k *keeper) error {
-	b.orientation_kind = C.MYBGO_ORIENTATION_WGCCRE
+func (w WGCCREOrientation) describe(o *C.mybgo_orientation, k *keeper) error {
+	o.kind = C.MYBGO_ORIENTATION_WGCCRE
 	model, err := k.hold(w.Model.obj())
 	if err != nil {
 		return err
 	}
-	b.wgccre = (*C.myb_wgccre)(model)
+	o.wgccre = (*C.myb_wgccre)(model)
 	if w.Base != nil {
-		b.base = *cRotation(w.Base)
-		b.has_base = 1
+		o.base = *cRotation(w.Base)
+		o.has_base = 1
 	}
 	return nil
 }
 
-// sample calls an orientation provider of the library over the instants; context holds C
-// pointers only.
-func sample(op string, provider C.myb_orientation_function, context unsafe.Pointer, t []Time) ([]Orientation, error) {
+func (c CKOrientation) describe(o *C.mybgo_orientation, k *keeper) error {
+	o.kind = C.MYBGO_ORIENTATION_CK
+	ck, err := k.hold(c.CK.obj())
+	if err != nil {
+		return err
+	}
+	sclk, err := k.hold(c.SCLK.obj())
+	if err != nil {
+		return err
+	}
+	o.ck = (*C.myb_ck)(ck)
+	o.sclk = (*C.myb_sclk)(sclk)
+	o.instrument = C.int32_t(c.Instrument)
+	o.ck_base = C.int32_t(c.Base)
+	o.tolerance = C.double(c.Tolerance)
+	return nil
+}
+
+// sampleOrientation describes an orientation for C and samples it over the instants.
+func sampleOrientation(op string, src OrientationSource, t []Time) ([]Orientation, error) {
+	if err := checkTimes(op, t); err != nil {
+		return nil, err
+	}
+	k := newKeeper()
+	defer k.done()
+	var o C.mybgo_orientation
+	if err := src.describe(&o, k); err != nil {
+		return nil, err
+	}
 	out := make([]Orientation, len(t))
 	var failed C.size_t
-	status := C.myb_orientation_many(provider, context, cTimes(t), C.size_t(len(t)),
+	status := C.mybgo_orientation_sample(&o, cTimes(t), C.size_t(len(t)),
 		(*C.myb_orientation)(first(out)), &failed)
 	if err := failAt(op, status, failed); err != nil {
 		return nil, err
@@ -711,76 +748,25 @@ func sample(op string, provider C.myb_orientation_function, context unsafe.Point
 
 // Sample gives the rotation at every instant.
 func (f FixedOrientation) Sample(t []Time) ([]Orientation, error) {
-	if err := checkTimes("FixedOrientation.Sample", t); err != nil {
-		return nil, err
-	}
-	r := f.Rotation
-	return sample("FixedOrientation.Sample", C.myb_orientation_function(C.myb_orientation_fixed),
-		unsafe.Pointer(&r), t)
+	return sampleOrientation("FixedOrientation.Sample", f, t)
 }
 
 // Sample gives the orientation of the Earth at every instant of TT.
 func (e EarthOrientation) Sample(t []Time) ([]Orientation, error) {
-	const op = "EarthOrientation.Sample"
-	if err := checkTimes(op, t); err != nil {
-		return nil, err
-	}
-	held, err := acquireAll(e.CIP.obj(), e.EOP.obj(), e.TimeSystem.obj())
-	if err != nil {
-		return nil, err
-	}
-	defer releaseAll(held)
-	if len(held) != 3 {
-		return nil, refuse(op, -1, "the model, the EOP and the time system are all needed")
-	}
-	sys := (*C.myb_timesys)(e.TimeSystem.o.ptr)
-	tt, err := scaleOf(op, sys, e.TT)
-	if err != nil {
-		return nil, err
-	}
-	context := C.myb_cip_orientation{cip: (*C.myb_cip)(e.CIP.o.ptr), eop: (*C.myb_eop)(e.EOP.o.ptr),
-		timesys: sys, tt: tt}
-	return sample(op, C.myb_orientation_function(C.myb_orientation_cip), unsafe.Pointer(&context), t)
+	return sampleOrientation("EarthOrientation.Sample", e, t)
 }
 
 // Sample gives the orientation of the frame at every instant.
 func (p PCKOrientation) Sample(t []Time) ([]Orientation, error) {
-	const op = "PCKOrientation.Sample"
-	if err := checkTimes(op, t); err != nil {
-		return nil, err
-	}
-	ptr, err := p.PCK.obj().acquire()
-	if err != nil {
-		return nil, err
-	}
-	defer p.PCK.o.release()
-	var base *C.myb_rotation
-	if p.Base != nil {
-		base = (*C.myb_rotation)(C.malloc(C.sizeof_myb_rotation))
-		defer C.free(unsafe.Pointer(base))
-		*base = *cRotation(p.Base)
-	}
-	context := C.myb_pck_orientation{pck: (*C.myb_pck)(ptr), id: C.int32_t(p.ID), base: base}
-	return sample(op, C.myb_orientation_function(C.myb_orientation_pck), unsafe.Pointer(&context), t)
+	return sampleOrientation("PCKOrientation.Sample", p, t)
 }
 
 // Sample gives the orientation of the body at every instant of TDB.
 func (w WGCCREOrientation) Sample(t []Time) ([]Orientation, error) {
-	const op = "WGCCREOrientation.Sample"
-	if err := checkTimes(op, t); err != nil {
-		return nil, err
-	}
-	ptr, err := w.Model.obj().acquire()
-	if err != nil {
-		return nil, err
-	}
-	defer w.Model.o.release()
-	var base *C.myb_rotation
-	if w.Base != nil {
-		base = (*C.myb_rotation)(C.malloc(C.sizeof_myb_rotation))
-		defer C.free(unsafe.Pointer(base))
-		*base = *cRotation(w.Base)
-	}
-	context := C.myb_wgccre_orientation{model: (*C.myb_wgccre)(ptr), base: base}
-	return sample(op, C.myb_orientation_function(C.myb_orientation_wgccre), unsafe.Pointer(&context), t)
+	return sampleOrientation("WGCCREOrientation.Sample", w, t)
+}
+
+// Sample gives the pointing at every instant of the clock's scale.
+func (c CKOrientation) Sample(t []Time) ([]Orientation, error) {
+	return sampleOrientation("CKOrientation.Sample", c, t)
 }
