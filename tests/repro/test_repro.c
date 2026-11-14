@@ -66,7 +66,11 @@
  * value from phase 20 on, and every one before phase 19, is as it was. Before:
  * 0x22590af49224a138 (from phase 19 on), 0x8a11e2afe9e666fa (prefix 20), 0xb22481187ba3923a
  * (prefix 19). */
-static const uint64_t golden_hash = UINT64_C(0xe234728b95d060b4);
+/* With the workload of phase 21, the last (the array forms, the variational equations of the
+ * system, the FMM over threads, powered flybys, the PN terms of phase 21, the friction that
+ * sticks, IAS15 with the timescale of the jerk): 0xaa258e26488b41eb; without it (MYB_REPRO_PREFIX
+ * 22) 0xe234728b95d060b4. */
+static const uint64_t golden_hash = UINT64_C(0xaa258e26488b41eb);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -4289,6 +4293,174 @@ static myb_status repro_planet(void* context, myb_time t, double y[6]) {
   return MYB_OK;
 }
 
+/* Phase 21, the last: the array forms, the variational equations of the system, the FMM over
+ * threads, powered flybys, the post-Newtonian terms beyond those of phase 22, the friction that
+ * sticks and IAS15 with the timescale of the jerk. */
+static void workload_phase21(hasher* h) {
+  const double mu = 3.986004418e14;
+  /* the array forms: Kepler over several offsets (the single call in a loop, bit for bit) */
+  {
+    const myb_pv pv0 = {{7.1e6, 1.3e5, -2.2e5}, {-120.0, 7350.0, 1100.0}};
+    static const double dt[4] = {-1800.0, 0.0, 950.5, 86400.0};
+    myb_pv pv[4];
+    size_t failed = 0;
+    MT_CHECK(myb_kepler_propagate_many(mu, &pv0, dt, 4, pv, &failed) == MYB_OK && failed == 4);
+    for (int k = 0; k < 4; ++k) {
+      hash_pv(h, &pv[k]);
+    }
+  }
+  /* the derivatives of a system by its variational equations: two bodies over 4000 s */
+  {
+    const double gm[2] = {mu, 4.9e12};
+    myb_system* s = NULL;
+    MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+    if (s != NULL) {
+      const double y0[12] = {0.0, 0.0, 0.0, 3.8e8, 1.2e7, 3.0e6,
+                             0.0, 0.0, 0.0, -30.0, 1020.0, 40.0};
+      const myb_ias15_options options = {.epsilon = 1e-10};
+      const size_t bodies[1] = {1};
+      static double phi[144];
+      double sensitivity[12];
+      double y1[12];
+      MT_CHECK(myb_system_partials(s, &options, 0.0, y0, 4000.0, bodies, 1, y1, phi,
+                                   sensitivity) == MYB_OK);
+      for (int i = 0; i < 12; ++i) {
+        hash_double(h, y1[i]);
+        hash_double(h, sensitivity[i]);
+      }
+      for (int i = 0; i < 144; ++i) {
+        hash_double(h, phi[i]);
+      }
+      myb_system_destroy(s);
+    }
+  }
+  /* the FMM over two threads: the bits of the serial evaluation */
+  {
+    enum { N = 2500 };
+    static double gm[N];
+    static double x[3 * N];
+    static double a[3 * N];
+    mt_rng rng = {.state = UINT64_C(20261114)};
+    for (int i = 0; i < N; ++i) {
+      gm[i] = 1.0 + repro_uniform(&rng);
+      for (int k = 0; k < 3; ++k) {
+        x[3 * i + k] = 2.0 * repro_uniform(&rng) - 1.0;
+      }
+    }
+    myb_nbody* nbody = NULL;
+    myb_pool* pool = NULL;
+    MT_CHECK(myb_nbody_create(N, 0, gm, NULL, &nbody) == MYB_OK);
+    MT_CHECK(myb_pool_create(2, NULL, &pool) == MYB_OK);
+    if (nbody != NULL && pool != NULL) {
+      MT_CHECK(myb_nbody_set_approximation(nbody, 8, 0.5) == MYB_OK);
+      myb_nbody_set_pool(nbody, pool);
+      MT_CHECK(myb_nbody_acceleration(nbody, 0.0, x, a) == MYB_OK);
+      for (int i = 0; i < 3 * N; i += 97) {
+        hash_double(h, a[i]);
+      }
+    }
+    myb_nbody_destroy(nbody);
+    myb_pool_destroy(pool);
+  }
+  /* a powered flyby of Venus: the impulse at the periapsis and the turn, with derivatives */
+  {
+    double dv = 0.0;
+    double turn = 0.0;
+    double partials[6];
+    MT_CHECK(myb_chain_flyby(3.24859e14, 4100.0, 4600.0, 6.5e6, &dv, &turn, partials) == MYB_OK);
+    hash_double(h, dv);
+    hash_double(h, turn);
+    for (int i = 0; i < 6; ++i) {
+      hash_double(h, partials[i]);
+    }
+  }
+  /* the post-Newtonian terms of phase 21: spin-spin at next-to-leading order, the spin-orbit
+   * radiation reaction at next-to-leading order, the spin-orbit tail, the tails on a
+   * hyperbola */
+  {
+    const double c = 299792458.0;
+    const double gm1 = 1.3271244e20 * 1.4;
+    const double gm2 = 1.3271244e20 * 1.3;
+    const double chi1[3] = {0.1, -0.2, 0.6};
+    const double chi2[3] = {-0.3, 0.05, 0.4};
+    const double x[3] = {6.0e8, 1.0e8, 0.5e8};
+    const double v[3] = {-2.0e5, 1.1e6, 0.4e5};
+    static const unsigned orders[3] = {MYB_PN_SS3, MYB_PN_SORR5, MYB_PN_SOTAIL};
+    for (int k = 0; k < 3; ++k) {
+      const myb_pn_binary b = {gm1, gm2, c, MYB_PN_1 | orders[k], 0.0, 1.0, 1.0};
+      double acc[3];
+      double d1[3];
+      double d2[3];
+      const myb_status st = myb_pn_binary_evaluate(&b, x, v, chi1, chi2, acc, d1, d2);
+      hash_double(h, (double)st);
+      for (int i = 0; i < 3 && st == MYB_OK; ++i) {
+        hash_double(h, acc[i]);
+        hash_double(h, d1[i]);
+        hash_double(h, d2[i]);
+      }
+    }
+    const myb_pn_binary open = {gm1, gm2, c, MYB_PN_4 | MYB_PN_4RR | MYB_PN_TAILX, 1.0e9, 0.0,
+                                0.0};
+    const double vx[3] = {-2.0e5, 3.5e6, 0.4e5}; /* unbound */
+    double acc[3];
+    const myb_status st = myb_pn_binary_evaluate(&open, x, vx, NULL, NULL, acc, NULL, NULL);
+    hash_double(h, (double)st);
+    for (int i = 0; i < 3 && st == MYB_OK; ++i) {
+      hash_double(h, acc[i]);
+    }
+  }
+  /* the friction that sticks: a sphere pressed into a plane, sliding on a deflected spring */
+  {
+    const myb_contact_surface plane = {.shape = MYB_CONTACT_PLANE, .normal = {0.0, 0.0, 1.0}};
+    const myb_contact_law law = {.stiffness = 1.0e4,
+                                 .exponent = 1.0,
+                                 .damping = 5.0,
+                                 .friction = 0.6,
+                                 .kind = MYB_CONTACT_FRICTION_STICK,
+                                 .tangential_stiffness = 1.0e4,
+                                 .tangential_damping = 100.0};
+    const myb_contact_point point[1] = {{{0.0, 0.0, 0.0}, 0.05}};
+    const double x[3] = {0.1, -0.2, 0.05 - 1.6e-4};
+    const double v[3] = {2.0e-4, -1.0e-4, -3.0e-5};
+    const double deflection[3] = {3.0e-6, 1.0e-6, 0.0};
+    double rate[3];
+    myb_contact_result r;
+    MT_CHECK(myb_contact_force_stick(&plane, &law, point, 1, x, v, NULL, NULL, deflection, rate,
+                                     &r) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      hash_double(h, r.force[i]);
+      hash_double(h, rate[i]);
+    }
+    hash_double(h, r.energy);
+    hash_double(h, r.gap);
+  }
+  /* IAS15 with the timescale of the jerk: a system of two bodies over a day */
+  {
+    const double gm[2] = {mu, 1.0e3};
+    myb_system* s = NULL;
+    MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+    myb_ias15* in = NULL;
+    const myb_ias15_options options = {.epsilon = 1e-10, .timescale = MYB_IAS15_TIMESCALE_JERK};
+    if (s != NULL) {
+      MT_CHECK(myb_system_integrator(s, &options, NULL, &in) == MYB_OK);
+    }
+    if (in != NULL) {
+      const double y0[12] = {0.0, 0.0, 0.0, 7.0e6, 0.0, 1.0e5,
+                             0.0, 0.0, 0.0, 0.0, 7400.0, 900.0};
+      MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y0) == MYB_OK);
+      myb_system_event event;
+      MT_CHECK(myb_system_advance(s, in, 86400.0, 0.0, &event) == MYB_OK);
+      const double* y = myb_ias15_state(in);
+      for (int i = 0; i < 12; ++i) {
+        hash_double(h, y[i]);
+      }
+      hash_double(h, (double)myb_ias15_statistics(in).accepted);
+      myb_ias15_destroy(in);
+    }
+    myb_system_destroy(s);
+  }
+}
+
 static void workload_phase22(hasher* h) {
   myb_diag diag = {0};
   const double mu = 3.986004418e14;
@@ -4812,11 +4984,19 @@ int main(void) {
   if (upto >= 20) {
     workload_phase20(&h);
   }
-  if (upto >= 22) { /* phase 22 came before 21 */
+  /* the phases in the order they were done: 20, 22, then 21 — the last, which only the whole
+   * run (or MYB_REPRO_PREFIX=21) holds */
+  const int done = upto == 21 ? 99 : upto;
+  if (done >= 22) {
     workload_phase22(&h);
   }
+  if (done >= 99) {
+    workload_phase21(&h);
+  }
   uint64_t expected = golden_hash;
-  if (upto == 20 || upto == 21) {
+  if (done == 22) {
+    expected = UINT64_C(0xe234728b95d060b4); /* phase 22, with the solver's slope of phase 21 */
+  } else if (upto == 20) {
     expected = UINT64_C(0x7fc24de1c1d525be); /* 0x8a11e2afe9e666fa before the solver's slope */
   } else if (upto == 19) {
     expected = UINT64_C(0x4352d2d0bc185d9e); /* 0xb22481187ba3923a likewise */
