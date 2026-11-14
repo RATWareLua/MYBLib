@@ -184,7 +184,9 @@ MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_pointings(
 
 /* A segment of type 2: `count` intervals [starts[k], stops[k]] that follow one another
  * without overlap, each with the quaternion at its start, a constant angular velocity (3,
- * rad/s) and the seconds a tick lasts in it. Errors as above. */
+ * rad/s) and the seconds a tick lasts in it (> 0). Errors as above, and MYB_E_DOMAIN for an
+ * interval whose length or largest turn |w| seconds_per_tick (stop - start) is not a finite
+ * number — what the reader refuses (MYB_E_FORMAT). */
 MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_intervals(
     myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
     const double* stops, const double* quaternions, const double* rates,

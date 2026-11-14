@@ -332,12 +332,20 @@ static myb_status parse(ck_segment* s, myb_diag* diag) {
       /* finite ends (an infinite one passes every comparison and turns the frame by an
        * infinite angle), and a tick that lasts a positive time */
       const double seconds_per_tick = word(s, s->begin + 8 * i + 7);
-      if (!isfinite(begin) || !isfinite(end) || !(end >= begin) ||
+      if (!isfinite(begin) || !isfinite(end) || !(end >= begin) || !isfinite(end - begin) ||
           (i > 0 && !(begin >= word(s, s->stops + i - 1)))) {
         return format_error(diag, s, "intervals out of order or not finite");
       }
       if (!(seconds_per_tick > 0.0) || !isfinite(seconds_per_tick)) {
         return format_error(diag, s, "seconds per tick");
+      }
+      /* the largest turn of the interval must be a number: then no request inside overflows
+       * (the writer refuses the same intervals) */
+      const double rate[3] = {word(s, s->begin + 8 * i + 4), word(s, s->begin + 8 * i + 5),
+                              word(s, s->begin + 8 * i + 6)};
+      const double speed = myb_vec3_norm_scaled(rate);
+      if (!isfinite(speed) || !isfinite(speed * seconds_per_tick * (end - begin))) {
+        return format_error(diag, s, "angular velocity");
       }
     }
   } else if (s->type == 3) {
@@ -669,8 +677,13 @@ static myb_status answer_type2(const ck_segment* s, double ticks, double toleran
       !isfinite(seconds_per_tick) || !isfinite(at)) {
     return MYB_E_FORMAT;
   }
-  const double speed = myb_vec3_norm(a->rate);
+  /* scaled where the squares would overflow (a rate of 1e154 rad a second made the speed
+   * infinite, the axis zero and the turn NaN); the turn finite as the reader checked */
+  const double speed = myb_vec3_norm_scaled(a->rate);
   const double angle = speed * seconds_per_tick * (at - word(s, s->ticks + k));
+  if (speed > 0.0 && !isfinite(angle)) {
+    return MYB_E_FORMAT;
+  }
   if (speed > 0.0 && angle != 0.0) {
     /* the axes of the instrument turn about the angular velocity: C = C0 R^T */
     const double axis[3] = {a->rate[0] / speed, a->rate[1] / speed, a->rate[2] / speed};

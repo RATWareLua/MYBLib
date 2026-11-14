@@ -852,7 +852,42 @@ static void test_reviewed_edges(void) {
     MT_CHECK(load_damaged(writer, 0.0, 0.0, NULL) == MYB_OK);
     MT_CHECK(load_damaged(writer, end[0], HUGE_VAL, NULL) == MYB_E_FORMAT);
     MT_CHECK(load_damaged(writer, per_tick[1], -per_tick[1], NULL) == MYB_E_FORMAT);
+    /* a rate so large that the turn over the interval is not a number: refused on loading
+     * (the speed overflowed and the answer was NaN with MYB_OK) */
+    MT_CHECK(load_damaged(writer, rates[0], 1.0e308, NULL) == MYB_E_FORMAT);
+    /* a rate whose squares overflow while the turn is a number: read, and a rotation inside */
+    myb_ck* big = NULL;
+    MT_CHECK(load_damaged(writer, rates[0], 1.0e200, &big) == MYB_OK);
+    if (big != NULL) {
+      myb_ck_pointing p;
+      MT_CHECK(myb_ck_pointing_at(big, -9099053, begin[0] + 100.0, 0.0, 1, &p) == MYB_OK);
+      const double row = p.rotation.m[0] * p.rotation.m[0] + p.rotation.m[1] * p.rotation.m[1] +
+                         p.rotation.m[2] * p.rotation.m[2];
+      MT_CHECK(fabs(row - 1.0) < 1e-12);
+      myb_ck_destroy(big);
+    }
     myb_ck_writer_destroy(writer);
+    /* the writer refuses what the reader would: a tick of no time or of negative time, a turn
+     * over an interval that is not a number, an interval whose length overflows */
+    myb_ck_writer* refusing = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: refused type 2", NULL, &refusing) == MYB_OK);
+    const double zero_tick[M] = {1.0 / 256.0, 0.0, 1.0 / 1024.0};
+    const double negative_tick[M] = {1.0 / 256.0, -1.0 / 768.0, 1.0 / 1024.0};
+    MT_CHECK(myb_ck_writer_add_intervals(refusing, &h, begin, end, q, rates, zero_tick, M) ==
+             MYB_E_DOMAIN);
+    MT_CHECK(myb_ck_writer_add_intervals(refusing, &h, begin, end, q, rates, negative_tick, M) ==
+             MYB_E_DOMAIN);
+    double fast[3 * M];
+    memcpy(fast, rates, sizeof fast);
+    fast[0] = 1.0e308;
+    MT_CHECK(myb_ck_writer_add_intervals(refusing, &h, begin, end, q, fast, per_tick, M) ==
+             MYB_E_DOMAIN);
+    const double wide_begin[1] = {-1.5e308};
+    const double wide_end[1] = {1.5e308};
+    MT_CHECK(myb_ck_writer_add_intervals(refusing, &h, wide_begin, wide_end, q, rates, per_tick,
+                                         1) == MYB_E_DOMAIN);
+    MT_CHECK(myb_ck_writer_size(refusing) == 0);
+    myb_ck_writer_destroy(refusing);
   }
 }
 

@@ -16,6 +16,7 @@
 #include "myb/cmath.h"
 #include "myb/frames.h"
 #include "myb/kin.h"
+#include "num/vec3.h"
 #include "platform/platform.h"
 
 enum {
@@ -777,9 +778,14 @@ myb_status myb_ck_writer_add_intervals(myb_ck_writer* writer,
   }
   for (size_t k = 0; k < count; ++k) {
     double q[4];
+    /* what the reader takes: finite intervals of a finite length, a tick that lasts a positive
+     * time, and a largest turn over the interval that is a number */
     if (!isfinite(starts[k]) || !isfinite(stops[k]) || !(stops[k] >= starts[k]) ||
-        (k > 0 && !(starts[k] > stops[k - 1])) || !unit_quaternion(quaternions + 4 * k, q) ||
-        !finite3(rates + 3 * k) || !isfinite(seconds_per_tick[k])) {
+        !isfinite(stops[k] - starts[k]) || (k > 0 && !(starts[k] > stops[k - 1])) ||
+        !unit_quaternion(quaternions + 4 * k, q) || !finite3(rates + 3 * k) ||
+        !(seconds_per_tick[k] > 0.0) || !isfinite(seconds_per_tick[k]) ||
+        !isfinite(myb_vec3_norm_scaled(rates + 3 * k) * seconds_per_tick[k] *
+                  (stops[k] - starts[k]))) {
       return MYB_E_DOMAIN;
     }
   }
