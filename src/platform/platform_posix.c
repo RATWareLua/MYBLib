@@ -15,6 +15,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "core/alloc.h"
@@ -322,4 +323,11 @@ int myb_platform_processor_count(void) {
     return 1;
   }
   return count > 4096 ? 4096 : (int)count;
+}
+
+uint64_t myb_platform_monotonic_ns(void) {
+  struct timespec now;
+  /* CLOCK_MONOTONIC exists wherever POSIX.1-2008 does; it cannot fail with a valid pointer */
+  MYB_CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+  return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
 }

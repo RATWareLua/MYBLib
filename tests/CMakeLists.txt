@@ -17,6 +17,7 @@ function(myb_add_test name)
   myb_apply_flags(${name})
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+  set_property(GLOBAL APPEND PROPERTY MYB_TEST_PROGRAMS ${name})
 endfunction()
 
 # Files compiled with -mfma: the hardware reference for myb_fma, and the probe proving that
@@ -170,8 +171,8 @@ endif()
 
 # The installed library serves an outside project: examples/ configured with
 # find_package(myb) against a scratch prefix, built and run. Not under the sanitizers, whose
-# runtime the outside project would have to link as well.
-if(MYB_INSTALL AND MYB_SANITIZE STREQUAL "")
+# runtime the outside project would have to link as well, nor with coverage (its runtime).
+if(MYB_INSTALL AND MYB_SANITIZE STREQUAL "" AND NOT MYB_COVERAGE)
   set(_myb_install_args
     "-DBUILD_DIR=${PROJECT_BINARY_DIR}" "-DEXAMPLES_DIR=${PROJECT_SOURCE_DIR}/examples"
     "-DGENERATOR=${CMAKE_GENERATOR}" "-DTOOLCHAIN=${CMAKE_TOOLCHAIN_FILE}"
@@ -305,8 +306,8 @@ endif()
 
 # The Rust crates (bindings/rust) over the static library: needs cargo. On Windows the library
 # is built for the GNU ABI, so the Rust toolchain of that ABI is asked for. Not with a
-# sanitizer: Rust would have to link its runtime.
-if(MYB_SANITIZE STREQUAL "")
+# sanitizer or with coverage: Rust would have to link their runtime.
+if(MYB_SANITIZE STREQUAL "" AND NOT MYB_COVERAGE)
   find_program(MYB_CARGO cargo)
   mark_as_advanced(MYB_CARGO)
   set(_myb_cargo_ok FALSE)
@@ -582,6 +583,9 @@ else()
     "(MYB_MPFR_INCLUDE_DIR=${MYB_MPFR_INCLUDE_DIR}, MYB_MPFR_LIBRARY=${MYB_MPFR_LIBRARY})")
 endif()
 
+# ---- Fuzz harnesses of the readers (tests/fuzz) ----------------------------------------------
+add_subdirectory(fuzz)
+
 # ---- Optional modules (ext/) ----------------------------------------------------------------
 if(TARGET myb_nrlmsise00)
   myb_add_test(test_nrlmsise00 SOURCES ext/test_nrlmsise00.c LIBRARIES myb_nrlmsise00)
@@ -598,4 +602,21 @@ if(TARGET myb_jb2008)
 endif()
 if(TARGET myb_troposphere)
   myb_add_test(test_troposphere SOURCES ext/test_troposphere.c LIBRARIES myb_troposphere)
+endif()
+
+# ---- Coverage (MYB_COVERAGE) ----------------------------------------------------------------
+# The instrumented programs, one path a line, for llvm-cov (tests/tools/coverage.cmake): each
+# carries the coverage mapping of the code it links.
+if(MYB_COVERAGE)
+  get_property(_myb_programs GLOBAL PROPERTY MYB_TEST_PROGRAMS)
+  list(APPEND _myb_programs check_death)
+  if(TARGET test_cpp_binding)
+    list(APPEND _myb_programs test_cpp_binding)
+  endif()
+  set(_myb_program_paths "")
+  foreach(_program IN LISTS _myb_programs)
+    string(APPEND _myb_program_paths "$<TARGET_FILE:${_program}>\n")
+  endforeach()
+  file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/coverage-objects.txt"
+    CONTENT "${_myb_program_paths}")
 endif()

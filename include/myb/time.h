@@ -93,8 +93,9 @@ typedef struct myb_scale {
 /* Builds the scale tree from kernel variables (format in data/time/time-scales.tk; the UTC
  * table, data/time/utc-tai.tk, is optional). The system copies what it needs: the pool may
  * be destroyed afterwards. Errors: MYB_E_NOT_FOUND (missing variable), MYB_E_FORMAT
- * (inconsistent definitions, e.g. a cycle or an unordered UTC table), MYB_E_NOMEM; diag
- * names the offending variable. */
+ * (inconsistent definitions, e.g. a cycle or an unordered UTC table; offsets and epochs more
+ * than 2^40 s from J2000, UTC days beyond 10^8, TAI - UTC beyond 10^6 s or drifting by 1 s a
+ * day or more), MYB_E_NOMEM; diag names the offending variable. */
 MYB_API MYB_NODISCARD myb_status myb_timesys_create(const myb_kpool* pool,
                                                     const myb_allocator* allocator,
                                                     myb_timesys** system, myb_diag* diag);
@@ -108,7 +109,8 @@ MYB_API const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale 
 /* The same instant on another scale. Exact relations (offsets) add no error beyond the final
  * rounding of the fraction; rate relations are evaluated in double-word arithmetic; series
  * relations are iterated to below 10^-15 s. Errors: the statuses of a function set by
- * myb_timesys_set_difference. */
+ * myb_timesys_set_difference; MYB_E_DOMAIN (a series relation, or such a function, whose
+ * difference is not finite or not below 2^40 s). */
 MYB_API MYB_NODISCARD myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
                                                      myb_scale from, myb_scale to, myb_time* out);
 

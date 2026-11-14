@@ -1,0 +1,9 @@
+KPL/PCK
+Regression: an epoch of a rotation model 3e14 days from J2000 failed the check of the range of
+a myb_time in myb_wgccre_create.
+\begindata
+BODY10_POLE_RA        = ( 286.13 0. 0. )
+BODY10_POLE_DEC       = (  63.87 0. 0. )
+BODY10_PM             = (  84.176 14.18440 0. )
+BODY10_CONSTANTS_JED_EPOCH = 299999999451545.0
+\begintext

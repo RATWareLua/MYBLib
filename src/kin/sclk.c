@@ -14,6 +14,11 @@
 
 enum { MAX_FIELDS = MYB_SCLK_MAX_FIELDS, MAX_DIGITS = 18 };
 
+/* The times of a clock's table and the instants converted from ticks stay within 2^40 s
+ * (35 000 years) of J2000: further is no clock but a damaged kernel, and the instants keep
+ * far inside the range of a myb_time. */
+static const double time_limit = 0x1p40;
+
 struct myb_sclk {
   myb_allocator allocator;
   int system; /* 1 TDB, 2 TT */
@@ -204,6 +209,9 @@ myb_status myb_sclk_create(const myb_kpool* pool, int64_t id, const myb_allocato
     if (!(s->table[3 * r + 2] > 0.0)) {
       fault = "a rate that is not positive";
     }
+    if (!(s->table[3 * r + 1] > -time_limit && s->table[3 * r + 1] < time_limit)) {
+      fault = "a time of the table more than 2^40 s from J2000";
+    }
   }
   if (fault != NULL) {
     myb_sclk_destroy(s);
@@ -255,7 +263,11 @@ myb_status myb_sclk_to_time(const myb_sclk* sclk, double ticks, myb_time* t) {
     }
   }
   const double* row = s->table + 3 * lo;
-  *t = myb_time_add(myb_time_from_seconds(row[1]), row[2] * (ticks - row[0]) / per_count(s));
+  const double since = row[2] * (ticks - row[0]) / per_count(s);
+  if (!(since < time_limit)) {
+    return MYB_E_RANGE; /* a rate or a partition that carries the clock out of any time */
+  }
+  *t = myb_time_add(myb_time_from_seconds(row[1]), since);
   return MYB_OK;
 }
 
@@ -402,7 +414,15 @@ myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text, size_
   for (int i = 0; i < s->fields; ++i) {
     const double value = floor(raw / s->ticks_per[i]);
     raw -= value * s->ticks_per[i];
-    n += (size_t)snprintf(out + n, sizeof out - n, "%0*.0f", s->width[i], value + s->offsets[i]);
+    const double printed = value + s->offsets[i];
+    /* at most MAX_DIGITS digits and a sign: what the buffer holds for every field (a count
+     * beyond comes from partitions or offsets that no clock has) */
+    if (!(printed > -1e17 && printed < 1e18)) {
+      return MYB_E_RANGE;
+    }
+    /* a whole number below 2^63: printed as an integer, whose digits every C runtime writes
+     * alike (the %.0f of msvcrt gives only 17 significant digits) */
+    n += (size_t)snprintf(out + n, sizeof out - n, "%0*" PRId64, s->width[i], (int64_t)printed);
     if (i + 1 < s->fields) {
       out[n++] = s->delimiter;
     }

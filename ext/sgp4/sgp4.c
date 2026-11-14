@@ -1015,8 +1015,14 @@ static myb_status field_double(const char* line, size_t from, size_t to, double*
   char text[24];
   size_t n = 0;
   for (size_t i = from; i < to && n + 1 < sizeof text; ++i) {
-    if (line[i] != ' ') {
-      text[n++] = line[i];
+    const char c = line[i];
+    /* the fields of a TLE are fixed-point decimals: an exponent, a hexadecimal number or
+     * "inf" in one is no element set (and no formatter could write it back) */
+    if (c != ' ' && c != '.' && c != '+' && c != '-' && (c < '0' || c > '9')) {
+      return MYB_E_FORMAT;
+    }
+    if (c != ' ') {
+      text[n++] = c;
     }
   }
   if (n == 0) {
@@ -1072,6 +1078,25 @@ static double ten_to(long e) {
   return e >= 0 ? POS[e] : NEG[-e];
 }
 
+/* The mantissa 0.ddddd of a field "[sign]ddddd" (field[0] the sign: blank, '+' or '-'; the
+ * five digits may be blanks). MYB_E_FORMAT for anything else in the six columns: a digit in
+ * the place of the sign or a point among the digits is no mantissa of the catalogue. */
+static myb_status mantissa_field(const char* field, double* mantissa) {
+  if (field[0] != ' ' && field[0] != '+' && field[0] != '-') {
+    return MYB_E_FORMAT;
+  }
+  for (int i = 1; i <= 5; ++i) {
+    if (field[i] != ' ' && (field[i] < '0' || field[i] > '9')) {
+      return MYB_E_FORMAT;
+    }
+  }
+  char text[8];
+  text[0] = field[0] == ' ' ? '+' : field[0];
+  text[1] = '.';
+  memcpy(text + 2, field + 1, 5);
+  return field_double(text, 0, 7, mantissa);
+}
+
 static myb_status bad(myb_diag* diag, int line, size_t column, const char* what) {
   myb_internal_diag(diag, line, "column %zu: %s", column + 1, what);
   return MYB_E_FORMAT;
@@ -1090,7 +1115,8 @@ myb_status myb_tle_parse(const char* line1, const char* line2, unsigned flags, m
   }
   if (n2 < 68 || line2[0] != '2' || line2[1] != ' ' || line2[7] != ' ' || line2[11] != '.' ||
       line2[16] != ' ' || line2[20] != '.' || line2[25] != ' ' || line2[33] != ' ' ||
-      line2[37] != '.' || line2[42] != ' ' || line2[46] != '.' || line2[51] != ' ') {
+      line2[37] != '.' || line2[42] != ' ' || line2[46] != '.' || line2[51] != ' ' ||
+      line2[54] != '.') {
     return bad(diag, 2, 0, "not the second line of a TLE");
   }
   const int verify = (flags & MYB_TLE_NO_CHECKSUM) == 0;
@@ -1141,20 +1167,14 @@ myb_status myb_tle_parse(const char* line1, const char* line2, unsigned flags, m
     return bad(diag, 1, 33, "first derivative of the mean motion");
   }
   /* "[sign]ddddd[sign]d": 0.ddddd x 10^e */
-  char text[8];
   long exponent = 0;
   double mantissa = 0.0;
-  text[0] = line1[44] == ' ' ? '+' : line1[44];
-  text[1] = '.';
-  memcpy(text + 2, line1 + 45, 5);
-  if (field_double(text, 0, 7, &mantissa) != MYB_OK ||
+  if (mantissa_field(line1 + 44, &mantissa) != MYB_OK ||
       field_long(line1, 50, 52, &exponent) != MYB_OK || exponent < -9 || exponent > 9) {
     return bad(diag, 1, 44, "second derivative of the mean motion");
   }
   t.nddot = mantissa * ten_to(exponent);
-  text[0] = line1[53] == ' ' ? '+' : line1[53];
-  memcpy(text + 2, line1 + 54, 5);
-  if (field_double(text, 0, 7, &mantissa) != MYB_OK ||
+  if (mantissa_field(line1 + 53, &mantissa) != MYB_OK ||
       field_long(line1, 59, 61, &exponent) != MYB_OK || exponent < -9 || exponent > 9) {
     return bad(diag, 1, 53, "drag term");
   }
@@ -1293,6 +1313,12 @@ typedef struct segment10 {
   double geophs[GEOPHS];
 } segment10;
 
+/* An epoch of the file (seconds past J2000, TDB) that can be an instant: finite and within
+ * 2^40 s (35 000 years) — further, the words are not those of element sets. */
+static int usable_epoch(double t) {
+  return t > -0x1p40 && t < 0x1p40;
+}
+
 static int as_count(double v, size_t limit, size_t* out) {
   if (!(v >= 0.0 && v <= (double)limit) || v != floor(v)) {
     return 0;
@@ -1358,7 +1384,7 @@ static myb_status set_state(const segment10* g, size_t k, const myb_timesys* sys
   /* fixed packets of PKTSZ words, each preceded by PKTOFF words (SGFPKT) */
   const size_t at = g->meta[META_PKTBAS] + k * (g->meta[META_PKTSZ] + g->meta[META_PKTOFF]) +
                     g->meta[META_PKTOFF];
-  if (myb_spk_segment_data(g->spk, g->index, at, ELEMENTS, e) != MYB_OK) {
+  if (myb_spk_segment_data(g->spk, g->index, at, ELEMENTS, e) != MYB_OK || !usable_epoch(e[9])) {
     return MYB_E_FORMAT;
   }
   /* the epoch as a UTC Julian date in one double, like SPICE (ttrans TDB -> JDUTC) */
@@ -1447,6 +1473,9 @@ myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index, const myb_time
     /* W(t) = 0.5 + 0.5 cos(pi (t - t1) / (t2 - t1)), as SPKE10 */
     const double t1 = epoch10(&g, first);
     const double t2 = epoch10(&g, second);
+    if (!usable_epoch(t1)) {
+      return MYB_E_FORMAT;
+    }
     const double numer = myb_dd_to_double(myb_time_diff(et, myb_time_from_seconds(t1)));
     const double denom = t2 - t1;
     const double arg = numer * PI / denom;
@@ -1510,6 +1539,22 @@ static myb_status fixed_field(double value, int decimals, size_t width, char pad
 /* +-.ddddd x 10^e in 8 characters: sign, five digits, the sign and the digit of e. A zero is
  * written with the exponent sign the catalogue uses in that field ("00000-0" for the second
  * derivative of the mean motion, "00000+0" for the drag term). */
+/* Whether a field of that form reads back to value as myb_tle_parse reads it: the mantissa
+ * 0.ddddd times 10^e, two roundings as in the reference code. */
+static int exponent_reads_back(const char field[8], double value) {
+  char text[8];
+  text[0] = field[0] == ' ' ? '+' : field[0];
+  text[1] = '.';
+  memcpy(text + 2, field + 1, 5);
+  double mantissa = 0.0;
+  if (field_double(text, 0, 7, &mantissa) != MYB_OK) {
+    return 0;
+  }
+  const long exponent = field[6] == '-' ? -(long)(field[7] - '0') : (long)(field[7] - '0');
+  const double back = mantissa * ten_to(exponent);
+  return memcmp(&back, &value, sizeof back) == 0;
+}
+
 static myb_status exponent_field(double value, char zero_sign, char out[8]) {
   if (!isfinite(value)) {
     return MYB_E_DOMAIN;
@@ -1539,6 +1584,25 @@ static myb_status exponent_field(double value, char zero_sign, char out[8]) {
   memcpy(out + 2, text + 2, 4);
   out[6] = exponent > 0 ? '+' : '-';
   out[7] = (char)('0' + (exponent < 0 ? -exponent : exponent));
+  /* A mantissa read with leading zeros ("08000+0", 0.08) is not always the product the
+   * normalised form gives back (0.8 x 0.1 is one unit of the last place away): then the form
+   * with leading zeros that does read back, if one does. */
+  char shifted[8];
+  memcpy(shifted, out, 8);
+  /* bound: at most four digits moved out, while they are zeros */
+  for (int k = 1; k <= 4 && !exponent_reads_back(out, value); ++k) {
+    const int e = exponent + k;
+    if (shifted[5] != '0' || e > 9) {
+      break;
+    }
+    memmove(shifted + 2, shifted + 1, 4);
+    shifted[1] = '0';
+    shifted[6] = e > 0 ? '+' : '-';
+    shifted[7] = (char)('0' + (e < 0 ? -e : e));
+    if (exponent_reads_back(shifted, value)) {
+      memcpy(out, shifted, 8);
+    }
+  }
   return MYB_OK;
 }
 

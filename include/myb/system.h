@@ -106,7 +106,8 @@ MYB_API MYB_NODISCARD myb_status myb_system_set_orientation(myb_system* system, 
 /* The figure of a body as harmonics in its frame, used up to `degree` (0: all of the field).
  * The field must outlive the system and its GM should be that of the body. For a body whose
  * rotation is integrated the degrees from 3 are taken from the field and the degree 2 from
- * the inertia tensor. Errors: MYB_E_DOMAIN (the body, a degree above the field), MYB_E_NOMEM. */
+ * the inertia tensor. Errors: MYB_E_DOMAIN (the body, a degree of 1 or below other than 0, a
+ * degree above the field), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_system_set_field(myb_system* system, size_t body,
                                                       const myb_gravity_field* field, int degree);
 
@@ -155,8 +156,10 @@ typedef struct myb_system_tide {
   double rotation_rate;   /* rad/s */
 } myb_system_tide;
 
-/* The body must have a frame (an orientation or an integrated rotation) by the time the
- * accelerations are asked for. Errors: MYB_E_DOMAIN. */
+/* The body must have a frame given from outside (myb_system_set_orientation) by the time the
+ * accelerations are asked for: a body whose rotation is integrated answers tides through its
+ * distortion (myb_system_add_distortion), and myb_system_add_tide refuses it. Errors:
+ * MYB_E_DOMAIN. */
 MYB_API MYB_NODISCARD myb_status myb_system_set_tide(myb_system* system, size_t body,
                                                      const myb_system_tide* tide);
 
@@ -482,7 +485,7 @@ typedef struct myb_system_merger {
  * momentum is kept; its attitude stays. (The spin of a body whose rotation is not integrated
  * is not known and counts as none; the distortions of the inertia are left out of the spins
  * brought.) A pair beyond 1PN that names a or b ends: its terms stop, and its spins (if
- * integrated) stay in the state but mean nothing more. The integrator is started again from
+ * integrated) are set to zero in the state and stand still from then on. The integrator is started again from
  * the new state. Errors: MYB_E_DOMAIN (indices, an absent body, b with an integrated rotation
  * and a without — merge the other way), the errors of myb_ias15_start. */
 MYB_API MYB_NODISCARD myb_status myb_system_merge(myb_system* system, myb_ias15* integrator,

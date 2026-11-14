@@ -28,6 +28,15 @@
 #       leak      — standalone LeakSanitizer (Linux): leaks without ASan's instrumentation
 #       thread    — ThreadSanitizer (Linux): data races and lock-order inversions of the
 #                   thread team (myb_pool) and of everything run on it
+#   MYB_FUZZ                ON/OFF   the harnesses of tests/fuzz link libFuzzer where the
+#                           compiler has its runtime (Clang on Linux; with MYB_SANITIZE=address,
+#                           preset linux-fuzz): every target of the project is then instrumented
+#                           for it (-fsanitize=fuzzer-no-link). Without the runtime (the
+#                           mingw-w64 target) and with OFF the harnesses link the replay main
+#                           of tests/fuzz/replay.c and replay their seeds as tests.
+#   MYB_COVERAGE            ON/OFF   source-based coverage (-fprofile-instr-generate
+#                           -fcoverage-mapping) of the project's code, merged and reported by
+#                           tests/tools/coverage.cmake (presets linux-coverage, windows-coverage)
 include_guard(GLOBAL)
 include(CheckCCompilerFlag)
 
@@ -149,6 +158,48 @@ elseif(NOT MYB_SANITIZE STREQUAL "")
   message(FATAL_ERROR "MYB_SANITIZE: unknown value '${MYB_SANITIZE}'")
 endif()
 
+# ---- Fuzzing -----------------------------------------------------------------------------
+option(MYB_FUZZ "Link the harnesses of tests/fuzz with libFuzzer where it exists" OFF)
+set(MYB_FUZZ_LIBFUZZER OFF)
+if(MYB_FUZZ)
+  # The runtime is there when a harness without main links with -fsanitize=fuzzer.
+  set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer")
+  check_c_source_compiles("
+#include <stddef.h>
+#include <stdint.h>
+int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
+int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) { return (int)(size & data[0]); }"
+    MYB_HAS_LIBFUZZER)
+  unset(CMAKE_REQUIRED_FLAGS)
+  if(MYB_HAS_LIBFUZZER)
+    if(NOT MYB_SANITIZE STREQUAL "address")
+      message(FATAL_ERROR "MYB_FUZZ with libFuzzer needs MYB_SANITIZE=address (preset linux-fuzz): "
+        "a fuzzer without the sanitizers misses the reads outside the input")
+    endif()
+    set(MYB_FUZZ_LIBFUZZER ON)
+  else()
+    message(STATUS "MYB_FUZZ: no libFuzzer runtime for this target; the harnesses link the "
+      "replay main (tests/fuzz/replay.c)")
+  endif()
+endif()
+
+# ---- Coverage ----------------------------------------------------------------------------
+option(MYB_COVERAGE "Source-based coverage of the project's code (llvm-cov)" OFF)
+if(MYB_COVERAGE)
+  set(CMAKE_REQUIRED_FLAGS "-fprofile-instr-generate -fcoverage-mapping")
+  check_c_source_compiles("int main(void) { return 0; }" MYB_HAS_PROFILE_RUNTIME)
+  unset(CMAKE_REQUIRED_FLAGS)
+  if(NOT MYB_HAS_PROFILE_RUNTIME)
+    message(FATAL_ERROR "MYB_COVERAGE: this Clang has no profile runtime for the target "
+      "${CMAKE_C_COMPILER_TARGET} (libclang_rt.profile is missing from its resource directory, "
+      "e.g. LLVM for Windows ships it for the MSVC target only); run the coverage on Linux "
+      "(preset linux-coverage)")
+  endif()
+  if(NOT MYB_SANITIZE STREQUAL "")
+    message(FATAL_ERROR "MYB_COVERAGE is not combined with a sanitizer")
+  endif()
+endif()
+
 function(myb_apply_flags target)
   cmake_parse_arguments(_arg "THIRD_PARTY" "" "" ${ARGN})
   if(_arg_THIRD_PARTY)
@@ -175,6 +226,17 @@ function(myb_apply_flags target)
   else()
     target_compile_options(${target} PRIVATE ${_myb_san_compile} -U_FORTIFY_SOURCE)
     target_link_options(${target} PRIVATE ${_myb_san_link})
+  endif()
+
+  # The project's own code only: vendored code is neither fuzzed nor measured.
+  if(NOT _arg_THIRD_PARTY)
+    if(MYB_FUZZ_LIBFUZZER)
+      target_compile_options(${target} PRIVATE -fsanitize=fuzzer-no-link)
+    endif()
+    if(MYB_COVERAGE)
+      target_compile_options(${target} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+      target_link_options(${target} PRIVATE -fprofile-instr-generate)
+    endif()
   endif()
 
   # Last on the command line: nothing configured above or by the user may override these.

@@ -13,8 +13,9 @@
  * Constants from header.440; initial conditions of the DE440 integration at JD 2440400.5 TDB
  * (positions from de440.bsp, the lunar angles and angular velocities from the header). The
  * pole of the Earth is the CIP (IAU 2006/2000A); DE440 itself uses a simpler model of it.
- * Not in the model: the 343 asteroids and 30 trans-Neptunian objects of DE440 (they move the
- * barycentre and Mars), the Lense-Thirring effect of the Sun, the loss of mass of the Sun.
+ * The loss of mass of the Sun and the Lense-Thirring effect of its rotation are in the model
+ * (myb_system_set_mass_rate, myb_system_add_frame_dragging). Not in the model: the 343
+ * asteroids and 30 trans-Neptunian objects of DE440 (they move the barycentre and Mars).
  * Compared: the positions with de440.bsp, the attitude of the Moon with
  * moon_pa_de440_200625.bpc. Needs data/download (fetch-data); skipped otherwise. */
 #include <math.h>

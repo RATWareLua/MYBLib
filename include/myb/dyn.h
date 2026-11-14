@@ -290,9 +290,10 @@ typedef struct myb_wh_stats {
 
 typedef struct myb_wh myb_wh;
 
-/* The system must outlive the integrator. Errors: MYB_E_DOMAIN (options, GM_0 = 0, 1PN
- * terms in the system), MYB_E_OVERFLOW, MYB_E_NOMEM. myb_wh_start refuses (MYB_E_DOMAIN) a
- * system with an approximation (myb_nbody_set_approximation). */
+/* The system must outlive the integrator. Errors: MYB_E_DOMAIN (options, GM_0 = 0),
+ * MYB_E_OVERFLOW, MYB_E_NOMEM. myb_wh_start refuses (MYB_E_DOMAIN) a system with 1PN terms or
+ * with an approximation (myb_nbody_set_approximation), as the system may gain them after the
+ * integrator is made. */
 MYB_API MYB_NODISCARD myb_status myb_wh_create(myb_nbody* system, const myb_wh_options* options,
                                                const myb_allocator* allocator, myb_wh** wh);
 

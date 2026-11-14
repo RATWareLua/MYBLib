@@ -60,8 +60,22 @@ jobs:
           sudo bash /tmp/llvm.sh "$LLVM_VERSION"
           sudo apt-get install -y --no-install-recommends \
             "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "llvm-$LLVM_VERSION" \
-            ninja-build cmake libmpfr-dev libgmp-dev
+            "libclang-rt-$LLVM_VERSION-dev" ninja-build cmake pkgconf libmpfr-dev libgmp-dev
           echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+
+      - name: Go (the test of bindings/go)
+        if: ${{ matrix.preset == 'linux-dev' || matrix.preset == 'linux-release' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: GHC and cabal (the test of bindings/haskell)
+        if: ${{ matrix.preset == 'linux-release' && matrix.arch == 'x86-64' }}
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.3"
+          cabal-version: "latest"
 
       - name: Python with cffi and Rust (the tests of bindings/)
         shell: bash
@@ -111,8 +125,12 @@ jobs:
             grep -q test_rust_binding_asan registered.txt
           else
             grep -q test_rust_binding registered.txt
+            grep -q test_go_binding registered.txt
             if grep -q 'MYB_BUILD_SHARED:BOOL=ON' build/${{ matrix.preset }}/CMakeCache.txt; then
               grep -q test_python_binding registered.txt
+            fi
+            if [ "${{ matrix.preset }}" = linux-release ] && [ "${{ matrix.arch }}" = x86-64 ]; then
+              grep -q test_haskell_binding registered.txt
             fi
           fi
 
@@ -121,6 +139,96 @@ jobs:
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }} --parallel 4 --timeout ${{ env.CTEST_TIMEOUT }}
+
+  fuzz:
+    name: linux fuzz (libFuzzer, 60 s a harness)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang ${{ env.LLVM_VERSION }} with libFuzzer, Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh "$LLVM_VERSION"
+          sudo apt-get install -y --no-install-recommends \
+            "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "llvm-$LLVM_VERSION" \
+            "libclang-rt-$LLVM_VERSION-dev" ninja-build cmake libmpfr-dev libgmp-dev
+          echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+          sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Cache the downloaded data
+        uses: actions/cache@v4
+        with:
+          path: data/download
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.run_id }}
+          restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
+
+      - name: Fetch the data
+        run: cmake -P cmake/FetchData.cmake
+
+      - name: Configure and build the harnesses
+        run: |
+          cmake --preset linux-fuzz
+          cmake --build --preset linux-fuzz --parallel 4
+
+      - name: Replay the corpora
+        run: ctest --preset linux-fuzz -L fuzz --parallel 4
+
+      - name: Fuzz (60 s a harness)
+        run: cmake -DBUILD_DIR=build/linux-fuzz -DSECONDS=60 -P tests/fuzz/run_fuzzers.cmake
+
+      - name: Keep the crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: build/linux-fuzz/fuzz/crashes
+
+  coverage:
+    name: linux coverage (llvm-cov)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang ${{ env.LLVM_VERSION }}, Ninja, MPFR
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh "$LLVM_VERSION"
+          sudo apt-get install -y --no-install-recommends \
+            "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "llvm-$LLVM_VERSION" \
+            "libclang-rt-$LLVM_VERSION-dev" ninja-build cmake libmpfr-dev libgmp-dev
+          echo "/usr/lib/llvm-$LLVM_VERSION/bin" >> "$GITHUB_PATH"
+
+      - name: Cache the downloaded data
+        uses: actions/cache@v4
+        with:
+          path: data/download
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.run_id }}
+          restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
+
+      - name: Fetch the data
+        run: cmake -P cmake/FetchData.cmake
+
+      - name: Configure and build
+        run: |
+          cmake --preset linux-coverage
+          cmake --build --preset linux-coverage --parallel 4
+
+      - name: Run the tests and report the coverage of src/
+        run: cmake -DBUILD_DIR=build/linux-coverage -DJOBS=4 -P tests/tools/coverage.cmake
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: build/linux-coverage/coverage
 
   macos:
     name: macos arm64 (${{ matrix.preset }})
@@ -137,9 +245,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install "llvm@$LLVM_VERSION" ninja mpfr gmp
+          brew install "llvm@$LLVM_VERSION" ninja mpfr gmp pkgconf
           echo "MYB_LLVM_ROOT=$(brew --prefix "llvm@$LLVM_VERSION")" >> "$GITHUB_ENV"
           echo "$(brew --prefix "llvm@$LLVM_VERSION")/bin" >> "$GITHUB_PATH"
+
+      - name: Go (the test of bindings/go)
+        if: ${{ matrix.preset != 'macos-asan' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
 
       - name: Python with cffi (a virtual environment) and Rust (the tests of bindings/)
         shell: bash
@@ -175,6 +290,7 @@ jobs:
           ctest --preset ${{ matrix.preset }} -N > registered.txt
           grep -q test_cpp_binding registered.txt
           grep -q test_rust_binding registered.txt
+          grep -q test_go_binding registered.txt
           if grep -q 'MYB_BUILD_SHARED:BOOL=ON' build/${{ matrix.preset }}/CMakeCache.txt; then
             grep -q test_python_binding registered.txt
           fi
@@ -207,6 +323,7 @@ jobs:
             mingw-w64-x86_64-make
             mingw-w64-x86_64-mpfr
             mingw-w64-x86_64-gmp
+            mingw-w64-x86_64-pkgconf
 
       - name: Clang ${{ env.LLVM_VERSION }} (LLVM for Windows)
         shell: pwsh
@@ -221,6 +338,20 @@ jobs:
           "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "MYB_MINGW_ROOT=${{ steps.msys2.outputs.msys2-location }}\mingw64" |
             Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Go (the test of bindings/go)
+        if: ${{ matrix.preset != 'windows-ubsan' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: GHC and cabal (the test of bindings/haskell)
+        if: ${{ matrix.preset == 'windows-release' }}
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.3"
+          cabal-version: "latest"
 
       - name: Python with cffi and the Rust toolchain of the GNU ABI (the tests of bindings/)
         shell: pwsh
@@ -252,10 +383,11 @@ jobs:
         shell: pwsh
         run: |
           $registered = ctest --preset ${{ matrix.preset }} -N | Out-String
-          $wanted = @('test_cpp_binding', 'test_rust_binding')
+          $wanted = @('test_cpp_binding', 'test_rust_binding', 'test_go_binding')
           if (Select-String -Path build/${{ matrix.preset }}/CMakeCache.txt -Pattern 'MYB_BUILD_SHARED:BOOL=ON' -Quiet) {
             # the shared library: Python, and the consumers built by Microsoft's toolchains
-            $wanted += 'test_python_binding', 'test_msvc_consumer', 'test_rust_binding_msvc'
+            $wanted += 'test_python_binding', 'test_msvc_consumer', 'test_rust_binding_msvc',
+                       'test_haskell_binding'
           }
           foreach ($name in $wanted) {
             if ($registered -notmatch $name) { throw "$name is not registered" }

@@ -139,6 +139,13 @@ static int columns(const char* line, size_t length, size_t first, size_t last, d
   return field(line + first - 1, end - first + 1, value);
 }
 
+/* A row whose day and UT1 - UTC a table of the Earth's rotation can hold: within 10^8 days of
+ * J2000 (the instants of the nodes and their differences stay within the range of myb_time)
+ * and less than a day (the series of the IERS stay below a second). */
+static int usable_row(double mjd, double dut1) {
+  return mjd > mjd_j2000 - 1e8 && mjd < mjd_j2000 + 1e8 && dut1 > -86400.0 && dut1 < 86400.0;
+}
+
 static double mjd_of_date(int64_t year, int month, int day, int* ok) {
   const myb_calendar c = {year, month, day, 0, 0, 0.0};
   myb_time t;
@@ -169,9 +176,15 @@ static int parse_line(file_format format, const char* line, size_t length, row* 
       }
       i += used;
     }
+    /* the date as integers: their range first, only there is the conversion defined */
+    if (!(v[0] >= -1e9 && v[0] <= 1e9) || !(v[1] >= 1.0 && v[1] <= 12.0) ||
+        !(v[2] >= 1.0 && v[2] <= 31.0) || v[0] != floor(v[0]) || v[1] != floor(v[1]) ||
+        v[2] != floor(v[2])) {
+      return -1;
+    }
     int ok = 0;
     const double mjd = mjd_of_date((int64_t)v[0], (int)v[1], (int)v[2], &ok);
-    if (!ok || v[3] != 0.0 || mjd != v[4]) {
+    if (!ok || v[3] != 0.0 || mjd != v[4] || !usable_row(v[4], v[7])) {
       return -1;
     }
     out->v[0] = v[4];
@@ -202,6 +215,9 @@ static int parse_line(file_format format, const char* line, size_t length, row* 
   }
   if (!isfinite(xp) || !isfinite(yp) || !isfinite(dut1)) {
     return 2;
+  }
+  if (!usable_row(mjd, dut1)) {
+    return -1;
   }
   out->v[0] = mjd;
   out->v[1] = xp * arcsec;
@@ -407,6 +423,11 @@ myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system, myb_time t,
   double offset = 0.0;
   for (int i = 0; i < 4; ++i) {
     offset += w[i] * d[i];
+  }
+  /* UT1 minus the caller's scale is seconds or minutes; more than a day (or no number: rows a
+   * hair apart, whose weights explode) is a table that gives no UT1 there */
+  if (!(offset > -86400.0 && offset < 86400.0)) {
+    return MYB_E_RANGE;
   }
   double v[FIELDS] = {0};
   for (int f = 1; f < FIELDS; ++f) {

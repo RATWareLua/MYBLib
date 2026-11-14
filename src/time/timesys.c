@@ -30,6 +30,20 @@ enum {
   MAX_NODES = 1 << 26    /* of a tabulated relation */
 };
 
+/* What a kernel may give, so that every instant built from it stays far inside the range of a
+ * myb_time (2^62 s): offsets, differences and epochs within 2^40 s (35 000 years) of J2000,
+ * UTC days within 10^8 days, TAI - UTC within 10^6 s and its drift below 1 s a day. Values
+ * beyond are not a time scale but a damaged kernel (MYB_E_FORMAT), or a series evaluated
+ * where it no longer means anything (MYB_E_DOMAIN). */
+static const double kernel_seconds = 0x1p40;
+static const double kernel_days = 1e8;
+static const double utc_offset_max = 1e6;
+static const double utc_drift_max = 1.0;
+
+static int within(double x, double bound) {
+  return x > -bound && x < bound;
+}
+
 typedef enum relation { REL_ROOT, REL_OFFSET, REL_RATE, REL_RATE_INVERSE, REL_SERIES } relation;
 
 typedef struct scale_def {
@@ -108,6 +122,16 @@ static myb_status read_number(reader* r, const char* name, double* value) {
   return status;
 }
 
+/* A number of seconds within kernel_seconds. */
+static myb_status read_seconds(reader* r, const char* name, double* value) {
+  const myb_status status = read_number(r, name, value);
+  if (status == MYB_OK && !within(*value, kernel_seconds)) {
+    myb_internal_diag(r->diag, 0, "%s: more than 2^40 s", name);
+    return MYB_E_FORMAT;
+  }
+  return status;
+}
+
 /* String value copied into out (NUL-terminated); MYB_E_FORMAT if longer than max. */
 static myb_status read_string(reader* r, const char* name, size_t index, char* out, size_t max) {
   const char* value = NULL;
@@ -175,9 +199,15 @@ static myb_status read_rate(reader* r, scale_def* d) {
   if (status != MYB_OK) {
     return status;
   }
+  const double days = kernel_seconds / 86400.0;
+  if (!within(jd[0] - 2451545.0, days) || !within(jd[1], days) ||
+      !within(jd[0] - 2451545.0 + jd[1], days)) {
+    myb_internal_diag(r->diag, 0, "%s: not a date within 2^40 s of J2000", name);
+    return MYB_E_FORMAT;
+  }
   d->t0 = myb_time_from_jd(jd[0], jd[1]);
   var_name(name, "MYB_TIME_", d->name, "_OFFSET");
-  return read_number(r, name, &d->offset);
+  return read_seconds(r, name, &d->offset);
 }
 
 static myb_status read_series(reader* r, const myb_allocator* a, scale_def* d) {
@@ -248,7 +278,7 @@ static myb_status read_scale(reader* r, myb_timesys* s, int index) {
   if (strcmp(text, "OFFSET") == 0) {
     d->kind = REL_OFFSET;
     var_name(name, "MYB_TIME_", d->name, "_OFFSET");
-    return read_number(r, name, &d->offset);
+    return read_seconds(r, name, &d->offset);
   }
   if (strcmp(text, "RATE") == 0 || strcmp(text, "RATE_INVERSE") == 0) {
     d->kind = text[4] == '\0' ? REL_RATE : REL_RATE_INVERSE;
@@ -294,14 +324,22 @@ static myb_status read_utc(reader* r, myb_timesys* s) {
     return status;
   }
   for (size_t i = 0; i < n; ++i) {
-    const int integral = start[i] == (double)(int64_t)start[i];
+    /* the range first: only then is the conversion to an integer defined */
+    const int integral = within(start[i], kernel_days) && start[i] == (double)(int64_t)start[i];
     if (!integral || (i > 0 && !(start[i] > start[i - 1]))) {
       myb_internal_diag(r->diag, 0, "MYB_UTC_START_MJD: value %zu is not an increasing integer",
                         i + 1);
       return MYB_E_FORMAT;
     }
+    if (!within(column[0][i], utc_offset_max) || !within(column[1][i], kernel_days) ||
+        !within(column[2][i], utc_drift_max)) {
+      myb_internal_diag(r->diag, 0, "MYB_UTC_OFFSET, _DRIFT_MJD, _DRIFT_RATE: row %zu is not "
+                        "one of a UTC table", i + 1);
+      return MYB_E_FORMAT;
+    }
   }
-  if (valid_until != (double)(int64_t)valid_until || !(valid_until > start[n - 1])) {
+  if (!within(valid_until, kernel_days) || valid_until != (double)(int64_t)valid_until ||
+      !(valid_until > start[n - 1])) {
     myb_internal_diag(r->diag, 0, "MYB_UTC_VALID_UNTIL_MJD: must be an integer after the last row");
     return MYB_E_FORMAT;
   }
@@ -434,13 +472,15 @@ static myb_time solve_rate(const scale_def* d, myb_time x) {
 static myb_status defined_difference(const scale_def* d, myb_time x, double* value) {
   if (d->function != NULL) {
     const myb_status status = d->function(d->function_context, x, value);
-    if (status == MYB_OK && !isfinite(*value)) {
+    /* not finite, or no difference of time scales (the time ephemeris of a damaged file) */
+    if (status == MYB_OK && !within(*value, kernel_seconds)) {
       return MYB_E_DOMAIN;
     }
     return status;
   }
   *value = myb_internal_series_eval(&d->series, myb_time_seconds(x) / d->series_unit);
-  return MYB_OK;
+  /* a series of a damaged kernel, or one far outside the span it was fitted to */
+  return within(*value, kernel_seconds) ? MYB_OK : MYB_E_DOMAIN;
 }
 
 /* The same through the table where it covers x: the cubic through the four nodes around. */
@@ -479,10 +519,15 @@ static myb_status down(const scale_def* d, myb_time parent_time, myb_time* out) 
     case REL_SERIES: {
       double difference = 0.0;
       myb_status status = difference_at(d, parent_time, &difference);
-      myb_time x = myb_time_add(parent_time, difference);
+      myb_time x = parent_time;
+      if (status == MYB_OK) {
+        x = myb_time_add(parent_time, difference);
+      }
       for (int i = 0; i < SERIES_ITERATIONS && status == MYB_OK; ++i) {
         status = difference_at(d, x, &difference);
-        x = myb_time_add(parent_time, difference);
+        if (status == MYB_OK) {
+          x = myb_time_add(parent_time, difference);
+        }
       }
       *out = x;
       return status;
@@ -508,7 +553,7 @@ static myb_status up(const scale_def* d, myb_time t, myb_time* out) {
     case REL_SERIES: {
       double difference = 0.0;
       const myb_status status = difference_at(d, t, &difference);
-      *out = myb_time_add(t, -difference);
+      *out = status == MYB_OK ? myb_time_add(t, -difference) : t;
       return status;
     }
     case REL_ROOT:

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- an ephemeris in XML -->
+<oem xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:noNamespaceSchemaLocation="http://sanaregistry.org/r/ndmxml/ndmxml-1.0-master.xsd"
+     id="CCSDS_OEM_VERS" version="2.0">
+  <header>
+    <COMMENT>a &gt; b</COMMENT>
+    <CREATION_DATE>1996-11-04T17:22:31</CREATION_DATE>
+    <ORIGINATOR>NASA &amp; JPL</ORIGINATOR>
+  </header>
+  <body>
+    <segment>
+      <metadata>
+        <OBJECT_NAME>MARS GLOBAL SURVEYOR</OBJECT_NAME>
+        <OBJECT_ID>1996-062A</OBJECT_ID>
+        <CENTER_NAME>MARS BARYCENTER</CENTER_NAME>
+        <REF_FRAME>EME2000</REF_FRAME>
+        <TIME_SYSTEM>UTC</TIME_SYSTEM>
+        <START_TIME>1996-12-18T12:00:00.331</START_TIME>
+        <STOP_TIME>1996-12-18T12:01:00.331</STOP_TIME>
+      </metadata>
+      <data>
+        <stateVector>
+          <EPOCH>1996-12-18T12:00:00.331</EPOCH>
+          <X units="km">2789.619</X><Y units="km">-280.045</Y><Z>-1746.755</Z>
+          <X_DOT units="km/s">4.73372</X_DOT><Y_DOT>-2.49586</Y_DOT><Z_DOT>-1.04195</Z_DOT>
+        </stateVector>
+        <stateVector>
+          <EPOCH>1996-12-18T12:01:00.331</EPOCH>
+          <X>2783.419</X><Y>-308.143</Y><Z>-1877.071</Z>
+          <X_DOT>5.18604</X_DOT><Y_DOT>-2.42124</Y_DOT><Z_DOT>-1.99608</Z_DOT>
+          <X_DDOT>0.001</X_DDOT><Y_DDOT>-0.002</Y_DDOT><Z_DDOT>3e-4</Z_DDOT>
+        </stateVector>
+        <covarianceMatrix>
+          <EPOCH>1996-12-18T12:00:30</EPOCH>
+          <COV_REF_FRAME>RTN</COV_REF_FRAME>
+          <CX_X>1</CX_X><CY_X>2</CY_X><CY_Y>3</CY_Y>
+          <CZ_X>4</CZ_X><CZ_Y>5</CZ_Y><CZ_Z>6</CZ_Z>
+          <CX_DOT_X>7</CX_DOT_X><CX_DOT_Y>8</CX_DOT_Y><CX_DOT_Z>9</CX_DOT_Z>
+          <CX_DOT_X_DOT>10</CX_DOT_X_DOT>
+          <CY_DOT_X>11</CY_DOT_X><CY_DOT_Y>12</CY_DOT_Y><CY_DOT_Z>13</CY_DOT_Z>
+          <CY_DOT_X_DOT>14</CY_DOT_X_DOT><CY_DOT_Y_DOT>15</CY_DOT_Y_DOT>
+          <CZ_DOT_X>16</CZ_DOT_X><CZ_DOT_Y>17</CZ_DOT_Y><CZ_DOT_Z>18</CZ_DOT_Z>
+          <CZ_DOT_X_DOT>19</CZ_DOT_X_DOT><CZ_DOT_Y_DOT>20</CZ_DOT_Y_DOT>
+          <CZ_DOT_Z_DOT>21</CZ_DOT_Z_DOT>
+        </covarianceMatrix>
+      </data>
+    </segment>
+  </body>
+</oem>

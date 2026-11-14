@@ -221,8 +221,9 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4,
 
 /* State (m, m/s) of segment `index` of spk, which must be of type 10, at et (TDB), in J2000
  * relative to the segment's centre. system converts TDB to UTC (scale names "TDB"); equinox
- * gives TEME. Errors: MYB_E_FORMAT (not type 10, inconsistent layout), MYB_E_RANGE (et outside
- * the UTC table), statuses of the propagation (MYB_E_DOMAIN). */
+ * gives TEME. Errors: MYB_E_FORMAT (not type 10, inconsistent layout, epochs more than 2^40 s
+ * from J2000 or not numbers), MYB_E_RANGE (et outside the UTC table), statuses of the
+ * propagation (MYB_E_DOMAIN). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index,
                                                       const myb_timesys* system,
                                                       const myb_equinox* equinox, myb_time et,

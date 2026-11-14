@@ -7,6 +7,7 @@
 #define MYB_SRC_PLATFORM_PLATFORM_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "myb/core.h"
 
@@ -72,5 +73,10 @@ void myb_platform_team_run(myb_platform_team* team, myb_platform_job* job, void*
 
 /* Logical processors available to the process (>= 1). */
 int myb_platform_processor_count(void);
+
+/* Nanoseconds of a monotonic clock from an unspecified origin: only differences mean
+ * something (the benchmarks of bench/ time with it; nothing in the library reads it). Its
+ * resolution is the system's (100 ns or better on Windows, 1 ns on Linux). */
+uint64_t myb_platform_monotonic_ns(void);
 
 #endif /* MYB_SRC_PLATFORM_PLATFORM_H_ */

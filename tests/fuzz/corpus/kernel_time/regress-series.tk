@@ -1,0 +1,12 @@
+KPL/MISC
+Regression: a series of TDB - TT whose value is 1e300 s; the conversion added it to an instant
+before it looked at its status.
+\begindata
+MYB_SERIES_TDB_TT_TERMS = ( 0  1e300  0  1.5707963267948966 )
+MYB_UTC_BASE            = 'TAI'
+MYB_UTC_START_MJD       = ( 41317 )
+MYB_UTC_OFFSET          = ( 10.0 )
+MYB_UTC_DRIFT_MJD       = ( 41317 )
+MYB_UTC_DRIFT_RATE      = ( 0.0 )
+MYB_UTC_VALID_UNTIL_MJD = 70000
+\begintext

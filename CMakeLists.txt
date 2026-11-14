@@ -270,3 +270,9 @@ if(MYB_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+
+# ---- Benchmarks -------------------------------------------------------------------------
+option(MYB_BENCH "Build the benchmarks of bench/ (myb_bench) and their smoke test" OFF)
+if(MYB_BENCH)
+  add_subdirectory(bench)
+endif()

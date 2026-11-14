@@ -156,7 +156,8 @@ MYB_API MYB_NODISCARD myb_status myb_eop_create(const myb_allocator* allocator, 
 MYB_API void myb_eop_destroy(myb_eop* eop); /* accepts NULL */
 
 /* Replace the table (atomically; on error it is unchanged). Errors: MYB_E_FORMAT (diag gives
- * the line), MYB_E_NOMEM, MYB_E_IO for files. Rows must have increasing MJD. */
+ * the line), MYB_E_NOMEM, MYB_E_IO for files. Rows must have increasing MJD within 10^8 days
+ * of J2000 and UT1 - UTC below a day. */
 MYB_API MYB_NODISCARD myb_status myb_eop_load_c04(myb_eop* eop, const char* text, size_t size,
                                                   myb_diag* diag);
 MYB_API MYB_NODISCARD myb_status myb_eop_load_c04_file(myb_eop* eop, const char* path,
@@ -178,7 +179,8 @@ MYB_API size_t myb_eop_rows(const myb_eop* eop, double* first, double* last);
 /* EOP at the instant t of `scale` (a scale of `system` that its UTC table converts to, e.g.
  * TT), and the same instant on UT1 (*ut1, seconds since J2000.0 UT1; may be NULL).
  * Errors: MYB_E_RANGE (outside the table or the UTC table, fewer than two rows on either side,
- * missing x, y or UT1 - UTC), MYB_E_NOT_FOUND (no UTC table). Thread-safe. */
+ * missing x, y or UT1 - UTC, rows that interpolate to UT1 more than a day from `scale`),
+ * MYB_E_NOT_FOUND (no UTC table). Thread-safe. */
 MYB_API MYB_NODISCARD myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
                                             myb_time t, myb_scale scale, myb_eop_values* values,
                                             myb_time* ut1);
@@ -279,7 +281,7 @@ typedef struct myb_wgccre myb_wgccre;
 
 /* The model of body `body` from the kernel variables. Errors: MYB_E_NOT_FOUND (no
  * BODYn_POLE_RA, or phase angles missing while terms need them), MYB_E_FORMAT (wrong counts,
- * more terms than phase angles), MYB_E_NOMEM. */
+ * more terms than phase angles, an epoch more than 10^8 days from J2000), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
                                                    const myb_allocator* allocator,
                                                    myb_wgccre** model, myb_diag* diag);

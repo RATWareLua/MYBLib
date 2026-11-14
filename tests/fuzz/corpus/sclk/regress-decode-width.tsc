@@ -1,0 +1,14 @@
+KPL/SCLK
+Regression: a partition that ends at 1e300 ticks of a clock of one field made myb_sclk_decode
+print a count of 301 digits into a buffer of 222 characters (a write past the stack buffer).
+\begindata
+SCLK_DATA_TYPE_82        = ( 1 )
+SCLK01_N_FIELDS_82       = ( 1 )
+SCLK01_MODULI_82         = ( 1 )
+SCLK01_OFFSETS_82        = ( 0 )
+SCLK01_OUTPUT_DELIM_82   = ( 1 )
+SCLK_PARTITION_START_82  = ( 0 )
+SCLK_PARTITION_END_82    = ( 1e300 )
+SCLK01_COEFFICIENTS_82   = ( 0 0.0 1.0 )
+\begintext
+1/1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

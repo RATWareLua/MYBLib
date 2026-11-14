@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!DOCTYPE ocm [ <!ENTITY x "]>"> ]>
+<ocm id="CCSDS_OCM_VERS" version="3.0">
+<header><CREATION_DATE>2022-11-06T09:23:57</CREATION_DATE><ORIGINATOR><![CDATA[A&B]]></ORIGINATOR></header>
+<body><segment><metadata><TIME_SYSTEM>UTC</TIME_SYSTEM><EPOCH_TZERO>2022-12-18T14:28:15.1172</EPOCH_TZERO></metadata>
+<data><traj><CENTER_NAME>EARTH</CENTER_NAME><TRAJ_REF_FRAME>ICRF</TRAJ_REF_FRAME><TRAJ_TYPE>CARTPV</TRAJ_TYPE>
+<trajLine> <![CDATA[ 0.0 2789.6 -280.0 -1746.8 4.73 -2.50 -1.04 ]]> </trajLine>
+<trajLine>10.0 2836.0 -305.0 -1757.2 4.72 -2.51 -1.05</trajLine>
+</traj>
+<phys><WET_MASS units="kg">100.0</WET_MASS></phys>
+<cov><COV_TYPE>CARTP</COV_TYPE><covLine>0.0 1 0.1 2 0.2 0.3 3</covLine></cov>
+<man><MAN_ID>A</MAN_ID><MAN_COMPOSITION>TIME_RELATIVE,DV_X,DV_Y,DV_Z</MAN_COMPOSITION><manLine>1 0.1 0.2 0.3</manLine></man>
+<user><USER_DEFINED parameter="CONSOLE_POC">MAXWELL SMART</USER_DEFINED></user>
+</data></segment></body></ocm>

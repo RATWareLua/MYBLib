@@ -1,0 +1,6 @@
+KPL/MISC
+Regression: an epoch of a rate relation 2.4e16 days from J2000 passed myb_timesys_create and
+failed the check of the range of a myb_time when the system was built.
+\begindata
+MYB_TIME_TCB_T0_JD  = ( 24431447777777777.5  0.0003725 )
+\begintext

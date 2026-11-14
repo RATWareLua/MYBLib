@@ -336,3 +336,16 @@ int myb_platform_processor_count(void) {
   }
   return count > 4096 ? 4096 : (int)count;
 }
+
+uint64_t myb_platform_monotonic_ns(void) {
+  LARGE_INTEGER counter;
+  LARGE_INTEGER frequency;
+  /* both succeed on every Windows since XP; the frequency is fixed at boot */
+  QueryPerformanceCounter(&counter);
+  QueryPerformanceFrequency(&frequency);
+  const uint64_t ticks = (uint64_t)counter.QuadPart;
+  const uint64_t per_second = (uint64_t)frequency.QuadPart;
+  /* whole seconds and the rest apart: ticks * 1e9 would overflow after a few days */
+  return ticks / per_second * UINT64_C(1000000000) +
+         ticks % per_second * UINT64_C(1000000000) / per_second;
+}

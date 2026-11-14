@@ -131,7 +131,8 @@ myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body, const myb_allo
     snprintf(name, sizeof name, "BODY%" PRId64 "_CONSTANTS_JED_EPOCH", body);
     status = optional(pool, name, &v, &n, diag);
     if (status == MYB_OK && n > 0) {
-      if (n != 1) {
+      /* within 10^8 days of J2000: an instant, and differences from it, myb_time holds */
+      if (n != 1 || !(v[0] > 2451545.0 - 1e8 && v[0] < 2451545.0 + 1e8)) {
         myb_internal_diag(diag, 0, "%s: expected one Julian date", name);
         status = MYB_E_FORMAT;
       } else {

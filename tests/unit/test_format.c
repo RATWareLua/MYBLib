@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Printing of numbers (myb_format_double, myb_format_fixed, myb_format_scientific):
  *  - against CPython's formatting (David Gay's dtoa: correctly rounded, the shortest repr) on
- *    6 100 doubles — random bit patterns, powers of two and their neighbours, subnormals,
+ *    6 124 doubles — random bit patterns, powers of two and their neighbours, subnormals,
  *    decimal fractions, exact ties (tests/data/io/format.ref);
  *  - every value printed in the shortest form reads back to the same bits;
  *  - special values, buffer sizes, errors. */

@@ -39,6 +39,19 @@
       }
     },
     {
+      "name": "windows-coverage",
+      "displayName": "Windows: source-based coverage (needs the profile runtime of the mingw-w64 target)",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "-O1 -g",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -g",
+        "MYB_COVERAGE": "ON",
+        "MYB_STACK_USAGE": "OFF",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
       "name": "linux-base",
       "hidden": true,
       "description": "Clang on Linux (Gentoo and others)",
@@ -116,6 +129,30 @@
       }
     },
     {
+      "name": "linux-fuzz",
+      "displayName": "Linux: libFuzzer harnesses of tests/fuzz with ASan + UBSan",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "address",
+        "MYB_FUZZ": "ON",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "linux-coverage",
+      "displayName": "Linux: source-based coverage (llvm-cov; tests/tools/coverage.cmake)",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "-O1 -g",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -g",
+        "MYB_COVERAGE": "ON",
+        "MYB_STACK_USAGE": "OFF",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
       "name": "macos-base",
       "hidden": true,
       "description": "Clang of LLVM (Homebrew's llvm; MYB_LLVM_ROOT names another) with the SDK and linker of macOS",
@@ -156,6 +193,7 @@
     { "name": "windows-dev", "configurePreset": "windows-dev" },
     { "name": "windows-release", "configurePreset": "windows-release" },
     { "name": "windows-ubsan", "configurePreset": "windows-ubsan" },
+    { "name": "windows-coverage", "configurePreset": "windows-coverage" },
     { "name": "linux-dev", "configurePreset": "linux-dev" },
     { "name": "linux-release", "configurePreset": "linux-release" },
     { "name": "linux-asan", "configurePreset": "linux-asan" },
@@ -163,6 +201,8 @@
     { "name": "linux-ubsan", "configurePreset": "linux-ubsan" },
     { "name": "linux-lsan", "configurePreset": "linux-lsan" },
     { "name": "linux-tsan", "configurePreset": "linux-tsan" },
+    { "name": "linux-fuzz", "configurePreset": "linux-fuzz" },
+    { "name": "linux-coverage", "configurePreset": "linux-coverage" },
     { "name": "macos-dev", "configurePreset": "macos-dev" },
     { "name": "macos-release", "configurePreset": "macos-release" },
     { "name": "macos-asan", "configurePreset": "macos-asan" }
@@ -171,6 +211,12 @@
     { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } },
     { "name": "windows-release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } },
     { "name": "windows-ubsan", "configurePreset": "windows-ubsan", "output": { "outputOnFailure": true } },
+    {
+      "name": "windows-coverage",
+      "configurePreset": "windows-coverage",
+      "output": { "outputOnFailure": true },
+      "environment": { "LLVM_PROFILE_FILE": "${sourceDir}/build/windows-coverage/profiles/%p-%m.profraw" }
+    },
     { "name": "linux-dev", "configurePreset": "linux-dev", "output": { "outputOnFailure": true } },
     { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
     {
@@ -216,6 +262,21 @@
       "environment": {
         "TSAN_OPTIONS": "halt_on_error=1:abort_on_error=1:second_deadlock_stack=1:report_signal_unsafe=1:history_size=7"
       }
+    },
+    {
+      "name": "linux-fuzz",
+      "configurePreset": "linux-fuzz",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_leaks=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      }
+    },
+    {
+      "name": "linux-coverage",
+      "configurePreset": "linux-coverage",
+      "output": { "outputOnFailure": true },
+      "environment": { "LLVM_PROFILE_FILE": "${sourceDir}/build/linux-coverage/profiles/%p-%m.profraw" }
     },
     { "name": "macos-dev", "configurePreset": "macos-dev", "output": { "outputOnFailure": true } },
     { "name": "macos-release", "configurePreset": "macos-release", "output": { "outputOnFailure": true } },

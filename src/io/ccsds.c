@@ -427,30 +427,40 @@ static void next_xml(cursor* c, line* out) {
   out->kind = LINE_END;
 }
 
-/* &lt; &gt; &amp; &quot; &apos; in a value, in place: the new length. */
-static size_t xml_decode(char* s, size_t n) {
+/* &lt; &gt; &amp; &quot; &apos; in the value s[0 .. n) decoded into out (which may be s
+ * itself: a character is never written ahead of the one read); returns the length decoded,
+ * or SIZE_MAX if it is more than cap characters (out then holds the first cap). */
+static size_t xml_decode_to(const char* s, size_t n, char* out, size_t cap) {
   static const struct {
     const char* name;
     char c;
   } entities[5] = {{"&lt;", '<'}, {"&gt;", '>'}, {"&amp;", '&'}, {"&quot;", '"'}, {"&apos;", '\''}};
-  size_t out = 0;
+  size_t length = 0;
   /* bound: the characters of the value */
   for (size_t i = 0; i < n;) {
+    if (length == cap) {
+      return SIZE_MAX;
+    }
     size_t used = 0;
     for (int k = 0; k < 5 && s[i] == '&' && used == 0; ++k) {
-      const size_t length = strlen(entities[k].name);
-      if (n - i >= length && memcmp(s + i, entities[k].name, length) == 0) {
-        s[out++] = entities[k].c;
-        used = length;
+      const size_t entity = strlen(entities[k].name);
+      if (n - i >= entity && memcmp(s + i, entities[k].name, entity) == 0) {
+        out[length++] = entities[k].c;
+        used = entity;
       }
     }
     if (used == 0) {
-      s[out++] = s[i];
+      out[length++] = s[i];
       used = 1;
     }
     i += used;
   }
-  return out;
+  return length;
+}
+
+/* The same in place: the new length. */
+static size_t xml_decode(char* s, size_t n) {
+  return xml_decode_to(s, n, s, n);
 }
 
 /* The next line that carries something; comments and empty lines are skipped. */
@@ -1473,11 +1483,18 @@ static myb_status dated(const cursor* c, const line* l, myb_calendar* out, myb_d
 }
 
 static myb_status named(const cursor* c, const line* l, char out[MYB_ODM_TEXT], myb_diag* diag) {
+  if (c->xml && !l->raw) {
+    /* the limit is on the value, not on its entities: "&amp;" is one character */
+    const size_t length =
+        xml_decode_to(c->text + l->value, l->value_length, out, (size_t)MYB_ODM_TEXT - 1);
+    if (length == 0 || length == SIZE_MAX) {
+      return fail(diag, l->number, "an empty value or one longer than 63 characters");
+    }
+    out[length] = '\0';
+    return MYB_OK;
+  }
   if (text_of(c->text + l->value, l->value_length, out) != MYB_OK) {
     return fail(diag, l->number, "an empty value or one longer than 63 characters");
-  }
-  if (c->xml && !l->raw) {
-    out[xml_decode(out, l->value_length)] = '\0';
   }
   return MYB_OK;
 }

@@ -1,0 +1,17 @@
+KPL/MISC
+Commentary: \begindata starts the data only on a line of its own.
+
+\begindata
+NUMBERS   = ( 1, 2.5D0, -3.25d-2 0x1p4 )
+ONE       = 7
+TEXT      = ( 'a string', 'it''s quoted', '' )
+DATES     = ( @2000-JAN-01/12:00 @1972-JUL-01 )
+NUMBERS  += ( 8 9 )
+NEW      += 'appended to nothing'
+TEXT     += 'more'
+\begintext
+Commentary again, with = and ( in it.
+\begindata
+ONE       = ( 1 2 3 )
+NAME_OF_THIRTY_TWO_CHARACTERS_XX = 1
+\begintext

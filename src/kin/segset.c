@@ -88,7 +88,8 @@ static myb_status describe(const myb_internal_segset* set, const myb_internal_da
   }
   const size_t name_length = strlen(summary->name);
   memcpy(s->name, summary->name, name_length < 40 ? name_length : 40);
-  if (!(s->start >= -0x1p62 && s->start <= s->stop && s->stop <= 0x1p62) || begin < 1 ||
+  /* coverage within 2^51 s of J2000, as the epochs of the segments (kin/spk_segment.c) */
+  if (!(s->start >= -0x1p51 && s->start <= s->stop && s->stop <= 0x1p51) || begin < 1 ||
       end < begin || (uint64_t)end > daf->words) {
     myb_internal_diag(diag, 0, "segment '%s': invalid descriptor", s->name);
     return MYB_E_FORMAT;

@@ -1,0 +1,15 @@
+KPL/SCLK
+Regression: a time of the table 6e16 s from J2000 passed the reader and failed the check of the
+range of a myb_time when converted (myb_sclk_from_time, myb_sclk_to_time).
+\begindata
+SCLK_DATA_TYPE_9099       = ( 1 )
+SCLK01_TIME_SYSTEM_9099   = ( 1 )
+SCLK01_N_FIELDS_9099      = ( 3 )
+SCLK01_MODULI_9099        = ( 10000000 256 8 )
+SCLK01_OFFSETS_9099       = ( 0 0 0 )
+SCLK01_OUTPUT_DELIM_9099  = ( 2 )
+SCLK_PARTITION_START_9099 = ( 0 20480 )
+SCLK_PARTITION_END_9099   = ( 3000000 2048000000 )
+SCLK01_COEFFICIENTS_9099  = ( 0        59999999999996400.0   1.0
+                              2048000  600000000.0           1.0 )
+\begintext

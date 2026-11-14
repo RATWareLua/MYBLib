@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Symplectic compositions: order conditions of the weights, observed orders 2, 4, 6, 8 (the
  * triple jump and the schemes of 7 and 15 stages), the error of the new schemes against the
- * triple jump for equal work, bounded energy error over 10^4 orbits (no drift, unlike a
+ * triple jump for equal work, bounded energy error over 5000 orbits (no drift, unlike a
  * non-symplectic method), time reversibility, a time-dependent force, error statuses. */
 #include <math.h>
 

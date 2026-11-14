@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<!DOCTYPE oem SYSTEM "oem.dtd" [
+  <!-- it's a comment with ] and > and " -->
+  <!ENTITY agency "NASA > JPL ]">
+  <!ENTITY trap '<ORIGINATOR>WRONG</ORIGINATOR>'>
+  <?note ]> is not the end ?>
+]>
+<oem id="CCSDS_OEM_VERS" version="2.0">
+  <header>
+    <CREATION_DATE><![CDATA[1996-11-04T17:22:31]]></CREATION_DATE>
+    <ORIGINATOR><![CDATA[A <b> &amp; C]]></ORIGINATOR>
+  </header>
+  <body><segment>
+    <metadata>
+      <OBJECT_NAME>
+        <![CDATA[ MGS <1> &amp; ]]>
+      </OBJECT_NAME>
+      <OBJECT_ID>1996-062A</OBJECT_ID>
+      <CENTER_NAME>MARS &agency;</CENTER_NAME>
+      <REF_FRAME>EME2000</REF_FRAME>
+      <TIME_SYSTEM><![CDATA[UTC]]></TIME_SYSTEM>
+      <START_TIME>1996-12-18T12:00:00.331</START_TIME>
+      <STOP_TIME>1996-12-18T12:01:00.331</STOP_TIME>
+    </metadata>
+    <data>
+      <![CDATA[ between the elements: <stateVector> nothing reads it ]]>
+      <stateVector>
+        <EPOCH><![CDATA[1996-12-18T12:00:00.331]]></EPOCH>
+        <X><![CDATA[2789.619]]></X><Y> <![CDATA[ -280.045 ]]> </Y><Z>-1746.755</Z>
+        <X_DOT>4.73372</X_DOT><Y_DOT>-2.49586</Y_DOT><Z_DOT><![CDATA[-1.04195]]></Z_DOT>
+      </stateVector>
+    </data>
+  </segment></body>
+</oem>

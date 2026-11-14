@@ -26,7 +26,8 @@
  * the cm level by models of the same kind).
  * Needs data/download (scripts/fetch-data.cmd: de440.bsp, header.440, eopc04.1962-now,
  * GOCO06s.gfc, fes2004_Cnm-Snm.dat); skipped otherwise. Measured contributions (RMS over the
- * week after the fit, the full model 2.0 cm): without the solid tides 21 cm, without the ocean
+ * week after the fit, the full model 2.0 cm then — 1.57 cm since the secondary waves of the
+ * ocean tide (phase 20)): without the solid tides 21 cm, without the ocean
  * tides 6.3 cm, without relativity 2.06 cm (radial 5.3 mm against 2.6), without shadows 2.1 cm;
  * MYB_LAGEOS_OFF selects parts to leave out, MYB_LAGEOS_PROFILE times an evaluation. */
 #include <math.h>

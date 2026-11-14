@@ -522,7 +522,7 @@ static void test_dop853(const problem* p) {
   /* no variational equations with it */
   MT_CHECK(myb_orbit_partials(orbit, t_end, y, NULL, NULL) == MYB_E_DOMAIN);
   myb_orbit_destroy(orbit);
-  /* the variational equations with it: the transition matrix of two revolutions against
+  /* the variational equations with it: the transition matrix of five revolutions against
    * the closed form, as IAS15 gives it; an impulse on the way leaves it as it is */
   const myb_orbit_options both = {.integrator = MYB_ORBIT_DOP853, .variational = 1,
                                   .rtol = 1e-13, .atol = 1e-9};

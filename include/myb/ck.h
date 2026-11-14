@@ -53,7 +53,8 @@ typedef struct myb_sclk myb_sclk;
  * SCLK_DATA_TYPE, SCLK01_N_FIELDS, SCLK01_MODULI, SCLK01_OFFSETS, SCLK01_OUTPUT_DELIM,
  * SCLK_PARTITION_START, SCLK_PARTITION_END, SCLK01_COEFFICIENTS and, optionally,
  * SCLK01_TIME_SYSTEM. What is needed is copied. Errors: MYB_E_NOT_FOUND (a variable),
- * MYB_E_FORMAT (a type other than 1, inconsistent values; diag tells which), MYB_E_NOMEM. */
+ * MYB_E_FORMAT (a type other than 1, inconsistent values, a time of the table more than
+ * 2^40 s from J2000; diag tells which), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_sclk_create(const myb_kpool* pool, int64_t id,
                                                  const myb_allocator* allocator, myb_sclk** sclk,
                                                  myb_diag* diag);
@@ -66,7 +67,7 @@ MYB_API size_t myb_sclk_partitions(const myb_sclk* sclk);
 /* Encoded ticks -> the instant on the clock's time scale, and back (a table whose times
  * are not continuous has no single inverse: the row is chosen by the time, as SPICE does).
  * Errors: MYB_E_RANGE (before the first row of the table or after the end of the last
- * partition). */
+ * partition, or an instant more than 2^40 s past the time of its row). */
 MYB_API MYB_NODISCARD myb_status myb_sclk_to_time(const myb_sclk* sclk, double ticks,
                                                   myb_time* t);
 MYB_API MYB_NODISCARD myb_status myb_sclk_from_time(const myb_sclk* sclk, myb_time t,
@@ -81,7 +82,8 @@ MYB_API MYB_NODISCARD myb_status myb_sclk_encode(const myb_sclk* sclk, const cha
 
 /* Encoded ticks (rounded to a whole tick) -> the string with the partition, every field at
  * the width of its largest value. *length (may be NULL): its characters without the NUL.
- * Errors: MYB_E_RANGE (ticks outside the partitions), MYB_E_OVERFLOW (the buffer). */
+ * Errors: MYB_E_RANGE (ticks outside the partitions, a field of more than 18 digits),
+ * MYB_E_OVERFLOW (the buffer). */
 MYB_API MYB_NODISCARD myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text,
                                                  size_t size, size_t* length);
 

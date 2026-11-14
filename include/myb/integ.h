@@ -185,7 +185,7 @@ MYB_API MYB_NODISCARD myb_status myb_ias15_locate(myb_ias15* integrator, myb_eve
  * (MYB_SYMPLECTIC_6_S7: Yoshida's solution A; MYB_SYMPLECTIC_8_S15: the method p8 s15 of
  * Hairer, Lubich and Wanner, Geometric Numerical Integration, V.3). On a Kepler orbit of
  * e = 0.3 their error for equal work is 1.75 times smaller than that of the triple jump of
- * order 6 and 200 times smaller than of order 8 (the work for one accuracy: 10 % and 50 %
+ * order 6 and 196 times smaller than of order 8 (the work for one accuracy: 10 % and 50 %
  * less). The map is symplectic and time-reversible: the energy error stays
  * bounded over any number of steps instead of drifting, and the phase error grows linearly;
  * the price is a fixed step (no error control). Positions, velocities and time are updated with

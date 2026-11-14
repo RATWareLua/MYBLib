@@ -21,9 +21,14 @@ static double word(const myb_internal_spk_segment* s, uint64_t address) {
   return myb_internal_daf_double(&s->daf, address);
 }
 
-/* Epochs are seconds past J2000; the bound keeps myb_time arithmetic exact. */
+/* Epochs are seconds past J2000 within 2^51 s (70 million years): two of them, or one and an
+ * instant of the coverage of the segment (which the reader of the summaries holds to the same
+ * bound, kin/segset.c), differ by less than 2^53 s — the range of myb_time_diff, which a
+ * damaged file must not leave. */
+static const double epoch_limit = 0x1p51;
+
 static int epoch_ok(double x) {
-  return x >= -0x1p62 && x <= 0x1p62;
+  return x >= -epoch_limit && x <= epoch_limit;
 }
 
 static int positive(double x) {
@@ -476,7 +481,7 @@ static myb_status parse_discrete(myb_internal_spk_segment* s, myb_diag* diag) {
     s->init = word(s, s->end - 3);
     s->step = word(s, s->end - 2);
     if (!epoch_ok(s->init) || !positive(s->step) || n > (length - 4) / 6 ||
-        n * 6 + 4 != length) {
+        n * 6 + 4 != length || !epoch_ok(s->init + (double)(n - 1) * s->step)) {
       return format_error(diag, s, "inconsistent directory");
     }
     s->epochs = 0;
