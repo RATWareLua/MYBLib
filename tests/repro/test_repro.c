@@ -12,11 +12,12 @@
 #include <string.h>
 
 #include "core/fpguard.h"
+#include "dyn/system_internal.h"
 #include "mtest.h"
 #include "myb/attitude.h"
 #include "myb/budget.h"
-#include "myb/ck.h"
 #include "myb/ccsds.h"
+#include "myb/ck.h"
 #include "myb/cmath.h"
 #include "myb/conjunction.h"
 #include "myb/contact.h"
@@ -30,8 +31,8 @@
 #include "myb/geometry.h"
 #include "myb/grav.h"
 #include "myb/integ.h"
-#include "myb/iod.h"
 #include "myb/io.h"
+#include "myb/iod.h"
 #include "myb/kepler.h"
 #include "myb/kin.h"
 #include "myb/lambert.h"
@@ -50,15 +51,22 @@
 #include "myb/system.h"
 #include "myb/thrust.h"
 #include "myb/time.h"
-#include "myb_jb2008.h"
 #include "myb/transfer.h"
 #include "myb/uncert.h"
 #include "myb/weather.h"
 #include "myb_ionosphere.h"
+#include "myb_jb2008.h"
 #include "myb_sgp4.h"
 #include "myb_troposphere.h"
 
-static const uint64_t golden_hash = UINT64_C(0x22590af49224a138);
+/* Changed once in the last phase (21), as decided: the solver of nonlinear programs lets the
+ * slope decide a step where its values cannot (src/transfer/nlp.c), which moves the problem 71
+ * of Hock and Schittkowski of the phase-19 workload by 1e-14 and the count of evaluations of
+ * its leg of Sims and Flanagan from 435 to 436 (its throttles and mass the same bits); every
+ * value from phase 20 on, and every one before phase 19, is as it was. Before:
+ * 0x22590af49224a138 (from phase 19 on), 0x8a11e2afe9e666fa (prefix 20), 0xb22481187ba3923a
+ * (prefix 19). */
+static const uint64_t golden_hash = UINT64_C(0xe234728b95d060b4);
 
 /* FNV-1a, 64 bit, over the IEEE-754 encoding in little-endian byte order. */
 typedef struct hasher {
@@ -4520,7 +4528,10 @@ static void workload_phase22(hasher* h) {
     double phi[144];
     const size_t heavy[1] = {0};
     double sens[12];
-    MT_CHECK(myb_system_partials(s, &o, 0.0, z0, 2000.0, heavy, 1, NULL, phi, sens) == MYB_OK);
+    /* the differences of whole propagations, which the hash has always held (myb_system_partials
+     * integrates the variational equations now: tests/unit/test_system.c) */
+    MT_CHECK(myb_internal_system_partials_differences(s, &o, 0.0, z0, 2000.0, heavy, 1, NULL, phi,
+                                                      sens) == MYB_OK);
     hash_double(h, phi[12 * 3 + 9]);
     hash_double(h, phi[12 * 10 + 4]);
     hash_double(h, sens[5]);
@@ -4806,9 +4817,9 @@ int main(void) {
   }
   uint64_t expected = golden_hash;
   if (upto == 20 || upto == 21) {
-    expected = UINT64_C(0x8a11e2afe9e666fa);
+    expected = UINT64_C(0x7fc24de1c1d525be); /* 0x8a11e2afe9e666fa before the solver's slope */
   } else if (upto == 19) {
-    expected = UINT64_C(0xb22481187ba3923a);
+    expected = UINT64_C(0x4352d2d0bc185d9e); /* 0xb22481187ba3923a likewise */
   } else if (passes == 171) {
     expected = UINT64_C(0xb76153a8dca45827);
   } else if (passes == 172) {

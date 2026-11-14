@@ -495,3 +495,137 @@ myb_status myb_internal_eigenvector_real(size_t n, const double* a, double lambd
   }
   return MYB_OK;
 }
+
+myb_status myb_internal_eigenvector_complex(size_t n, const double* a, double re, double im,
+                                            double* vr, double* vi, double* work) {
+  MYB_CHECK(a != NULL && vr != NULL && vi != NULL && work != NULL && n >= 1);
+  double norm = 0.0;
+  for (size_t i = 0; i < n * n; ++i) {
+    norm = fmax(norm, fabs(a[i]));
+  }
+  if (!isfinite(re) || !isfinite(im) || !isfinite(norm)) {
+    return MYB_E_DOMAIN;
+  }
+  const double shift = re + 1e-10 * (sqrt(re * re + im * im) + norm + 1e-300);
+  double* mr = work; /* n x n: the real and the imaginary parts of A - mu I, then of LU */
+  double* mi = work + n * n;
+  for (size_t i = 0; i < n * n; ++i) {
+    mr[i] = a[i];
+    mi[i] = 0.0;
+  }
+  for (size_t i = 0; i < n; ++i) {
+    mr[i * n + i] -= shift;
+    mi[i * n + i] = -im;
+  }
+  /* LU with partial pivoting; the row of each pivot is kept (as a double, exact below 2^53)
+   * to be replayed on every right-hand side */
+  double* swaps = work + 2 * n * n;
+  for (size_t k = 0; k < n; ++k) {
+    size_t p = k;
+    double best = fabs(mr[k * n + k]) + fabs(mi[k * n + k]);
+    for (size_t i = k + 1; i < n; ++i) {
+      const double size = fabs(mr[i * n + k]) + fabs(mi[i * n + k]);
+      if (size > best) {
+        best = size;
+        p = i;
+      }
+    }
+    if (!(best > 0.0) || !isfinite(best)) {
+      return MYB_E_DOMAIN;
+    }
+    swaps[k] = (double)p;
+    if (p != k) {
+      for (size_t j = 0; j < n; ++j) {
+        double t = mr[k * n + j];
+        mr[k * n + j] = mr[p * n + j];
+        mr[p * n + j] = t;
+        t = mi[k * n + j];
+        mi[k * n + j] = mi[p * n + j];
+        mi[p * n + j] = t;
+      }
+    }
+    const double dr = mr[k * n + k];
+    const double di = mi[k * n + k];
+    const double d2 = dr * dr + di * di;
+    for (size_t i = k + 1; i < n; ++i) {
+      /* f = m_ik / m_kk */
+      const double fr = (mr[i * n + k] * dr + mi[i * n + k] * di) / d2;
+      const double fi = (mi[i * n + k] * dr - mr[i * n + k] * di) / d2;
+      mr[i * n + k] = fr;
+      mi[i * n + k] = fi;
+      for (size_t j = k + 1; j < n; ++j) {
+        mr[i * n + j] -= fr * mr[k * n + j] - fi * mi[k * n + j];
+        mi[i * n + j] -= fr * mi[k * n + j] + fi * mr[k * n + j];
+      }
+    }
+  }
+  /* the start: a fixed vector with a part along any eigenvector one may ask for */
+  for (size_t i = 0; i < n; ++i) {
+    vr[i] = 1.0 / sqrt((double)n) * (i % 2 == 0 ? 1.0 : 0.9);
+    vi[i] = 1.0 / sqrt((double)n) * (i % 3 == 0 ? 0.3 : -0.2);
+  }
+  /* bound: three solves */
+  for (int it = 0; it < 3; ++it) {
+    for (size_t k = 0; k < n; ++k) {
+      const size_t p = (size_t)swaps[k];
+      if (p != k) {
+        double t = vr[k];
+        vr[k] = vr[p];
+        vr[p] = t;
+        t = vi[k];
+        vi[k] = vi[p];
+        vi[p] = t;
+      }
+    }
+    for (size_t i = 1; i < n; ++i) { /* L y = P b, unit diagonal */
+      double sr = vr[i];
+      double si = vi[i];
+      for (size_t j = 0; j < i; ++j) {
+        sr -= mr[i * n + j] * vr[j] - mi[i * n + j] * vi[j];
+        si -= mr[i * n + j] * vi[j] + mi[i * n + j] * vr[j];
+      }
+      vr[i] = sr;
+      vi[i] = si;
+    }
+    for (size_t i = n; i-- > 0;) { /* U x = y */
+      double sr = vr[i];
+      double si = vi[i];
+      for (size_t j = i + 1; j < n; ++j) {
+        sr -= mr[i * n + j] * vr[j] - mi[i * n + j] * vi[j];
+        si -= mr[i * n + j] * vi[j] + mi[i * n + j] * vr[j];
+      }
+      const double dr = mr[i * n + i];
+      const double di = mi[i * n + i];
+      const double d2 = dr * dr + di * di;
+      vr[i] = (sr * dr + si * di) / d2;
+      vi[i] = (si * dr - sr * di) / d2;
+    }
+    /* unit, the largest component real and positive */
+    double sum = 0.0;
+    size_t big = 0;
+    double biggest = -1.0;
+    for (size_t i = 0; i < n; ++i) {
+      const double size = vr[i] * vr[i] + vi[i] * vi[i];
+      sum += size;
+      if (size > biggest) {
+        biggest = size;
+        big = i;
+      }
+    }
+    const double length = sqrt(sum);
+    const double modulus = sqrt(biggest);
+    if (!(length > 0.0) || !isfinite(length) || !(modulus > 0.0)) {
+      return MYB_E_NOCONV;
+    }
+    /* multiply by conj(v_big) / (|v_big| |v|) */
+    const double cr = vr[big] / (modulus * length);
+    const double ci = -vi[big] / (modulus * length);
+    for (size_t i = 0; i < n; ++i) {
+      const double r = vr[i] * cr - vi[i] * ci;
+      vi[i] = vr[i] * ci + vi[i] * cr;
+      vr[i] = r;
+    }
+    vi[big] = 0.0;
+  }
+  return MYB_OK;
+}

@@ -680,6 +680,7 @@ typedef struct pn_job {
   const myb_nbody* s;
   const double* v;
   double* a;
+  double* pn; /* NULL, or the 1PN terms alone (myb_internal_nbody_acceleration_pn) */
 } pn_job;
 
 /* U_i = sum of GM_j / r_ij over the massive sources of i (Sum2, increasing j). */
@@ -776,13 +777,16 @@ static void pn_range(void* context, size_t begin, size_t end) {
     }
     for (int k = 0; k < 3; ++k) {
       job->a[3 * i + (size_t)k] = s->newton[3 * i + (size_t)k] + (acc.s[k] + acc.c[k]);
+      if (job->pn != NULL) {
+        job->pn[3 * i + (size_t)k] = acc.s[k] + acc.c[k];
+      }
     }
   }
 }
 
-myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const double* x,
-                                                   const double* v, double* a,
-                                                   myb_internal_nbody_path path) {
+/* The accelerations by the path asked for; pn (may be NULL) the 1PN terms alone. */
+static myb_status accelerations(myb_nbody* nbody, const double* x, const double* v, double* a,
+                                myb_internal_nbody_path path, double* pn) {
   MYB_CHECK(nbody != NULL && x != NULL && a != NULL);
   myb_nbody* s = nbody;
   if (s->relativity && v == NULL) {
@@ -812,8 +816,8 @@ myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const doubl
   double* newtonian = s->relativity ? s->newton : a;
   if (path == MYB_NBODY_PATH_FMM) {
     MYB_CHECK(s->fmm != NULL);
-    const myb_status status =
-        myb_internal_fmm_evaluate(s->fmm, s->massive, s->gm, s->px, s->py, s->pz, newtonian);
+    const myb_status status = myb_internal_fmm_evaluate(s->fmm, s->pool, s->massive, s->gm, s->px,
+                                                        s->py, s->pz, newtonian);
     if (status != MYB_OK) {
       return status;
     }
@@ -836,10 +840,12 @@ myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const doubl
         return MYB_E_DOMAIN;
       }
     }
-    pn_job job = {.s = s, .v = v, .a = a};
+    pn_job job = {.s = s, .v = v, .a = a, .pn = pn};
     const size_t grain = s->massive >= PART_PAIRS ? 1 : PART_PAIRS / s->massive;
     myb_internal_pool_for(s->pool, s->count, grain, potential_range, &job);
     myb_internal_pool_for(s->pool, s->count, grain, pn_range, &job);
+  } else if (pn != NULL) {
+    memset(pn, 0, 3 * s->count * sizeof *pn);
   }
   for (size_t i = 0; i < 3 * s->count; ++i) {
     if (!finite(a[i])) {
@@ -849,21 +855,42 @@ myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const doubl
   return MYB_OK;
 }
 
+myb_status myb_internal_nbody_acceleration_xv_path(myb_nbody* nbody, const double* x,
+                                                   const double* v, double* a,
+                                                   myb_internal_nbody_path path) {
+  return accelerations(nbody, x, v, a, path, NULL);
+}
+
+myb_status myb_internal_nbody_acceleration_pn(myb_nbody* nbody, const double* x, const double* v,
+                                              double* a, double* pn) {
+  MYB_CHECK(pn != NULL);
+  return accelerations(nbody, x, v, a, MYB_NBODY_PATH_AUTO, pn);
+}
+
+int myb_internal_nbody_acts(myb_nbody* nbody, size_t receiver, size_t source) {
+  MYB_CHECK(nbody != NULL && receiver < nbody->count);
+  const myb_nbody* s = nbody;
+  if (source >= s->massive || source == receiver) {
+    return 0;
+  }
+  return !exclusion_found(s, exclusion_lower_bound(s, receiver, source), receiver, source);
+}
+
 myb_status myb_internal_nbody_acceleration_path(myb_nbody* nbody, const double* x, double* a,
                                                 myb_internal_nbody_path path) {
-  return myb_internal_nbody_acceleration_xv_path(nbody, x, NULL, a, path);
+  return accelerations(nbody, x, NULL, a, path, NULL);
 }
 
 myb_status myb_nbody_acceleration(void* nbody, double t, const double* x, double* a) {
   (void)t;
-  return myb_internal_nbody_acceleration_xv_path(nbody, x, NULL, a, MYB_NBODY_PATH_AUTO);
+  return accelerations(nbody, x, NULL, a, MYB_NBODY_PATH_AUTO, NULL);
 }
 
 myb_status myb_nbody_acceleration_xv(void* nbody, double t, const double* x, const double* v,
                                      double* a) {
   (void)t;
   MYB_CHECK(v != NULL);
-  return myb_internal_nbody_acceleration_xv_path(nbody, x, v, a, MYB_NBODY_PATH_AUTO);
+  return accelerations(nbody, x, v, a, MYB_NBODY_PATH_AUTO, NULL);
 }
 
 /* ---- Invariants ---------------------------------------------------------------------------- */

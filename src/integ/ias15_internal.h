@@ -22,6 +22,20 @@
 double myb_internal_ias15_planned_step(const myb_ias15* integrator);
 void myb_internal_ias15_plan_step(myb_ias15* integrator, double h);
 
+/* An integrator of n coordinates whose last `followers` (0 <= followers < n) are carried along
+ * without a say in the integration: the step (the automatic first one included) and the end of
+ * the predictor-corrector sweeps are those of the first n - followers coordinates alone — the
+ * groups of the options must cover exactly these, the block divide both counts. The followers are
+ * the variational equations of the leading coordinates (dyn/system.c, myb_system_partials): their
+ * timescale is that of the motion they belong to, and a variation whose acceleration passes
+ * through zero in every component (as one of them may) cannot stall the step. The leading
+ * coordinates then take the same steps, and get the same bits, as when they are integrated
+ * alone. Errors: as myb_ias15_create; MYB_E_DOMAIN also for followers >= n. */
+[[nodiscard]] myb_status myb_internal_ias15_create_followed(size_t n, size_t followers,
+                                                            const myb_ias15_options* options,
+                                                            const myb_allocator* allocator,
+                                                            myb_ias15** integrator);
+
 /* Bounds of the position coordinate `coordinate` (0 .. n-1) over the whole last step: the
  * step's own polynomial (degree 9 in the fraction of the step) written in the basis of
  * Bernstein, whose coefficients enclose it, widened by their rounding. MYB_E_RANGE before a

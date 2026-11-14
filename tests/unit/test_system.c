@@ -16,7 +16,9 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
+#include "dyn/system_internal.h"
 #include "mtest.h"
 #include "myb/attitude.h"
 #include "myb/force.h"
@@ -961,82 +963,6 @@ static void test_neighbours(void) {
   myb_system_destroy(s);
 }
 
-/* The derivatives of a two-body system: against the transition matrix of the relative Kepler
- * motion and the straight motion of the centre of mass in closed form; with respect to the
- * gm of the heavy body against differences of the Kepler propagation. */
-static void test_partials(void) {
-  const double gm[2] = {3.986004418e14, 1.0e9};
-  myb_system* s = NULL;
-  MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
-  const myb_pv rel0 = {{7.0e6, 1.0e6, 0.5e6}, {-900.0, 7300.0, 1200.0}};
-  double y0[12] = {0.0};
-  for (int i = 0; i < 3; ++i) {
-    y0[3 + i] = rel0.r[i];
-    y0[6 + 3 + i] = rel0.v[i];
-  }
-  const double t1 = 4000.0;
-  double y1[12];
-  double phi[144];
-  double sens[12];
-  const size_t heavy[1] = {0};
-  const myb_ias15_options o = {.epsilon = 1e-12};
-  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, heavy, 1, y1, phi, sens) == MYB_OK);
-  /* d (x2, v2)(t1) / d (x2, v2)(0): gm2 / M from the centre of mass, gm1 / M Phi_kepler */
-  const double total = gm[0] + gm[1];
-  myb_pv out;
-  double stm[36];
-  MT_CHECK(myb_kepler_stm(total, &rel0, t1, &out, stm) == MYB_OK);
-  double worst = 0.0;
-  double size = 0.0;
-  for (int i = 0; i < 6; ++i) {
-    for (int j = 0; j < 6; ++j) {
-      /* row i of body 2 (x: 3 + i, v: 6 + 3 + i); column j of body 2 likewise */
-      const size_t row = i < 3 ? 3 + (size_t)i : 6 + 3 + (size_t)(i - 3);
-      const size_t col = j < 3 ? 3 + (size_t)j : 6 + 3 + (size_t)(j - 3);
-      double centre = 0.0;
-      if (i % 3 == j % 3) {
-        if (i < 3 && j < 3) {
-          centre = 1.0;
-        } else if (i < 3 && j >= 3) {
-          centre = t1;
-        } else if (i >= 3 && j >= 3) {
-          centre = 1.0;
-        }
-      }
-      const double expected = gm[1] / total * centre + gm[0] / total * stm[6 * i + j];
-      worst = fmax(worst, fabs(phi[12 * row + col] - expected));
-      size = fmax(size, fabs(expected));
-    }
-  }
-  /* d x2(t1) / d gm1 against differences of the Kepler propagation and the drift of the
-   * centre of mass in closed form */
-  double kepler_diff = 0.0;
-  double kepler_size = 0.0;
-  {
-    myb_pv up;
-    myb_pv down;
-    const double h = 1e-6 * gm[0];
-    MT_CHECK(myb_kepler_propagate(total + h, &rel0, t1, &up) == MYB_OK);
-    MT_CHECK(myb_kepler_propagate(total - h, &rel0, t1, &down) == MYB_OK);
-    for (int i = 0; i < 3; ++i) {
-      /* x2 = (gm2 / M)(r0 + v0 t) + (gm1 / M) rel(t; M): the centre of mass drifts with
-       * gm2 / M v0, body 1 starting at rest at the origin */
-      const double drel = (up.r[i] - down.r[i]) / (2.0 * h);
-      const double rel_now = out.r[i];
-      const double cm_rate = -gm[1] / (total * total) * (rel0.r[i] + rel0.v[i] * t1);
-      const double expected = gm[0] / total * drel + gm[1] / (total * total) * rel_now + cm_rate;
-      kepler_diff = fmax(kepler_diff, fabs(sens[3 + (size_t)i] - expected));
-      kepler_size = fmax(kepler_size, fabs(expected));
-    }
-  }
-  printf("derivatives of a two-body system over 4000 s: against the closed transition matrix %.1e "
-         "of %.1e; with respect to gm of the Earth against Kepler %.1e of %.1e\n",
-         worst, size, kepler_diff, kepler_size);
-  MT_CHECK(worst < 1e-6 * size && kepler_diff < 1e-6 * kepler_size);
-  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, 0.0, NULL, 0, y1, phi, NULL) == MYB_E_DOMAIN);
-  myb_system_destroy(s);
-}
-
 static void test_actions(void) {
   const double c = 299792458.0;
   const double au = 1.495978707e11;
@@ -1306,6 +1232,640 @@ static void test_guided_and_drags(void) {
   }
 }
 
+/* ---- Derivatives -------------------------------------------------------------------------------
+ * myb_system_partials integrates the variational equations; the differences of whole
+ * propagations it used before stay as the reference (myb_internal_system_partials_differences). */
+
+static double seconds_since(clock_t t0) {
+  return (double)(clock() - t0) / CLOCKS_PER_SEC;
+}
+
+/* The derivatives of a two-body system: against the transition matrix of the relative Kepler
+ * motion and the straight motion of the centre of mass in closed form; with respect to the gm of
+ * the heavy body against differences of the Kepler propagation; the state at the end is that of a
+ * propagation without the derivatives, bit for bit; the cost against the differences. */
+static void test_partials(void) {
+  const double gm[2] = {3.986004418e14, 1.0e9};
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+  const myb_pv rel0 = {{7.0e6, 1.0e6, 0.5e6}, {-900.0, 7300.0, 1200.0}};
+  double y0[12] = {0.0};
+  for (int i = 0; i < 3; ++i) {
+    y0[3 + i] = rel0.r[i];
+    y0[6 + 3 + i] = rel0.v[i];
+  }
+  const double t1 = 4000.0;
+  double y1[12];
+  double phi[144];
+  double sens[12];
+  const size_t heavy[1] = {0};
+  const myb_ias15_options o = {.epsilon = 1e-12};
+  clock_t t0 = clock();
+  int runs = 0;
+  /* bound: about a tenth of a second of runs */
+  do {
+    MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, heavy, 1, y1, phi, sens) == MYB_OK);
+    ++runs;
+  } while (seconds_since(t0) < 0.1 && runs < 100000);
+  const double variational = seconds_since(t0) / runs;
+  /* d (x2, v2)(t1) / d (x2, v2)(0): gm2 / M from the centre of mass, gm1 / M Phi_kepler */
+  const double total = gm[0] + gm[1];
+  myb_pv out;
+  double stm[36];
+  MT_CHECK(myb_kepler_stm(total, &rel0, t1, &out, stm) == MYB_OK);
+  double expected[36]; /* rows and columns: x2, v2 */
+  double size = 0.0;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      double centre = 0.0;
+      if (i % 3 == j % 3) {
+        if (i < 3 && j < 3) {
+          centre = 1.0;
+        } else if (i < 3 && j >= 3) {
+          centre = t1;
+        } else if (i >= 3 && j >= 3) {
+          centre = 1.0;
+        }
+      }
+      expected[6 * i + j] = gm[1] / total * centre + gm[0] / total * stm[6 * i + j];
+      size = fmax(size, fabs(expected[6 * i + j]));
+    }
+  }
+  /* row i of body 2 (x: 3 + i, v: 6 + 3 + i); column j of body 2 likewise */
+  double worst = 0.0;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      const size_t row = i < 3 ? 3 + (size_t)i : 6 + 3 + (size_t)(i - 3);
+      const size_t col = j < 3 ? 3 + (size_t)j : 6 + 3 + (size_t)(j - 3);
+      worst = fmax(worst, fabs(phi[12 * row + col] - expected[6 * i + j]));
+    }
+  }
+  /* d x2(t1) / d gm1 against differences of the Kepler propagation and the drift of the centre
+   * of mass in closed form */
+  double kepler_diff = 0.0;
+  double kepler_size = 0.0;
+  {
+    myb_pv up;
+    myb_pv down;
+    const double h = 1e-6 * gm[0];
+    MT_CHECK(myb_kepler_propagate(total + h, &rel0, t1, &up) == MYB_OK);
+    MT_CHECK(myb_kepler_propagate(total - h, &rel0, t1, &down) == MYB_OK);
+    for (int i = 0; i < 3; ++i) {
+      /* x2 = (gm2 / M)(r0 + v0 t) + (gm1 / M) rel(t; M): the centre of mass drifts with
+       * gm2 / M v0, body 1 starting at rest at the origin */
+      const double drel = (up.r[i] - down.r[i]) / (2.0 * h);
+      const double rel_now = out.r[i];
+      const double cm_rate = -gm[1] / (total * total) * (rel0.r[i] + rel0.v[i] * t1);
+      const double wanted = gm[0] / total * drel + gm[1] / (total * total) * rel_now + cm_rate;
+      kepler_diff = fmax(kepler_diff, fabs(sens[3 + (size_t)i] - wanted));
+      kepler_size = fmax(kepler_size, fabs(wanted));
+    }
+  }
+  /* the state at the end: that of the propagation alone */
+  double alone[12];
+  {
+    myb_ias15* in = NULL;
+    MT_CHECK(myb_system_integrator(s, &o, NULL, &in) == MYB_OK);
+    MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y0) == MYB_OK);
+    MT_CHECK(myb_ias15_integrate(in, t1) == MYB_OK);
+    memcpy(alone, myb_ias15_state(in), sizeof alone);
+    myb_ias15_destroy(in);
+  }
+  size_t differ = 0;
+  for (int i = 0; i < 12; ++i) {
+    differ += mt_bits(y1[i]) != mt_bits(alone[i]);
+  }
+  /* each output alone gives the same bits as both together */
+  double phi_alone[144];
+  double sens_alone[12];
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, heavy, 1, NULL, phi_alone, NULL) == MYB_OK);
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, heavy, 1, NULL, NULL, sens_alone) == MYB_OK);
+  MT_CHECK(memcmp(phi_alone, phi, sizeof phi) == 0 && memcmp(sens_alone, sens, sizeof sens) == 0);
+  /* the differences of whole propagations, as before */
+  double phi_d[144];
+  double sens_d[12];
+  t0 = clock();
+  runs = 0;
+  do {
+    MT_CHECK(myb_internal_system_partials_differences(s, &o, 0.0, y0, t1, heavy, 1, NULL, phi_d,
+                                                      sens_d) == MYB_OK);
+    ++runs;
+  } while (seconds_since(t0) < 0.1 && runs < 100000);
+  const double differences = seconds_since(t0) / runs;
+  double worst_d = 0.0;
+  for (int i = 0; i < 6; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      const size_t row = i < 3 ? 3 + (size_t)i : 6 + 3 + (size_t)(i - 3);
+      const size_t col = j < 3 ? 3 + (size_t)j : 6 + 3 + (size_t)(j - 3);
+      worst_d = fmax(worst_d, fabs(phi_d[12 * row + col] - expected[6 * i + j]));
+    }
+  }
+  printf(
+      "derivatives of a two-body system over 4000 s: against the closed transition matrix %.1e "
+      "of the largest element %.1e (%.1e); with respect to gm of the Earth against Kepler "
+      "%.1e of %.1e; the state at the end is that of the propagation alone (%zu bits differ)\n",
+      worst, size, worst / size, kepler_diff, kepler_size, differ);
+  printf(
+      "  the differences of propagations: %.1e of the largest element; cost %.2f ms against "
+      "%.2f ms of the variational equations (%.1fx)\n",
+      worst_d / size, 1e3 * differences, 1e3 * variational, differences / variational);
+  MT_CHECK(worst < 1e-13 * size && kepler_diff < 1e-6 * kepler_size && differ == 0);
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, 0.0, NULL, 0, y1, phi, NULL) == MYB_E_DOMAIN);
+  const size_t massless[1] = {5};
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, massless, 1, y1, phi, sens) == MYB_E_DOMAIN);
+  myb_system_destroy(s);
+}
+
+/* A frame that turns about its third axis at a constant rate (inertial -> body). */
+typedef struct turning_frame {
+  double rate;
+  double phase;
+} turning_frame;
+
+static myb_status turning_orientation(void* context, myb_time t, myb_orientation* o) {
+  const turning_frame* f = context;
+  const double angle = f->phase + f->rate * myb_time_seconds(t);
+  const double c = cos(angle);
+  const double sn = sin(angle);
+  memset(o, 0, sizeof *o);
+  const double m[9] = {c, sn, 0.0, -sn, c, 0.0, 0.0, 0.0, 1.0};
+  const double dm[9] = {-sn * f->rate, c * f->rate, 0.0, -c * f->rate, -sn * f->rate,
+                        0.0,           0.0,         0.0, 0.0};
+  memcpy(o->rotation.m, m, sizeof m);
+  memcpy(o->rotation.dm, dm, sizeof dm);
+  return MYB_OK;
+}
+
+/* A drag on the body, against its velocity relative to body 0: the context is the rate (1/s). */
+static myb_status resist(void* context, double t, const myb_system_view* view,
+                         double acceleration[3], double torque[3]) {
+  (void)t;
+  (void)torque;
+  const double* rate = context;
+  for (int i = 0; i < 3; ++i) {
+    acceleration[i] = -*rate * (view->v[3 * view->body + (size_t)i] - view->v[i]);
+  }
+  return MYB_OK;
+}
+
+/* The sizes by which the differences of propagations scale their steps: in each half of a state
+ * (coordinates, rates) the largest coordinate of the bodies, then the largest of each group of
+ * three of the rotations and the spins (1 for a group of zeros). */
+static void difference_sizes(size_t n, size_t bodies, const double* y, double* size) {
+  for (size_t half = 0; half < 2; ++half) {
+    const double* part = y + half * n;
+    double largest = 0.0;
+    for (size_t i = 0; i < 3 * bodies; ++i) {
+      largest = fmax(largest, fabs(part[i]));
+    }
+    for (size_t i = 0; i < 3 * bodies; ++i) {
+      size[half * n + i] = largest > 0.0 ? largest : 1.0;
+    }
+    for (size_t i = 3 * bodies; i < n; ++i) {
+      const size_t first = 3 * bodies + ((i - 3 * bodies) / 3) * 3;
+      double group = 0.0;
+      for (size_t j = first; j < first + 3; ++j) {
+        group = fmax(group, fabs(part[j]));
+      }
+      size[half * n + i] = group > 0.0 ? group : 1.0;
+    }
+  }
+}
+
+/* The variational derivatives `a` against those of the differences `ref` (rows x cols): within
+ * the resolution of the differences — the rounding of a final state (1e-13 of the size of its
+ * coordinate, `row_size`: the two propagations take different steps) over the step 2 h of the
+ * column (`col_step`) — and 1e-6 of the largest element of the block of kinds (positions,
+ * rotations, spins) the element lies in. Returns the worst ratio of the difference to that
+ * tolerance; *agreement the worst difference relative to its block over the blocks of the
+ * diagonal (positions on positions, rotations on rotations, ...), where the differences resolve
+ * every element. */
+static double against_differences(size_t rows, size_t cols, const double* a, const double* ref,
+                                  const int* row_kind, const int* col_kind, const double* row_size,
+                                  const double* col_step, double* agreement) {
+  enum { KINDS = 3 };
+
+  double block[KINDS][KINDS] = {{0.0}};
+  double diff[KINDS][KINDS] = {{0.0}};
+  for (size_t i = 0; i < rows; ++i) {
+    for (size_t j = 0; j < cols; ++j) {
+      block[row_kind[i]][col_kind[j]] =
+          fmax(block[row_kind[i]][col_kind[j]], fabs(ref[i * cols + j]));
+      diff[row_kind[i]][col_kind[j]] =
+          fmax(diff[row_kind[i]][col_kind[j]], fabs(a[i * cols + j] - ref[i * cols + j]));
+    }
+  }
+  *agreement = 0.0;
+  for (int k = 0; k < KINDS; ++k) {
+    if (block[k][k] > 0.0) {
+      *agreement = fmax(*agreement, diff[k][k] / block[k][k]);
+    }
+  }
+  double worst = 0.0;
+  for (size_t i = 0; i < rows; ++i) {
+    for (size_t j = 0; j < cols; ++j) {
+      const double tolerance =
+          1e-6 * block[row_kind[i]][col_kind[j]] + 1e-13 * row_size[i] / (2.0 * col_step[j]);
+      worst = fmax(worst, fabs(a[i * cols + j] - ref[i * cols + j]) / tolerance);
+    }
+  }
+  return worst;
+}
+
+/* A system with every level at once — the point masses with their 1PN terms, the field of a
+ * planet that turns by a frame from outside (analytic), the field and the figure of a moon whose
+ * rotation is integrated (with a core, distorted by the planet), the figures of both, the tide of
+ * the planet, a pair beyond 1PN with spins, an action, the frame dragging, a guided Sun, a
+ * contact that does not touch, a mass that changes. The contexts live in the fixture. */
+typedef struct levels_fixture {
+  myb_system* s;
+  myb_gravity_field* earth;
+  myb_gravity_field* moon;
+  turning_frame frame;
+  circling sun;
+  double rate;
+  myb_contact_point foot;
+} levels_fixture;
+
+enum { LEVELS_N = 24 }; /* 3 bodies, a rotation, a pair of spins */
+
+/* gm: of the bodies; the fields keep the GM of their own (field_gm), which is not the system's: a
+ * system built with a gm changed sees its fields unchanged, as the derivatives take them. */
+static void levels_build(levels_fixture* f, const double gm[3], const double field_gm[2]) {
+  const double c = 299792458.0;
+  const double au = 1.495978707e11;
+  const double re = 6378136.3;
+  const double rm = 1.738e6;
+  memset(f, 0, sizeof *f);
+  MT_CHECK(myb_system_create(3, gm, NULL, &f->s) == MYB_OK);
+  myb_system* s = f->s;
+  const myb_ppn ppn = {c, 1.0, 1.0};
+  MT_CHECK(myb_nbody_set_relativity(myb_system_nbody(s), &ppn) == MYB_OK);
+  /* the planet: degree 4, turning */
+  const double ce[15] = {1.0,       0.0,      0.0,     -4.84165e-4, 2.0e-10,
+                         2.4394e-6, 9.57e-7,  2.03e-6, 9.05e-7,     7.21e-7,
+                         5.4e-7,    -5.36e-7, 3.5e-7,  9.9e-7,      -1.9e-7};
+  const double se[15] = {0.0,      0.0,      0.0, 0.0,      1.4e-9, -1.4003e-6, 0.0,    2.48e-7,
+                         -6.19e-7, 1.414e-6, 0.0, -4.73e-7, 6.6e-7, -2.0e-7,    3.09e-7};
+  MT_CHECK(myb_gravity_field_create(field_gm[0], re, 4, ce, se, NULL, &f->earth) == MYB_OK);
+  f->frame = (turning_frame){7.292115e-5, 0.3};
+  MT_CHECK(myb_system_set_orientation(s, 0, turning_orientation, &f->frame) == MYB_OK);
+  MT_CHECK(myb_system_set_field(s, 0, f->earth, 0) == MYB_OK);
+  const myb_system_tide tide = {.radius = re,
+                                .k2 = {0.30, 0.31, 0.29},
+                                .orbital_lag = {0.0, 600.0, 400.0},
+                                .rotation_lag = {0.0, 600.0, 400.0},
+                                .rotation_rate = 7.292115e-5};
+  MT_CHECK(myb_system_set_tide(s, 0, &tide) == MYB_OK);
+  MT_CHECK(myb_system_set_mass_rate(s, 0, 1.0e-12, 500.0) == MYB_OK);
+  /* the moon: degree 3 from its field, 2 from its inertia; a core; distorted */
+  const double cm3[10] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -8.786e-6, 3.17e-5, 4.88e-6, 1.77e-6};
+  const double sm3[10] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.7e-6, 1.67e-6, -2.48e-7};
+  MT_CHECK(myb_gravity_field_create(field_gm[1], rm, 3, cm3, sm3, NULL, &f->moon) == MYB_OK);
+  const myb_system_rotation moon = {
+      .moments = {0.3900 * rm * rm, 0.3902 * rm * rm, 0.3905 * rm * rm},
+      .radius = rm,
+      .k2 = 0.024,
+      .lag = 3600.0,
+      .mean_motion = 2.6617e-6,
+      .core = {7.0e-4 * rm * rm, 7.1e-4 * rm * rm},
+      .core_friction = 5.0e-10 * rm * rm};
+  MT_CHECK(myb_system_set_rotation(s, 1, &moon) == MYB_OK);
+  MT_CHECK(myb_system_set_field(s, 1, f->moon, 3) == MYB_OK);
+  MT_CHECK(myb_system_add_distortion(s, 1, 0) == MYB_OK);
+  /* the levels */
+  MT_CHECK(myb_system_add_field(s, 0, 2) == MYB_OK); /* analytic */
+  MT_CHECK(myb_system_add_field(s, 1, 2) == MYB_OK); /* by differences */
+  MT_CHECK(myb_system_add_field(s, 1, 0) == MYB_OK);
+  MT_CHECK(myb_system_add_figures(s, 0, 1) == MYB_OK);
+  MT_CHECK(myb_system_add_tide(s, 0, 1, 1) == MYB_OK);
+  const myb_system_pn_pair pair = {.orders = MYB_PN_2 | MYB_PN_SO};
+  MT_CHECK(myb_system_add_pn_pair(s, 0, 1, &pair) == MYB_OK);
+  f->rate = 1.0e-6;
+  MT_CHECK(myb_system_add_action(s, 2, resist, &f->rate) == MYB_OK);
+  const double pole[3] = {0.0, 0.0, 0.33 * re * re * 7.292115e-5};
+  MT_CHECK(myb_system_add_frame_dragging(s, 0, 2, pole) == MYB_OK);
+  f->sun = (circling){au, 1.99e-7, 0, 0};
+  MT_CHECK(myb_system_add_guided(s, 1.32712440018e20, circling_state, &f->sun, NULL) == MYB_OK);
+  f->foot = (myb_contact_point){{0.0, 0.0, 0.0}, 1.0};
+  const myb_system_contact ground = {
+      .surface = {.shape = MYB_CONTACT_ELLIPSOID, .radii = {re, re, re}},
+      .law = {.stiffness = 1.0e3, .exponent = 1.5, .damping = 0.0, .friction = 0.5, .slip = 1.0e-3},
+      .points = &f->foot,
+      .point_count = 1};
+  MT_CHECK(myb_system_add_contact(s, 2, 0, &ground) == MYB_OK);
+  MT_CHECK(myb_system_coordinates(s) == LEVELS_N);
+}
+
+static void levels_destroy(levels_fixture* f) {
+  myb_system_destroy(f->s);
+  myb_gravity_field_destroy(f->moon);
+  myb_gravity_field_destroy(f->earth);
+}
+
+/* The state of the fixture: the planet near the origin, the moon, a satellite in a low orbit, the
+ * rotation of the moon with its core, the two spins. */
+static void levels_state(const levels_fixture* f, double y0[2 * LEVELS_N]) {
+  const size_t n = LEVELS_N;
+  memset(y0, 0, 2 * n * sizeof *y0);
+  const double x0[9] = {0.0, 0.0, 0.0, 3.84e8, 1.0e6, 1.0e7, 7.0e6, 1.0e6, 0.5e6};
+  const double v0[9] = {0.0, 0.0, 0.0, -2.0, 1018.0, 50.0, -900.0, 7300.0, 1200.0};
+  memcpy(y0, x0, sizeof x0);
+  memcpy(y0 + n, v0, sizeof v0);
+  double q0[4] = {0.9, -0.1, 0.3, 0.2};
+  (void)myb_quat_normalize(q0);
+  const double w0[3] = {1.0e-7, -2.0e-7, 2.6617e-6};
+  const double wc[3] = {0.0, 1.0e-8, 2.6e-6};
+  MT_CHECK(myb_system_pack_rotation(f->s, 1, q0, w0, wc, y0) == MYB_OK);
+  const double chi1[3] = {0.1, 0.2, 0.6};
+  const double chi2[3] = {-0.3, 0.1, 0.4};
+  MT_CHECK(myb_system_pack_spins(f->s, 0, chi1, chi2, y0) == MYB_OK);
+}
+
+/* The kinds of the coordinates of the fixture: 0 the bodies, 1 the rotation, 2 the spins (the
+ * unused coordinates of the rotation and the positions of the spins go along: free coordinates). */
+static void levels_kinds(int kind[2 * LEVELS_N]) {
+  for (size_t i = 0; i < 2 * LEVELS_N; ++i) {
+    const size_t k = i % LEVELS_N;
+    kind[i] = k < 9 ? 0 : k < 18 ? 1 : 2;
+  }
+}
+
+/* The Jacobian of a system with every level, as the variational equations integrate it, against
+ * differences of myb_system_acceleration itself at the same state — Richardson's extrapolation of
+ * central differences with steps of 1e-4 of the size of each coordinate, and for the gm systems
+ * built with gm changed: block by block (bodies, rotation, spins), within 1e-7 of the largest
+ * element of the block and the rounding of the accelerations over the step. This checks every
+ * level, analytic or differenced, where the differences of whole propagations cannot (the moon
+ * turned moves the satellite by less than the rounding of its orbit). */
+static void test_partials_jacobian(void) {
+  const size_t n = LEVELS_N;
+  const double gm[3] = {3.986004418e14, 4.9028e12, 1.0e3};
+  levels_fixture f;
+  levels_build(&f, gm, gm);
+  double y[2 * LEVELS_N];
+  levels_state(&f, y);
+  const double t = 100.0;
+  const size_t sensitive[2] = {0, 1};
+  double jac[LEVELS_N * 2 * LEVELS_N];
+  double dgm[LEVELS_N * 2];
+  MT_CHECK(myb_internal_system_jacobian(f.s, t, y, sensitive, 2, jac, dgm) == MYB_OK);
+  /* the steps: 1e-4 of the distance to the nearest body, of the relative speed, of a quaternion,
+   * of the rate of the rotation, of a spin */
+  double h[2 * LEVELS_N];
+  const double length[3] = {7.1e6, 3.84e8, 7.1e6};
+  const double speed[3] = {7.4e3, 1.0e3, 7.4e3};
+  for (size_t b = 0; b < 3; ++b) {
+    for (size_t i = 0; i < 3; ++i) {
+      h[3 * b + i] = 1e-4 * length[b];
+      h[n + 3 * b + i] = 1e-4 * speed[b];
+    }
+  }
+  for (size_t i = 9; i < 18; ++i) {
+    h[i] = 1e-4;
+    h[n + i] = 1e-4 * 2.6e-6;
+  }
+  for (size_t i = 18; i < n; ++i) {
+    h[i] = 1e-4;
+    h[n + i] = 1e-4 * 0.5;
+  }
+  double ref[LEVELS_N * 2 * LEVELS_N];
+  double a0[LEVELS_N];
+  MT_CHECK(myb_system_acceleration(f.s, t, y, y + n, a0) == MYB_OK);
+  for (size_t j = 0; j < 2 * n; ++j) {
+    double d[2][LEVELS_N];
+    for (int half = 0; half < 2; ++half) {
+      const double step = half == 0 ? h[j] : 0.5 * h[j];
+      double z[2 * LEVELS_N];
+      double up[LEVELS_N];
+      double down[LEVELS_N];
+      memcpy(z, y, sizeof z);
+      z[j] = y[j] + step;
+      MT_CHECK(myb_system_acceleration(f.s, t, z, z + n, up) == MYB_OK);
+      z[j] = y[j] - step;
+      MT_CHECK(myb_system_acceleration(f.s, t, z, z + n, down) == MYB_OK);
+      for (size_t i = 0; i < n; ++i) {
+        d[half][i] = (up[i] - down[i]) / (2.0 * step);
+      }
+    }
+    for (size_t i = 0; i < n; ++i) {
+      ref[i * 2 * n + j] = (4.0 * d[1][i] - d[0][i]) / 3.0;
+    }
+  }
+  /* the gm: systems built with it changed (for the planet the gm given is its gm at the epoch of
+   * its changing mass) */
+  double ref_gm[LEVELS_N * 2];
+  for (size_t k = 0; k < 2; ++k) {
+    double d[2][LEVELS_N];
+    for (int half = 0; half < 2; ++half) {
+      const double step = (half == 0 ? 1e-4 : 0.5e-4) * gm[k];
+      double up[LEVELS_N];
+      double down[LEVELS_N];
+      for (int side = 0; side < 2; ++side) {
+        double moved[3] = {gm[0], gm[1], gm[2]};
+        moved[k] += side == 0 ? step : -step;
+        levels_fixture g;
+        levels_build(&g, moved, gm);
+        MT_CHECK(myb_system_acceleration(g.s, t, y, y + n, side == 0 ? up : down) == MYB_OK);
+        levels_destroy(&g);
+      }
+      for (size_t i = 0; i < n; ++i) {
+        d[half][i] = (up[i] - down[i]) / (2.0 * step);
+      }
+    }
+    for (size_t i = 0; i < n; ++i) {
+      ref_gm[i * 2 + k] = (4.0 * d[1][i] - d[0][i]) / 3.0;
+    }
+  }
+  /* the rounding of each acceleration: 1e-14 of the largest of its body, rotation or spins, over
+   * the smaller of the two steps (those of the variational equations are 2^-17 of the sizes, a
+   * fourteenth of the steps here) */
+  int kind[2 * LEVELS_N];
+  levels_kinds(kind);
+  double row_size[LEVELS_N];
+  for (size_t i = 0; i < n; ++i) {
+    const size_t first = i < 9 ? (i / 3) * 3 : i < 18 ? 9 : 18;
+    const size_t last = i < 9 ? first + 3 : i < 18 ? 18 : n;
+    row_size[i] = 0.0;
+    for (size_t k = first; k < last; ++k) {
+      row_size[i] = fmax(row_size[i], fabs(a0[k]));
+    }
+  }
+  const double fine = 0x1p-17 / 1e-4;
+
+  enum { KINDS = 3 };
+
+  double block[KINDS][KINDS] = {{0.0}};
+  double block_gm[KINDS] = {0.0};
+  for (size_t i = 0; i < n; ++i) {
+    for (size_t j = 0; j < 2 * n; ++j) {
+      block[kind[i]][kind[j]] = fmax(block[kind[i]][kind[j]], fabs(ref[i * 2 * n + j]));
+    }
+    for (size_t k = 0; k < 2; ++k) {
+      block_gm[kind[i]] = fmax(block_gm[kind[i]], fabs(ref_gm[i * 2 + k]));
+    }
+  }
+  double worst = 0.0;
+  double worst_relative = 0.0;
+  for (size_t i = 0; i < n; ++i) {
+    for (size_t j = 0; j < 2 * n; ++j) {
+      const double diff = fabs(jac[i * 2 * n + j] - ref[i * 2 * n + j]);
+      const double size = block[kind[i]][kind[j]];
+      const double rounding = 1e-14 * row_size[i] / (fine * h[j]);
+      worst = fmax(worst, diff / (1e-7 * size + rounding + 1e-300));
+      if (rounding < 1e-6 * fabs(ref[i * 2 * n + j])) { /* an element the differences resolve */
+        worst_relative = fmax(worst_relative, diff / fabs(ref[i * 2 * n + j]));
+      }
+    }
+    for (size_t k = 0; k < 2; ++k) {
+      const double diff = fabs(dgm[i * 2 + k] - ref_gm[i * 2 + k]);
+      worst = fmax(worst, diff / (1e-7 * block_gm[kind[i]] +
+                                  1e-14 * row_size[i] / (fine * 1e-4 * gm[k]) + 1e-300));
+    }
+  }
+  printf(
+      "the Jacobian of a system with every level against differences of the acceleration: "
+      "%.1e at worst of the elements they resolve to 1e-6, everywhere %.2f of the tolerance "
+      "(1e-7 of the largest element of the block, and the rounding over the step)\n",
+      worst_relative, worst);
+  MT_CHECK(worst < 1.0);
+  levels_destroy(&f);
+}
+
+/* The variational equations of the same system against the differences of whole propagations:
+ * block by block within the resolution of the differences (their steps, 1e-6 of the size of a
+ * kind of coordinate, against the rounding of the final states), to their accuracy on the blocks
+ * of the diagonal; the state at the end that of the propagation alone, bit for bit; the cost. */
+static void test_partials_levels(void) {
+  const size_t n = LEVELS_N;
+  const double gm[3] = {3.986004418e14, 4.9028e12, 1.0e3};
+  levels_fixture f;
+  levels_build(&f, gm, gm);
+  myb_system* s = f.s;
+  double y0[2 * LEVELS_N];
+  levels_state(&f, y0);
+  const double t1 = 2000.0;
+  const myb_ias15_options o = {.epsilon = 1e-11};
+  const size_t sensitive[2] = {0, 1};
+  double y1[2 * LEVELS_N];
+  double phi[4 * LEVELS_N * LEVELS_N];
+  double sens[2 * LEVELS_N * 2];
+  clock_t t0 = clock();
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, sensitive, 2, y1, phi, sens) == MYB_OK);
+  const double variational = seconds_since(t0);
+  /* the state at the end */
+  double alone[2 * LEVELS_N];
+  {
+    myb_ias15* in = NULL;
+    MT_CHECK(myb_system_integrator(s, &o, NULL, &in) == MYB_OK);
+    MT_CHECK(myb_ias15_start(in, myb_system_acceleration, s, 0.0, y0) == MYB_OK);
+    MT_CHECK(myb_ias15_integrate(in, t1) == MYB_OK);
+    memcpy(alone, myb_ias15_state(in), sizeof alone);
+    myb_ias15_destroy(in);
+  }
+  size_t differ = 0;
+  for (size_t i = 0; i < 2 * n; ++i) {
+    differ += mt_bits(y1[i]) != mt_bits(alone[i]);
+  }
+  double phi_d[4 * LEVELS_N * LEVELS_N];
+  double sens_d[2 * LEVELS_N * 2];
+  t0 = clock();
+  MT_CHECK(myb_internal_system_partials_differences(s, &o, 0.0, y0, t1, sensitive, 2, NULL, phi_d,
+                                                    sens_d) == MYB_OK);
+  const double differences = seconds_since(t0);
+  int kind[2 * LEVELS_N];
+  levels_kinds(kind);
+  double size0[2 * LEVELS_N];
+  double size1[2 * LEVELS_N];
+  double step[2 * LEVELS_N];
+  difference_sizes(n, 3, y0, size0);
+  difference_sizes(n, 3, y1, size1);
+  for (size_t j = 0; j < 2 * n; ++j) {
+    step[j] = 1e-6 * size0[j];
+  }
+  double agree_phi = 0.0;
+  const double worst_phi =
+      against_differences(2 * n, 2 * n, phi, phi_d, kind, kind, size1, step, &agree_phi);
+  const int sens_kind[2] = {0, 0};
+  const double sens_step[2] = {1e-6 * gm[0], 1e-6 * gm[1]};
+  double agree_sens = 0.0;
+  const double worst_sens =
+      against_differences(2 * n, 2, sens, sens_d, kind, sens_kind, size1, sens_step, &agree_sens);
+  printf(
+      "derivatives of a system with every level (24 coordinates, 2 gm) over 2000 s: the "
+      "variational equations against the differences of propagations to %.1e (state) and "
+      "%.1e (gm) of the blocks of the diagonal, everywhere within the resolution of the "
+      "differences (%.1e, %.1e of it); the state at the end that of the propagation alone "
+      "(%zu bits differ); cost %.3f s against %.3f s (%.1fx)\n",
+      agree_phi, agree_sens, worst_phi, worst_sens, differ, variational, differences,
+      differences / variational);
+  MT_CHECK(worst_phi < 1.0 && worst_sens < 1.0 && agree_phi < 1e-6 && differ == 0);
+  levels_destroy(&f);
+}
+
+/* The transition matrix of a conservative system keeps the symplectic form of the motion,
+ * sum_i gm_i dx_i ^ dv_i (the masses weigh the velocities into momenta): Phi^T Omega Phi = Omega
+ * for five bodies with the field of a turning planet on one of them and a guided Sun — every
+ * level of them derived from a potential, which may depend on the time. */
+static void test_partials_symplectic(void) {
+  const double au = 1.495978707e11;
+  const double gm[5] = {3.986004418e14, 4.9028e12, 2.0e8, 5.0e7, 1.0e6};
+  const double c[6] = {1.0, 0.0, 0.0, -4.84165e-4, 0.0, 2.4394e-6};
+  const double sn[6] = {0.0, 0.0, 0.0, 0.0, 0.0, -1.4003e-6};
+  myb_gravity_field* field = NULL;
+  MT_CHECK(myb_gravity_field_create(gm[0], 6378136.3, 2, c, sn, NULL, &field) == MYB_OK);
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(5, gm, NULL, &s) == MYB_OK);
+  turning_frame frame = {7.292115e-5, 0.0};
+  MT_CHECK(myb_system_set_orientation(s, 0, turning_orientation, &frame) == MYB_OK);
+  MT_CHECK(myb_system_set_field(s, 0, field, 0) == MYB_OK);
+  MT_CHECK(myb_system_add_field(s, 0, 3) == MYB_OK);
+  circling sun = {au, 1.99e-7, 0, 0};
+  MT_CHECK(myb_system_add_guided(s, 1.32712440018e20, circling_state, &sun, NULL) == MYB_OK);
+  const double y0[30] = {0.0,    0.0,    0.0,    3.84e8, 1.0e6,  1.0e7,   -2.0e7,  3.0e7,
+                         1.0e6,  7.2e6,  -1.0e6, 0.3e6,  4.2e7,  1.0e6,   -2.0e5,  0.0,
+                         0.0,    0.0,    -2.0,   1018.0, 50.0,   -2500.0, -1800.0, 300.0,
+                         1200.0, 7200.0, 900.0,  -100.0, 3075.0, 20.0};
+  const size_t n = 15;
+  const double t1 = 20000.0;
+  const myb_ias15_options o = {.epsilon = 1e-11};
+  double phi[30 * 30];
+  MT_CHECK(myb_system_partials(s, &o, 0.0, y0, t1, NULL, 0, NULL, phi, NULL) == MYB_OK);
+  /* Omega = [0 M; -M 0], M = diag(gm) by coordinate; each element of Phi^T Omega Phi - Omega
+   * against the sum of the magnitudes of its terms */
+  double defect = 0.0;
+  for (size_t i = 0; i < 2 * n; ++i) {
+    for (size_t j = 0; j < 2 * n; ++j) {
+      double sum = 0.0;
+      double magnitude = 0.0;
+      for (size_t k = 0; k < n; ++k) {
+        const double w = gm[k / 3];
+        /* (Phi^T Omega Phi)_ij = sum_k w (Phi_ki Phi_(n+k)j - Phi_(n+k)i Phi_kj) */
+        const double p = phi[k * 2 * n + i] * phi[(n + k) * 2 * n + j];
+        const double q = phi[(n + k) * 2 * n + i] * phi[k * 2 * n + j];
+        sum += w * (p - q);
+        magnitude += w * (fabs(p) + fabs(q));
+      }
+      double omega = 0.0;
+      if (j == i + n && i < n) {
+        omega = gm[i / 3];
+      } else if (i == j + n && j < n) {
+        omega = -gm[j / 3];
+      }
+      if (magnitude > 0.0) {
+        defect = fmax(defect, fabs(sum - omega) / magnitude);
+      }
+    }
+  }
+  printf(
+      "symplectic form of five bodies with a field and a guided Sun over 20000 s: Phi^T Omega "
+      "Phi - Omega, %.1e of the magnitude of its terms at worst\n",
+      defect);
+  MT_CHECK(defect < 1e-10);
+  myb_system_destroy(s);
+  myb_gravity_field_destroy(field);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_field();
@@ -1316,8 +1876,11 @@ int main(void) {
   test_rotating_merger();
   test_pn_merger();
   test_neighbours();
-  test_partials();
   test_actions();
   test_guided_and_drags();
+  test_partials();
+  test_partials_jacobian();
+  test_partials_levels();
+  test_partials_symplectic();
   return mt_finish("test_system");
 }

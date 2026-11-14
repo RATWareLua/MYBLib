@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include "myb/core.h"
+#include "myb/pool.h"
 
 typedef struct myb_internal_fmm myb_internal_fmm;
 
@@ -42,12 +43,16 @@ double myb_internal_fmm_theta(const myb_internal_fmm* fmm);
 
 /* a (3 per point) = the Newtonian accelerations of the `count` points at (px, py, pz) (one
  * array per component) from the first `massive` of them, of GM gm[0 .. massive-1] (finite,
- * >= 0); the others feel the field and attract nothing. Errors: MYB_E_DOMAIN (a position not
- * finite, the cloud too wide), MYB_E_NOMEM and MYB_E_OVERFLOW (the tree grows). Coincident
- * interacting points give non-finite accelerations, as the direct sum does. */
-[[nodiscard]] myb_status myb_internal_fmm_evaluate(myb_internal_fmm* fmm, size_t massive,
-                                                   const double* gm, const double* px,
-                                                   const double* py, const double* pz, double* a);
+ * >= 0); the others feel the field and attract nothing. On the threads of `pool` (NULL: the
+ * calling thread alone) from TEAM_MIN points on (dyn/fmm.c), with the bits of the serial
+ * evaluation whatever the number of threads. Errors: MYB_E_DOMAIN (a position not finite, the
+ * cloud too wide), MYB_E_NOMEM and MYB_E_OVERFLOW (the tree grows; with a pool, the lists of
+ * the walk grow and the scratch of the threads is made, once). Coincident interacting points
+ * give non-finite accelerations, as the direct sum does. */
+[[nodiscard]] myb_status myb_internal_fmm_evaluate(myb_internal_fmm* fmm, myb_pool* pool,
+                                                   size_t massive, const double* gm,
+                                                   const double* px, const double* py,
+                                                   const double* pz, double* a);
 
 myb_internal_fmm_stats myb_internal_fmm_statistics(const myb_internal_fmm* fmm);
 

@@ -271,7 +271,42 @@ MYB_API void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, d
  * it where those of its Lyapunov orbit do, out of the plane as the size of the torus and in
  * it as its square (4e-4 in y, vy at the size 1e-3, ratio 3.994 to the size 2e-3), the
  * Jacobi constant kept to 4e-15, and the stable one is the mirror image of the unstable one
- * (the symmetry y, vx, vz, t -> -y, -vx, -vz, -t). */
+ * (the symmetry y, vx, vz, t -> -y, -vx, -vz, -t).
+ *
+ * The normal rotation of an elliptic torus. Its normal pair is two circles of eigenvalues on
+ * the unit circle, exp(i (sigma - k rho)) and their conjugates, and which member is "the"
+ * normal rotation is a matter of the rule: sigma is defined modulo rho. The rule here: the
+ * member whose eigenfunction is the smoothest along the circle — of the resolved elliptic
+ * eigenvalues in the upper half plane, the one whose complex eigenvector (by inverse iteration
+ * on A in complex arithmetic, its Fourier coefficients c_k over k = -(n - 1) / 2 .. (n - 1) / 2)
+ * has the least root mean square frequency (sum k^2 |c_k|^2 / sum |c_k|^2)^(1/2). Its
+ * eigenfunction tends to the constant eigenvector of the periodic orbit as the torus shrinks,
+ * and the members k != 0 to it times exp(i k theta), so that sigma tends to the angle of the
+ * elliptic pair of the orbit: the continuation of the orbit's own rule. With the eigenfunction
+ * psi and its conjugate the normal bundle of the torus is spanned, and the map carries it into
+ * itself turned by sigma, Phi(theta) psi(theta) = exp(i sigma) psi(theta + rho). This costs one
+ * complex LU of A per candidate (about n of them): the spectrum of an elliptic torus takes
+ * 0.1 s with 21 points, 0.35 s with 35.
+ *
+ * Measured, about the distant retrograde orbit above (both pairs of the monodromy matrix on the
+ * unit circle, at 1.487246569 and 2.226143226 rad), tori of 21 points on either pair: sigma
+ * tends to the angle of the other pair as the square of the size (6.86e-6, 2.74e-5, 1.09e-4 at
+ * the sizes 1e-3, 2e-3, 4e-3, ratios 3.997 and 3.987; on the other pair -6.4e-7, ratios 4.02
+ * and 4.06); the eigenfunction is off the eigenvector of the orbit by 2.6e-3 at the worst point
+ * (as the size, ratios 2.000 and 2.001) and its mean over the points by 2.0e-5 (as the square,
+ * 4.000); A psi = lambda psi to 2e-15, |lambda| = 1 to 3e-15; between the points, with the
+ * transition matrices of the interpolated points over T, Phi psi = lambda psi(theta + rho) to
+ * 7.5e-13 of psi; 25 and 35 points give the sigma of 21 to 5e-15. A hyperbolic torus has none.
+ *
+ * Tori about vertical Lyapunov orbits (the test builds the orbits from the second-order guess
+ * of the figure eight and the symmetric corrector; myb_cr3bp_torus_from_orbit takes their
+ * centre pair): about the vertical orbits of L1 and L2 that reach 11 500 km out of the plane
+ * (lambda 3231 and 1937, the centre pair at 0.2078 and 0.2850 rad), tori of 25 points of the
+ * sizes 1e-3, 2e-3, 4e-3 return onto themselves after a turn to 1.3e-11 (by DOP853), the
+ * Jacobi constant one over the circle to 1e-14; rho tends to the angle of the centre pair as
+ * the square of the size (-6.0e-6 at 1e-3, ratios 4.000 and 4.000, at both points), and so does
+ * the unstable eigenvalue of the torus to that of the orbit (-2.0e-5 and -1.7e-5, ratios
+ * 4.000); every member of the two hyperbolic circles is resolved, no normal rotation. */
 
 enum { MYB_CR3BP_MAX_SPECTRUM = 6 * MYB_CR3BP_MAX_CIRCLE };
 
@@ -293,10 +328,24 @@ typedef struct myb_cr3bp_torus_spectrum {
   double stable_direction[6 * MYB_CR3BP_MAX_CIRCLE];
   double residual; /* |A v - lambda v| / (|lambda| |v|) of the two directions, the larger */
   double tail;     /* the share of their energy above half the highest frequency, the larger */
+  /* the normal pair of an elliptic torus (below): its eigenvalue exp(i sigma), the member of
+   * its circles with the least root mean square frequency, sigma in (0, pi]; 0: no elliptic
+   * pair */
+  double normal_rotation;      /* sigma (rad) */
+  double normal_eigenvalue[2]; /* the eigenvalue of A: re, im (|.| = 1 to the tolerance) */
+  double normal_frequency;     /* the root mean square frequency |k| of its eigenfunction */
+  double normal_residual;      /* |A psi - lambda psi| / (|lambda| |psi|) */
+  /* the complex eigenfunction psi = re + i im at the points, of unit root mean square over
+   * them, turned so that the component of the largest modulus of its mean over the points is
+   * real and positive; with its conjugate it spans the normal bundle, which the map carries
+   * into itself turned by sigma: Phi(theta) psi(theta) = exp(i sigma) psi(theta + rho) */
+  double normal_re[6 * MYB_CR3BP_MAX_CIRCLE];
+  double normal_im[6 * MYB_CR3BP_MAX_CIRCLE];
 } myb_cr3bp_torus_spectrum;
 
 /* The spectrum of the torus: its points carried over T with their transition matrices, the
- * eigenvalues of A, their classes, and the eigenvectors of the hyperbolic pair. `tolerance`
+ * eigenvalues of A, their classes, the eigenvectors of the hyperbolic pair, and the normal
+ * rotation and eigenfunction of an elliptic one. `tolerance`
  * (0: 1e-4) is the distance within which an eigenvalue counts as on the unit circle, at 1, or
  * a turn of another (relative to its modulus); it must stay well above the splitting of the
  * Jordan blocks and below the turn itself (|1 - exp(i rho)| > 10 tolerance). The work grows

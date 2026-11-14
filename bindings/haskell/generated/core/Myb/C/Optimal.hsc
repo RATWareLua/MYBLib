@@ -415,6 +415,7 @@ data Myb_chain = Myb_chain
   , myb_chain'flight :: [CDouble]
   , myb_chain'launch :: CDouble
   , myb_chain'arrival :: CDouble
+  , myb_chain'impulse_exhaust :: [CDouble]
   }
   deriving (Eq, Show)
 
@@ -435,7 +436,8 @@ instance Storable Myb_chain where
     v11 <- peekArray (#{const (MYB_CHAIN_MAX_LEGS) * (2)}) (#{ptr myb_chain, flight} p)
     v12 <- #{peek myb_chain, launch} p
     v13 <- #{peek myb_chain, arrival} p
-    pure (Myb_chain v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13)
+    v14 <- peekArray (#{const (MYB_CHAIN_MAX_LEGS + 1)}) (#{ptr myb_chain, impulse_exhaust} p)
+    pure (Myb_chain v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13 v14)
   poke p v = do
     fillBytes p 0 #{size myb_chain}
     #{poke myb_chain, mu} p (myb_chain'mu v)
@@ -451,9 +453,10 @@ instance Storable Myb_chain where
     pokeArray (#{ptr myb_chain, flight} p) (take (#{const (MYB_CHAIN_MAX_LEGS) * (2)}) (myb_chain'flight v))
     #{poke myb_chain, launch} p (myb_chain'launch v)
     #{poke myb_chain, arrival} p (myb_chain'arrival v)
+    pokeArray (#{ptr myb_chain, impulse_exhaust} p) (take (#{const (MYB_CHAIN_MAX_LEGS + 1)}) (myb_chain'impulse_exhaust v))
 
 instance Zero Myb_chain where
-  zero = Myb_chain zero zero zero zero zero zero zero (replicate (#{const (MYB_CHAIN_MAX_LEGS)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (2)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS) * (2)}) zero) zero zero
+  zero = Myb_chain zero zero zero zero zero zero zero (replicate (#{const (MYB_CHAIN_MAX_LEGS)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (2)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS) * (2)}) zero) zero zero (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero)
 
 -- | struct myb_chain_result
 data Myb_chain_result = Myb_chain_result
@@ -464,6 +467,7 @@ data Myb_chain_result = Myb_chain_result
   , myb_chain_result'mismatch :: [CDouble]
   , myb_chain_result'first :: Myb_nlp_result
   , myb_chain_result'nlp :: Myb_nlp_result
+  , myb_chain_result'impulse :: [CDouble]
   }
   deriving (Eq, Show)
 
@@ -478,7 +482,8 @@ instance Storable Myb_chain_result where
     v5 <- peekArray (#{const (MYB_CHAIN_MAX_LEGS) * (6)}) (#{ptr myb_chain_result, mismatch} p)
     v6 <- #{peek myb_chain_result, first} p
     v7 <- #{peek myb_chain_result, nlp} p
-    pure (Myb_chain_result v1 v2 v3 v4 v5 v6 v7)
+    v8 <- peekArray (#{const (MYB_CHAIN_MAX_LEGS + 1)}) (#{ptr myb_chain_result, impulse} p)
+    pure (Myb_chain_result v1 v2 v3 v4 v5 v6 v7 v8)
   poke p v = do
     fillBytes p 0 #{size myb_chain_result}
     pokeArray (#{ptr myb_chain_result, mass} p) (take (#{const (MYB_CHAIN_MAX_LEGS + 1)}) (myb_chain_result'mass v))
@@ -488,9 +493,10 @@ instance Storable Myb_chain_result where
     pokeArray (#{ptr myb_chain_result, mismatch} p) (take (#{const (MYB_CHAIN_MAX_LEGS) * (6)}) (myb_chain_result'mismatch v))
     #{poke myb_chain_result, first} p (myb_chain_result'first v)
     #{poke myb_chain_result, nlp} p (myb_chain_result'nlp v)
+    pokeArray (#{ptr myb_chain_result, impulse} p) (take (#{const (MYB_CHAIN_MAX_LEGS + 1)}) (myb_chain_result'impulse v))
 
 instance Zero Myb_chain_result where
-  zero = Myb_chain_result (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1) * (2)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS) * (6)}) zero) zero zero
+  zero = Myb_chain_result (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1) * (2)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero) (replicate (#{const (MYB_CHAIN_MAX_LEGS) * (6)}) zero) zero zero (replicate (#{const (MYB_CHAIN_MAX_LEGS + 1)}) zero)
 
 pattern MYB_NLP_MAX_UNKNOWNS :: (Eq a, Num a) => a
 pattern MYB_NLP_MAX_UNKNOWNS = (#{const MYB_NLP_MAX_UNKNOWNS})
@@ -523,6 +529,10 @@ foreign import ccall "&myb_sims_flanagan_mismatch" p'myb_sims_flanagan_mismatch 
 -- | myb_status myb_sims_flanagan_solve(const myb_sims_flanagan *leg, const myb_nlp_options *options, double *throttles, const myb_allocator *allocator, myb_sims_flanagan_result *result)
 foreign import ccall "myb_sims_flanagan_solve" myb_sims_flanagan_solve :: Ptr Myb_sims_flanagan -> Ptr Myb_nlp_options -> Ptr CDouble -> Ptr Myb_allocator -> Ptr Myb_sims_flanagan_result -> IO Myb_status
 foreign import ccall "&myb_sims_flanagan_solve" p'myb_sims_flanagan_solve :: FunPtr (Ptr Myb_sims_flanagan -> Ptr Myb_nlp_options -> Ptr CDouble -> Ptr Myb_allocator -> Ptr Myb_sims_flanagan_result -> IO Myb_status)
+
+-- | myb_status myb_chain_flyby(double gm, double v_in, double v_out, double periapsis, double *dv, double *turn, double *partials)
+foreign import ccall "myb_chain_flyby" myb_chain_flyby :: CDouble -> CDouble -> CDouble -> CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> IO Myb_status
+foreign import ccall "&myb_chain_flyby" p'myb_chain_flyby :: FunPtr (CDouble -> CDouble -> CDouble -> CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> IO Myb_status)
 
 -- | myb_status myb_chain_size(const myb_chain *chain, size_t *unknowns, size_t *equalities, size_t *inequalities)
 foreign import ccall "myb_chain_size" myb_chain_size :: Ptr Myb_chain -> Ptr CSize -> Ptr CSize -> Ptr CSize -> IO Myb_status

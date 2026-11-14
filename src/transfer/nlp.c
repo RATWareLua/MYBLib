@@ -19,6 +19,34 @@ static const double armijo = 1e-4;
 static const double weight_factor = 10.0;
 static const double weight_max = 1e12;
 
+/* The relative difference below which two values of the augmented Lagrangian are not told
+ * apart, and the bounds of the approximate Wolfe conditions that decide a step there (W. W.
+ * Hager, H. Zhang, SIAM J. Optim. 16, 170, 2005: sigma = 0.9, delta = 0.1).
+ *
+ * Near a solution with a large weight the function falls by less than its own rounding: the
+ * curvature across the constraints is rho |dc/dx|^2, and a gradient g there is removed by a
+ * step that lowers the function by g^2 / (2 rho |dc/dx|^2) — 1e-16 for g = 1e-5 at rho = 1e5 —
+ * while the rounding of the values is some 1e-14 of them (measured on the chains of
+ * test_chain: 2e-15 .. 6e-15 at 0.27). The test of Armijo then refuses every step, also along
+ * the gradient, and the iteration stops with the criticality where it is; worse, every update
+ * of the multipliers then adds rho c to the gradient that no step can take away, and the
+ * criticality grows from one update to the next (on the Earth - Venus - Mars chain kept far
+ * from Venus, from 2e-6 to 2.4e-4 over 40 updates). The slope along the step, a difference
+ * of gradients, is resolved far below that: where the values cannot tell, a step stands if
+ * its slope has risen from g.d to at least sigma g.d and not past (1 - 2 delta) |g.d| — it has
+ * gone far enough along the step and not overshot it — and the function has risen by no more
+ * than its resolution. The chain above then converges in 10 updates — 8 300 evaluations from
+ * the guess, 6 000 from the chain by Venus, a dozen and some twenty steps decided by the slope,
+ * the weight staying at 1e5 — where it had stopped at the criticality of 2e-6 after 52 000
+ * and 22 000; with the resolution anywhere from 1e-14 to 1e-10 it takes the same steps, and
+ * with 1e-8 the same solution. Where the values do tell, nothing changes: the chain by Venus
+ * and the legs of test_optimal take the steps they took before (a leg asks for one or two
+ * more evaluations of some 800, where the slope was looked at and refused); Hock and
+ * Schittkowski's problem 71 moves by 1e-14. */
+static const double resolution = 1e-12;
+static const double wolfe_rise = 0.9;      /* sigma */
+static const double wolfe_overshoot = 0.8; /* 1 - 2 delta */
+
 typedef struct solver {
   const myb_nlp_problem* problem;
   size_t n;
@@ -161,7 +189,16 @@ static void factor_solve(size_t n, const double* l, double* b) {
 
 /* The step d from x: Newton's with the matrix for the variables that are free, the gradient
  * for those held at a bound that the gradient pushes them against (D. P. Bertsekas, 1982).
- * 0 if the matrix gives no way down on the free ones. */
+ * 0 if the matrix gives no way down on the free ones.
+ *
+ * A variable counts as on its bound within `hold`, the criticality but at most 1e-8. That
+ * tolerance was suspected of the floor of the criticality that the chains of test_chain met
+ * (1e-4 .. 2e-6); it was not the cause: at every step that failed there no free variable
+ * stood within 1e-3 of a bound, and holding within 1e-3 or 0.1 (as Bertsekas may, his steps
+ * of the held variables scaled to theirs) let the unscaled gradient steps of the held
+ * variables spoil the matrix: the chain by Venus and the one far from it both ended with the
+ * constraints 2e-2 off. The floor was the resolution of the values; see `resolution`
+ * above. */
 static int direction(solver* s, const double* x, const double* g, double hold) {
   size_t free_count = 0;
   for (size_t i = 0; i < s->n; ++i) {
@@ -284,6 +321,19 @@ static myb_status minimise(solver* s, double* x, double tolerance, int max_itera
         if (st == MYB_OK && value_new <= value + armijo * slope) {
           accepted = 1;
           with_gradient = half == 0;
+        } else if (st == MYB_OK && value_new <= value + resolution * fmax(1.0, fabs(value))) {
+          /* the values cannot tell: the slope along the step decides */
+          if (half != 0) {
+            st = lagrangian(s, s->x_new, &value_new, s->g_new);
+          }
+          double rise = 0.0;
+          for (size_t i = 0; i < n; ++i) {
+            rise += s->g_new[i] * (s->x_new[i] - x[i]);
+          }
+          if (st == MYB_OK && rise >= wolfe_rise * slope && rise <= -wolfe_overshoot * slope) {
+            accepted = 1;
+            with_gradient = 1;
+          }
         }
       }
       scale *= 0.5;

@@ -77,9 +77,40 @@
  * level deeper in one of the two cells), so the stack has a fixed size.
  *
  * Error and cost. See the measurements in myb/dyn.h (myb_nbody_set_approximation) and
- * tests/unit/test_fmm.c. The evaluation is serial and its order of operations is fixed (the
- * lanes of a vector are summed in a fixed order at the end): the same inputs give the same
- * bits on every machine. */
+ * tests/unit/test_fmm.c. The order of operations is fixed (the lanes of a vector are summed in
+ * a fixed order at the end): the same inputs give the same bits on every machine.
+ *
+ * Threads. With a pool (myb_nbody_set_pool) every pass but the building of the tree runs on its
+ * threads, and the bits are those of the serial evaluation whatever the number of threads: every
+ * value is computed by one thread with the operations, and in the order, of the serial code.
+ *   - Upward and downward: the cells of one level depend only on the level below (P2M, M2M) or
+ *     above (L2L), and each writes its own expansion: a level is cut among the threads, the levels
+ *     follow one another.
+ *   - The walk itself is cheap (about 1 % of the time: its decisions need only the geometry of the
+ *     cells) and runs on one thread, recording its pairs in its order instead of acting on them.
+ *   - M2L: the cells are cut into contiguous ranges of about equal work, and every thread goes
+ *     through the recorded pairs in their order and takes the side of each whose target cell it
+ *     owns — the table of I_n^m(z_B - z_A) of the pair, then the convolution, as the serial code:
+ *     each local expansion receives the same terms in the same order. The table is computed once
+ *     per side instead of once per pair (about a tenth of the work of a side at p 8).
+ *   - The near field: 72 .. 79 % of the serial time at p 8, theta 0.5 for 10^4 .. 10^5 bodies.
+ *     Its sums are mutual (each pair once, both ways), so a cut by target cell would compute every
+ *     pair twice; the points are instead cut into contiguous ranges (the order of the tree: compact
+ *     regions of space, the cuts moved to the nearest boundary of a leaf) of about equal work, and
+ *     every thread goes through the recorded pairs in their order and takes those that touch its
+ *     points. A pair of cells inside its range is summed as the serial code sums it, both ways; a
+ *     pair across a cut is taken by the thread of each side for its own points — the receivers'
+ *     sums as the serial code forms them (the lanes, their order, the rest one by one), the
+ *     reactions on its sources subtracted one receiver after the other as the serial loop does.
+ *     Only the pairs across the cuts are computed twice. Every acceleration therefore receives
+ *     the same terms in the same order as in the serial walk, and no thread writes the points of
+ *     another (no atomic operation, no lock).
+ *   - L2P adds the far field after all the near field, as the serial code does.
+ * Measured for 10^4 cube bodies on 4 threads: the pairs across the cuts carry half the work of the
+ * near field (a quarter for 10^5), the cuts by work balance the threads to a few per cent, the
+ * walk and the cuts take 1 .. 2 % of the time. Below TEAM_MIN points one thread does it all: at
+ * 1000 bodies the threads gain 1.2 times at most, at 2000 1.5 .. 1.8 with 4 of them. See
+ * myb/dyn.h for the timings. */
 #include "dyn/fmm.h"
 
 #include <math.h> /* sqrt */
@@ -89,14 +120,19 @@
 
 #include "core/alloc.h"
 #include "core/base.h"
+#include "core/pool.h"
 #include "myb/dyn.h"
+#include "myb/pool.h"
 
 enum {
   MAX_ORDER = MYB_NBODY_FMM_MAX_ORDER,
   MAX_DEPTH = 32,                         /* halvings of the root box */
+  MAX_LEVELS = MAX_DEPTH + 2,             /* a split goes one halving deeper: level <= depth */
   PUSH_MAX = 36,                          /* pairs pushed by one step: 8 + 28 for a cell itself */
   STACK = PUSH_MAX * (2 * MAX_DEPTH + 2), /* see the bound in the header comment */
-  LANES = 4
+  LANES = 4,
+  FIRST_LIST = 1024, /* pairs of the first recording of a walk */
+  TEAM_MIN = 2048    /* fewer points: one thread (the bits are the same either way) */
 };
 
 /* Expansions only between centres at least this far apart, in units of L. */
@@ -141,6 +177,15 @@ typedef struct cell_pair {
   size_t b;
 } cell_pair;
 
+/* What one thread works in: the harmonics of one vector and three full forms. The columns of a
+ * full form beyond |m| = n are never written and must stay zero. */
+typedef struct scratch {
+  double* table;  /* 2 ncoef */
+  double* full_a; /* 2 plane each */
+  double* full_b;
+  double* full_c;
+} scratch;
+
 struct myb_internal_fmm {
   myb_allocator allocator;
   size_t count;
@@ -169,12 +214,21 @@ struct myb_internal_fmm {
   double* multipole; /* 2 ncoef per cell */
   double* local;     /* 2 ncoef per cell */
   cell_pair* stack;  /* STACK */
-  double* scratch;   /* table, inv and the full forms in one block */
-  double* table;     /* 2 ncoef: the harmonics of one vector */
+  double* block;     /* inv and the scratch of the calling thread in one block */
   double* inv;       /* ncoef: 1 / ((n + m)(n - m)) of the regular recurrence */
-  double* full_a;    /* 2 plane each */
-  double* full_b;
-  double* full_c;
+  scratch own;       /* of the calling thread */
+  /* the threaded evaluation: the scratch of the other threads, the pairs of the walk in its
+   * order, and the work of the points or the cells from which the cuts are made */
+  double* team_scratch; /* (team - 1) blocks of scratch_size() */
+  size_t team;          /* the threads it was made for (0: none yet) */
+  cell_pair* near_list; /* pairs of cells summed directly (a == b: a cell with itself) */
+  size_t near_count;
+  size_t near_capacity;
+  cell_pair* far_list; /* pairs of cells that interact through their expansions */
+  size_t far_count;
+  size_t far_capacity;
+  size_t* work;      /* 2 count + 1: per point, then per cell */
+  size_t* cuts;      /* team + 1 */
   double inv_length; /* 1 / L */
   double inv_weight; /* 1 / G */
   double far_scale;  /* G / L^2: from the scaled field to m s^-2 */
@@ -380,6 +434,23 @@ static double* local_of(const myb_internal_fmm* f, size_t c) {
   return f->local + 2 * f->ncoef * c;
 }
 
+/* Doubles of the scratch of one thread. */
+static size_t scratch_size(const myb_internal_fmm* f) {
+  return 2 * f->ncoef + 6 * f->plane;
+}
+
+static scratch scratch_at(const myb_internal_fmm* f, double* p) {
+  return (scratch){.table = p,
+                   .full_a = p + 2 * f->ncoef,
+                   .full_b = p + 2 * f->ncoef + 2 * f->plane,
+                   .full_c = p + 2 * f->ncoef + 4 * f->plane};
+}
+
+/* The scratch of thread k of a team (0: the calling thread). */
+static scratch scratch_of(const myb_internal_fmm* f, size_t k) {
+  return k == 0 ? f->own : scratch_at(f, f->team_scratch + (k - 1) * scratch_size(f));
+}
+
 /* ---- Memory ------------------------------------------------------------------------------- */
 
 /* Room for `needed` cells (never more than 2 count are needed: see the tree above). */
@@ -453,7 +524,12 @@ void myb_internal_fmm_destroy(myb_internal_fmm* fmm) {
     return;
   }
   const myb_allocator a = fmm->allocator;
-  myb_internal_release(&a, fmm->scratch);
+  myb_internal_release(&a, fmm->cuts);
+  myb_internal_release(&a, fmm->work);
+  myb_internal_release(&a, fmm->far_list);
+  myb_internal_release(&a, fmm->near_list);
+  myb_internal_release(&a, fmm->team_scratch);
+  myb_internal_release(&a, fmm->block);
   myb_internal_release(&a, fmm->stack);
   myb_internal_release(&a, fmm->multipole);
   myb_internal_release(&a, fmm->cells);
@@ -518,18 +594,15 @@ myb_status myb_internal_fmm_create(size_t count, int order, double theta, size_t
     goto fail;
   }
   f->stack = block;
-  const size_t scratch = 3 * f->ncoef + 6 * f->plane;
-  status = myb_internal_alloc_array(&al, scratch, sizeof(double), &block);
+  const size_t doubles = f->ncoef + scratch_size(f);
+  status = myb_internal_alloc_array(&al, doubles, sizeof(double), &block);
   if (status != MYB_OK) {
     goto fail;
   }
-  f->scratch = block;
-  memset(f->scratch, 0, scratch * sizeof(double)); /* the columns beyond |m| = n stay zero */
-  f->table = f->scratch;
-  f->inv = f->table + 2 * f->ncoef;
-  f->full_a = f->inv + f->ncoef;
-  f->full_b = f->full_a + 2 * f->plane;
-  f->full_c = f->full_b + 2 * f->plane;
+  f->block = block;
+  memset(f->block, 0, doubles * sizeof(double)); /* the columns beyond |m| = n stay zero */
+  f->inv = f->block;
+  f->own = scratch_at(f, f->block + f->ncoef);
   for (int n = 0; n <= order; ++n) {
     for (int m = 0; m <= n; ++m) {
       f->inv[tri(n, m)] = n >= m + 2 ? 1.0 / ((double)(n + m) * (double)(n - m)) : 0.0;
@@ -685,12 +758,11 @@ static myb_status build(myb_internal_fmm* f) {
   return MYB_OK;
 }
 
-/* Centres, radii, weights and multipoles, from the leaves up. */
-static void upward(myb_internal_fmm* f) {
+/* The centre, radius, weight and multipoles of cell c, whose children are done. */
+static void upward_cell(myb_internal_fmm* f, size_t c, const scratch* sc) {
   const int p = f->order;
   const double s = f->inv_length;
-  /* bound: ncells iterations */
-  for (size_t c = f->ncells; c-- > 0;) {
+  {
     cell* cl = &f->cells[c];
     double* mc = multipole_of(f, c);
     memset(mc, 0, 2 * f->ncoef * sizeof(double));
@@ -750,7 +822,7 @@ static void upward(myb_internal_fmm* f) {
     cl->weight = mass;
     cl->local = 0;
     if (!(mass > 0.0)) {
-      continue;
+      return;
     }
     if (cl->children == 0) {
       for (size_t i = cl->begin; i < cl->end; ++i) {
@@ -759,10 +831,10 @@ static void upward(myb_internal_fmm* f) {
           continue;
         }
         regular(f, p, (q->x - cl->z[0]) * s, (q->y - cl->z[1]) * s, (q->z - cl->z[2]) * s,
-                f->table);
+                sc->table);
         const double w = q->w * f->inv_weight;
         for (size_t k = 0; k < 2 * f->ncoef; ++k) {
-          mc[k] += w * f->table[k];
+          mc[k] += w * sc->table[k];
         }
       }
     } else {
@@ -773,12 +845,20 @@ static void upward(myb_internal_fmm* f) {
           continue;
         }
         regular(f, p, (ch->z[0] - cl->z[0]) * s, (ch->z[1] - cl->z[1]) * s,
-                (ch->z[2] - cl->z[2]) * s, f->table);
-        expand(f, p, f->table, 0, 0, f->full_a);
-        expand(f, p, multipole_of(f, ci), 0, 0, f->full_b);
-        shift_up(f, p, f->full_a, f->full_b, mc);
+                (ch->z[2] - cl->z[2]) * s, sc->table);
+        expand(f, p, sc->table, 0, 0, sc->full_a);
+        expand(f, p, multipole_of(f, ci), 0, 0, sc->full_b);
+        shift_up(f, p, sc->full_a, sc->full_b, mc);
       }
     }
+  }
+}
+
+/* Centres, radii, weights and multipoles, from the leaves up (one thread). */
+static void upward(myb_internal_fmm* f) {
+  /* bound: ncells iterations */
+  for (size_t c = f->ncells; c-- > 0;) {
+    upward_cell(f, c, &f->own);
   }
 }
 
@@ -882,25 +962,237 @@ static void direct(myb_internal_fmm* f, size_t i0, size_t i1, size_t j0, size_t 
   }
 }
 
+/* direct_lanes for a thread that owns the points [o0, o1): the receiver's sum as there (the
+ * same lanes from j0 on, the same order), the reactions stored only on the sources it owns —
+ * lane by lane where a block reaches past its range, which gives the bits of the vector
+ * subtraction. */
+static size_t direct_lanes_owned(myb_internal_fmm* f, size_t i, size_t j0, size_t j1, size_t o0,
+                                 size_t o1, double out[3]) {
+  const v4d xi = MYB_SPLAT(f->nx[i]);
+  const v4d yi = MYB_SPLAT(f->ny[i]);
+  const v4d zi = MYB_SPLAT(f->nz[i]);
+  const v4d wi = MYB_SPLAT(f->nw[i]);
+  const int test = f->points[i].test;
+  v4d sx = {};
+  v4d sy = {};
+  v4d sz = {};
+  size_t j = j0;
+  /* bound: (j1 - j0) / 4 blocks */
+  for (; j + LANES <= j1; j += LANES) {
+    v4d xj;
+    v4d yj;
+    v4d zj;
+    v4d wj;
+    MYB_LOAD(xj, f->nx + j);
+    MYB_LOAD(yj, f->ny + j);
+    MYB_LOAD(zj, f->nz + j);
+    MYB_LOAD(wj, f->nw + j);
+    const v4d dx = xj - xi;
+    const v4d dy = yj - yi;
+    const v4d dz = zj - zi;
+    const v4d r2 = dx * dx + dy * dy + dz * dz;
+    const v4d q = MYB_SPLAT(1.0) / (r2 * __builtin_elementwise_sqrt(r2));
+    const v4d sj = wj * q;
+    const v4d si = wi * q;
+    v4d t[3] = {sj * dx, sj * dy, sj * dz};
+    v4d u[3] = {si * dx, si * dy, si * dz};
+    if (test) {
+      v4d mask;
+      MYB_LOAD(mask, f->nmask + j);
+      for (int k = 0; k < 3; ++k) {
+        t[k] = (v4d)((v4i)t[k] & (v4i)mask);
+        u[k] = (v4d)((v4i)u[k] & (v4i)mask);
+      }
+    }
+    sx += t[0];
+    sy += t[1];
+    sz += t[2];
+    if (j >= o0 && j + LANES <= o1) {
+      v4d ax;
+      v4d ay;
+      v4d az;
+      MYB_LOAD(ax, f->ax + j);
+      MYB_LOAD(ay, f->ay + j);
+      MYB_LOAD(az, f->az + j);
+      ax -= u[0];
+      ay -= u[1];
+      az -= u[2];
+      MYB_STORE(f->ax + j, ax);
+      MYB_STORE(f->ay + j, ay);
+      MYB_STORE(f->az + j, az);
+    } else {
+      for (size_t lane = 0; lane < LANES; ++lane) {
+        if (j + lane >= o0 && j + lane < o1) {
+          f->ax[j + lane] -= u[0][lane];
+          f->ay[j + lane] -= u[1][lane];
+          f->az[j + lane] -= u[2][lane];
+        }
+      }
+    }
+  }
+  out[0] = MYB_HSUM(sx);
+  out[1] = MYB_HSUM(sy);
+  out[2] = MYB_HSUM(sz);
+  return j;
+}
+
+/* The reactions of receiver i on the sources [j0, j1) alone, each u_ij with the operations of
+ * direct_lanes (four sources at a time: the grouping does not change a term). */
+static void reactions(myb_internal_fmm* f, size_t i, size_t j0, size_t j1) {
+  const v4d xi = MYB_SPLAT(f->nx[i]);
+  const v4d yi = MYB_SPLAT(f->ny[i]);
+  const v4d zi = MYB_SPLAT(f->nz[i]);
+  const v4d wi = MYB_SPLAT(f->nw[i]);
+  const int test = f->points[i].test;
+  size_t j = j0;
+  /* bound: (j1 - j0) / 4 blocks */
+  for (; j + LANES <= j1; j += LANES) {
+    v4d xj;
+    v4d yj;
+    v4d zj;
+    MYB_LOAD(xj, f->nx + j);
+    MYB_LOAD(yj, f->ny + j);
+    MYB_LOAD(zj, f->nz + j);
+    const v4d dx = xj - xi;
+    const v4d dy = yj - yi;
+    const v4d dz = zj - zi;
+    const v4d r2 = dx * dx + dy * dy + dz * dz;
+    const v4d q = MYB_SPLAT(1.0) / (r2 * __builtin_elementwise_sqrt(r2));
+    const v4d si = wi * q;
+    v4d u[3] = {si * dx, si * dy, si * dz};
+    if (test) {
+      v4d mask;
+      MYB_LOAD(mask, f->nmask + j);
+      for (int k = 0; k < 3; ++k) {
+        u[k] = (v4d)((v4i)u[k] & (v4i)mask);
+      }
+    }
+    v4d ax;
+    v4d ay;
+    v4d az;
+    MYB_LOAD(ax, f->ax + j);
+    MYB_LOAD(ay, f->ay + j);
+    MYB_LOAD(az, f->az + j);
+    ax -= u[0];
+    ay -= u[1];
+    az -= u[2];
+    MYB_STORE(f->ax + j, ax);
+    MYB_STORE(f->ay + j, ay);
+    MYB_STORE(f->az + j, az);
+  }
+  const double xs = f->nx[i];
+  const double ys = f->ny[i];
+  const double zs = f->nz[i];
+  const double ws = f->nw[i];
+  for (; j < j1; ++j) {
+    if (test && f->points[j].test) {
+      continue;
+    }
+    const double dx = f->nx[j] - xs;
+    const double dy = f->ny[j] - ys;
+    const double dz = f->nz[j] - zs;
+    const double r2 = dx * dx + dy * dy + dz * dz;
+    const double q = 1.0 / (r2 * sqrt(r2));
+    const double si = ws * q;
+    f->ax[j] -= si * dx;
+    f->ay[j] -= si * dy;
+    f->az[j] -= si * dz;
+  }
+}
+
+/* direct() for a thread that owns the points [o0, o1) and only them: a receiver it owns gets its
+ * whole sum, a source it owns the reaction of every receiver, one receiver after the other —
+ * each point the terms of direct() in their order. */
+static void direct_owned(myb_internal_fmm* f, size_t i0, size_t i1, size_t j0, size_t j1, int self,
+                         size_t o0, size_t o1) {
+  for (size_t i = i0; i < i1; ++i) {
+    const size_t first = self ? i + 1 : j0;
+    const double xi = f->nx[i];
+    const double yi = f->ny[i];
+    const double zi = f->nz[i];
+    const double wi = f->nw[i];
+    const int ti = f->points[i].test;
+    if (i < o0 || i >= o1) {
+      /* not ours: the reactions on our sources alone */
+      const size_t lo = first > o0 ? first : o0;
+      const size_t hi = j1 < o1 ? j1 : o1;
+      reactions(f, i, lo, hi);
+      continue;
+    }
+    double s[3];
+    size_t j = direct_lanes_owned(f, i, first, j1, o0, o1, s);
+    for (; j < j1; ++j) {
+      if (ti && f->points[j].test) {
+        continue;
+      }
+      const double dx = f->nx[j] - xi;
+      const double dy = f->ny[j] - yi;
+      const double dz = f->nz[j] - zi;
+      const double r2 = dx * dx + dy * dy + dz * dz;
+      const double q = 1.0 / (r2 * sqrt(r2));
+      const double sj = f->nw[j] * q;
+      const double si = wi * q;
+      s[0] += sj * dx;
+      s[1] += sj * dy;
+      s[2] += sj * dz;
+      if (j >= o0 && j < o1) {
+        f->ax[j] -= si * dx;
+        f->ay[j] -= si * dy;
+        f->az[j] -= si * dz;
+      }
+    }
+    f->ax[i] += s[0];
+    f->ay[i] += s[1];
+    f->az[i] += s[2];
+  }
+}
+
+/* The part of the mutual interaction of the cells a and b that falls on b (on_b) or on a, as
+ * interact() computes it: the table of I_n^m(z_b - z_a), then the convolution. The flag `local`
+ * of the target is set beforehand, by the caller (a store into the cells, which the other threads
+ * read, on every side would make their lines travel between the cores). */
+static void interact_side(myb_internal_fmm* f, size_t a, size_t b, int on_b, const scratch* sc) {
+  const int p = f->order;
+  const double s = f->inv_length;
+  const cell* ca = &f->cells[a];
+  const cell* cb = &f->cells[b];
+  if (!((on_b ? ca : cb)->weight > 0.0)) {
+    return;
+  }
+  irregular(p, (cb->z[0] - ca->z[0]) * s, (cb->z[1] - ca->z[1]) * s, (cb->z[2] - ca->z[2]) * s,
+            sc->table);
+  expand(f, p, sc->table, 0, 0, sc->full_c); /* I_n^m(z_b - z_a) */
+  if (!on_b) {
+    /* F_a = sum (-1)^k conj(M_b) I(z_b - z_a) */
+    expand(f, p, multipole_of(f, b), 1, 1, sc->full_a);
+    convolve(f, p, sc->full_a, sc->full_c, 0, local_of(f, a));
+  } else {
+    /* F_b = sum (-1)^k conj(M_a) I(z_a - z_b) = (-1)^n sum conj(M_a) I(z_b - z_a) */
+    expand(f, p, multipole_of(f, a), 1, 0, sc->full_b);
+    convolve(f, p, sc->full_b, sc->full_c, 1, local_of(f, b));
+  }
+}
+
 /* The local expansions of a and b from the multipoles of b and a: one table of I_n^m. */
 static void interact(myb_internal_fmm* f, size_t a, size_t b) {
   const int p = f->order;
   const double s = f->inv_length;
   cell* ca = &f->cells[a];
   cell* cb = &f->cells[b];
+  const scratch* sc = &f->own;
   irregular(p, (cb->z[0] - ca->z[0]) * s, (cb->z[1] - ca->z[1]) * s, (cb->z[2] - ca->z[2]) * s,
-            f->table);
-  expand(f, p, f->table, 0, 0, f->full_c); /* I_n^m(z_b - z_a) */
+            sc->table);
+  expand(f, p, sc->table, 0, 0, sc->full_c); /* I_n^m(z_b - z_a) */
   if (cb->weight > 0.0) {
     /* F_a = sum (-1)^k conj(M_b) I(z_b - z_a) */
-    expand(f, p, multipole_of(f, b), 1, 1, f->full_a);
-    convolve(f, p, f->full_a, f->full_c, 0, local_of(f, a));
+    expand(f, p, multipole_of(f, b), 1, 1, sc->full_a);
+    convolve(f, p, sc->full_a, sc->full_c, 0, local_of(f, a));
     ca->local = 1;
   }
   if (ca->weight > 0.0) {
     /* F_b = sum (-1)^k conj(M_a) I(z_a - z_b) = (-1)^n sum conj(M_a) I(z_b - z_a) */
-    expand(f, p, multipole_of(f, a), 1, 0, f->full_b);
-    convolve(f, p, f->full_b, f->full_c, 1, local_of(f, b));
+    expand(f, p, multipole_of(f, a), 1, 0, sc->full_b);
+    convolve(f, p, sc->full_b, sc->full_c, 1, local_of(f, b));
     cb->local = 1;
   }
 }
@@ -910,10 +1202,50 @@ static int few_pairs(size_t na, size_t nb, size_t limit) {
   return na == 0 || nb <= limit / na;
 }
 
-static void walk(myb_internal_fmm* f) {
+/* Appends a pair to a list that grows by doubling. */
+static myb_status record(myb_internal_fmm* f, cell_pair** list, size_t* count, size_t* capacity,
+                         size_t a, size_t b) {
+  if (*count == *capacity) {
+    size_t grown = *capacity == 0 ? (size_t)FIRST_LIST : *capacity;
+    if (*capacity != 0 && ckd_mul(&grown, grown, (size_t)2)) {
+      return MYB_E_OVERFLOW;
+    }
+    void* block = NULL;
+    const myb_status status =
+        myb_internal_alloc_array(&f->allocator, grown, sizeof(cell_pair), &block);
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (*count != 0) {
+      memcpy(block, *list, *count * sizeof(cell_pair));
+    }
+    myb_internal_release(&f->allocator, *list);
+    *list = block;
+    *capacity = grown;
+  }
+  (*list)[(*count)++] = (cell_pair){a, b};
+  return MYB_OK;
+}
+
+/* A pair summed directly: at once, or recorded in the order of the walk. */
+static myb_status near_pair(myb_internal_fmm* f, int recording, size_t a, size_t b) {
+  if (recording) {
+    return record(f, &f->near_list, &f->near_count, &f->near_capacity, a, b);
+  }
+  const cell* ca = &f->cells[a];
+  const cell* cb = &f->cells[b];
+  direct(f, ca->begin, ca->end, cb->begin, cb->end, a == b);
+  return MYB_OK;
+}
+
+/* The dual tree walk: the pairs are acted on at once, or (recording) listed in their order for
+ * the threads, with the same decisions. */
+static myb_status walk(myb_internal_fmm* f, int recording) {
   cell_pair* stack = f->stack;
   size_t top = 0;
   stack[top++] = (cell_pair){0, 0};
+  f->near_count = 0;
+  f->far_count = 0;
   /* bound: a pair taken is either resolved or replaced by pairs one level deeper in one of
    * its cells; the tree is finite, so the loop ends, and the stack holds at most STACK pairs
    * (the header comment) */
@@ -921,9 +1253,13 @@ static void walk(myb_internal_fmm* f) {
     const cell_pair q = stack[--top];
     const cell* a = &f->cells[q.a];
     const size_t na = a->end - a->begin;
+    myb_status status = MYB_OK;
     if (q.a == q.b) {
       if (a->children == 0 || few_pairs(na, na - 1, 2 * f->direct_pairs)) {
-        direct(f, a->begin, a->end, a->begin, a->end, 1);
+        status = near_pair(f, recording, q.a, q.a);
+        if (status != MYB_OK) {
+          return status;
+        }
         f->stats.p2p += na * (na - 1) / 2;
         continue;
       }
@@ -942,7 +1278,10 @@ static void walk(myb_internal_fmm* f) {
     }
     const size_t nb = b->end - b->begin;
     if (few_pairs(na, nb, f->direct_pairs)) {
-      direct(f, a->begin, a->end, b->begin, b->end, 0);
+      status = near_pair(f, recording, q.a, q.b);
+      if (status != MYB_OK) {
+        return status;
+      }
       f->stats.p2p += na * nb;
       continue;
     }
@@ -951,12 +1290,22 @@ static void walk(myb_internal_fmm* f) {
     const double dz = b->z[2] - a->z[2];
     const double r = sqrt(dx * dx + dy * dy + dz * dz);
     if (a->radius + b->radius < f->theta * r && r * f->inv_length >= min_separation) {
-      interact(f, q.a, q.b);
+      if (recording) {
+        status = record(f, &f->far_list, &f->far_count, &f->far_capacity, q.a, q.b);
+        if (status != MYB_OK) {
+          return status;
+        }
+      } else {
+        interact(f, q.a, q.b);
+      }
       f->stats.m2l++;
       continue;
     }
     if (a->children == 0 && b->children == 0) {
-      direct(f, a->begin, a->end, b->begin, b->end, 0);
+      status = near_pair(f, recording, q.a, q.b);
+      if (status != MYB_OK) {
+        return status;
+      }
       f->stats.p2p += na * nb;
       continue;
     }
@@ -968,21 +1317,22 @@ static void walk(myb_internal_fmm* f) {
       stack[top++] = (cell_pair){split->child + i, other};
     }
   }
+  return MYB_OK;
 }
 
 /* grad Phi (scaled) at x (scaled, relative to the centre) of a leaf whose local expansion is
  * the full form `full`. */
-static void gradient(myb_internal_fmm* f, const double* full, double x, double y, double z,
-                     double g[3]) {
+static void gradient(const myb_internal_fmm* f, const scratch* sc, const double* full, double x,
+                     double y, double z, double g[3]) {
   const int q = f->order - 1;
   const size_t plane = f->plane;
-  regular(f, q, x, y, z, f->table);
-  expand(f, q, f->table, 1, 0, f->full_a);
+  regular(f, q, x, y, z, sc->table);
+  expand(f, q, sc->table, 1, 0, sc->full_a);
   v4d g0 = {};
   v4d g1r = {};
   v4d g1i = {};
   for (int k = 0; k <= q; ++k) {
-    const double* ar = row_c(f, f->full_a, k);
+    const double* ar = row_c(f, sc->full_a, k);
     const double* ai = ar + plane;
     const double* c0r = row_c(f, full, k + 1);
     const double* c0i = c0r + plane;
@@ -1012,41 +1362,315 @@ static void gradient(myb_internal_fmm* f, const double* full, double x, double y
   g[2] = MYB_HSUM(g0);
 }
 
-/* L2L from the root down, L2P in the leaves. */
-static void downward(myb_internal_fmm* f) {
+/* L2L into cell c from its parent (done before it), L2P if c is a leaf. */
+static void downward_cell(myb_internal_fmm* f, size_t c, const scratch* sc) {
   const int p = f->order;
   const double s = f->inv_length;
+  cell* cl = &f->cells[c];
+  double* fc = local_of(f, c);
+  if (c != 0 && f->cells[cl->parent].local) {
+    const cell* pa = &f->cells[cl->parent];
+    regular(f, p, (cl->z[0] - pa->z[0]) * s, (cl->z[1] - pa->z[1]) * s, (cl->z[2] - pa->z[2]) * s,
+            sc->table);
+    expand(f, p, sc->table, 1, 0, sc->full_a);
+    expand(f, p, local_of(f, cl->parent), 0, 0, sc->full_b);
+    convolve(f, p, sc->full_a, sc->full_b, 0, fc);
+    cl->local = 1;
+  }
+  if (cl->children != 0 || !cl->local) {
+    return;
+  }
+  expand(f, p, fc, 0, 0, sc->full_c);
+  for (size_t i = cl->begin; i < cl->end; ++i) {
+    double g[3];
+    gradient(f, sc, sc->full_c, (f->nx[i] - cl->z[0]) * s, (f->ny[i] - cl->z[1]) * s,
+             (f->nz[i] - cl->z[2]) * s, g);
+    f->ax[i] += f->far_scale * g[0];
+    f->ay[i] += f->far_scale * g[1];
+    f->az[i] += f->far_scale * g[2];
+  }
+}
+
+/* L2L from the root down, L2P in the leaves (one thread). */
+static void downward(myb_internal_fmm* f) {
   /* bound: ncells iterations; a parent comes before its children */
   for (size_t c = 0; c < f->ncells; ++c) {
-    cell* cl = &f->cells[c];
-    double* fc = local_of(f, c);
-    if (c != 0 && f->cells[cl->parent].local) {
-      const cell* pa = &f->cells[cl->parent];
-      regular(f, p, (cl->z[0] - pa->z[0]) * s, (cl->z[1] - pa->z[1]) * s, (cl->z[2] - pa->z[2]) * s,
-              f->table);
-      expand(f, p, f->table, 1, 0, f->full_a);
-      expand(f, p, local_of(f, cl->parent), 0, 0, f->full_b);
-      convolve(f, p, f->full_a, f->full_b, 0, fc);
-      cl->local = 1;
+    downward_cell(f, c, &f->own);
+  }
+}
+
+/* ---- Threads ------------------------------------------------------------------------------ */
+
+/* The scratch of `team` threads and the arrays of the cuts, made once and kept. */
+static myb_status prepare_team(myb_internal_fmm* f, size_t team) {
+  if (f->work == NULL) {
+    size_t works = 0;
+    if (ckd_mul(&works, f->count, (size_t)2) || ckd_add(&works, works, (size_t)1)) {
+      return MYB_E_OVERFLOW;
     }
-    if (cl->children != 0 || !cl->local) {
-      continue;
+    void* block = NULL;
+    const myb_status status =
+        myb_internal_alloc_array(&f->allocator, works, sizeof(size_t), &block);
+    if (status != MYB_OK) {
+      return status;
     }
-    expand(f, p, fc, 0, 0, f->full_c);
-    for (size_t i = cl->begin; i < cl->end; ++i) {
-      double g[3];
-      gradient(f, f->full_c, (f->nx[i] - cl->z[0]) * s, (f->ny[i] - cl->z[1]) * s,
-               (f->nz[i] - cl->z[2]) * s, g);
-      f->ax[i] += f->far_scale * g[0];
-      f->ay[i] += f->far_scale * g[1];
-      f->az[i] += f->far_scale * g[2];
+    f->work = block;
+  }
+  if (f->team >= team) {
+    return MYB_OK;
+  }
+  size_t doubles = 0;
+  if (ckd_mul(&doubles, team - 1, scratch_size(f))) {
+    return MYB_E_OVERFLOW;
+  }
+  void* room = NULL;
+  void* cuts = NULL;
+  myb_status status = myb_internal_alloc_array(&f->allocator, doubles, sizeof(double), &room);
+  if (status == MYB_OK) {
+    status = myb_internal_alloc_array(&f->allocator, team + 1, sizeof(size_t), &cuts);
+  }
+  if (status != MYB_OK) {
+    myb_internal_release(&f->allocator, room);
+    return status;
+  }
+  memset(room, 0, doubles * sizeof(double)); /* the columns beyond |m| = n stay zero */
+  myb_internal_release(&f->allocator, f->team_scratch);
+  myb_internal_release(&f->allocator, f->cuts);
+  f->team_scratch = room;
+  f->cuts = cuts;
+  f->team = team;
+  return MYB_OK;
+}
+
+typedef struct team_job {
+  myb_internal_fmm* f;
+  size_t parts; /* the threads: part k runs on one of them with scratch k */
+  size_t lo;    /* a level: the cells [lo, hi) */
+  size_t hi;
+} team_job;
+
+/* Part k of [lo, hi) cut into `parts` nearly equal pieces. */
+static void part_of(size_t lo, size_t hi, size_t parts, size_t k, size_t* begin, size_t* end) {
+  const size_t count = hi - lo;
+  const size_t base = count / parts;
+  const size_t extra = count % parts;
+  *begin = lo + k * base + (k < extra ? k : extra);
+  *end = *begin + base + (k < extra ? 1 : 0);
+}
+
+static void upward_part(void* context, size_t begin, size_t end) {
+  const team_job* job = context;
+  for (size_t k = begin; k < end; ++k) {
+    const scratch sc = scratch_of(job->f, k);
+    size_t c0 = 0;
+    size_t c1 = 0;
+    part_of(job->lo, job->hi, job->parts, k, &c0, &c1);
+    for (size_t c = c0; c < c1; ++c) {
+      upward_cell(job->f, c, &sc);
     }
   }
 }
 
-myb_status myb_internal_fmm_evaluate(myb_internal_fmm* fmm, size_t massive, const double* gm,
-                                     const double* px, const double* py, const double* pz,
-                                     double* a) {
+static void downward_part(void* context, size_t begin, size_t end) {
+  const team_job* job = context;
+  for (size_t k = begin; k < end; ++k) {
+    const scratch sc = scratch_of(job->f, k);
+    size_t c0 = 0;
+    size_t c1 = 0;
+    part_of(job->lo, job->hi, job->parts, k, &c0, &c1);
+    for (size_t c = c0; c < c1; ++c) {
+      downward_cell(job->f, c, &sc);
+    }
+  }
+}
+
+/* The sides of the recorded M2L pairs whose target cell lies in the range of part k, in the
+ * order of the walk. */
+static void far_part(void* context, size_t begin, size_t end) {
+  const team_job* job = context;
+  myb_internal_fmm* f = job->f;
+  for (size_t k = begin; k < end; ++k) {
+    const scratch sc = scratch_of(f, k);
+    const size_t c0 = f->cuts[k];
+    const size_t c1 = f->cuts[k + 1];
+    for (size_t e = 0; e < f->far_count && c0 < c1; ++e) {
+      const cell_pair q = f->far_list[e];
+      if (q.a >= c0 && q.a < c1) {
+        interact_side(f, q.a, q.b, 0, &sc);
+      }
+      if (q.b >= c0 && q.b < c1) {
+        interact_side(f, q.a, q.b, 1, &sc);
+      }
+    }
+  }
+}
+
+/* The recorded direct pairs that touch the points of part k, in the order of the walk. */
+static void near_part(void* context, size_t begin, size_t end) {
+  const team_job* job = context;
+  myb_internal_fmm* f = job->f;
+  for (size_t k = begin; k < end; ++k) {
+    const size_t o0 = f->cuts[k];
+    const size_t o1 = f->cuts[k + 1];
+    for (size_t e = 0; e < f->near_count && o0 < o1; ++e) {
+      const cell_pair q = f->near_list[e];
+      const cell* ca = &f->cells[q.a];
+      const cell* cb = &f->cells[q.b];
+      const int touches = (ca->begin < o1 && ca->end > o0) || (cb->begin < o1 && cb->end > o0);
+      if (!touches) {
+        continue;
+      }
+      const int self = q.a == q.b;
+      if (ca->begin >= o0 && ca->end <= o1 && cb->begin >= o0 && cb->end <= o1) {
+        direct(f, ca->begin, ca->end, cb->begin, cb->end, self);
+      } else {
+        direct_owned(f, ca->begin, ca->end, cb->begin, cb->end, self, o0, o1);
+      }
+    }
+  }
+}
+
+/* cuts[k] (k = 0 .. parts) the first of `count` items of part k, the parts of about equal total
+ * work w (any cut gives the same bits: it only balances the threads). */
+static void cut_by_work(const size_t* w, size_t count, size_t parts, size_t* cuts) {
+  size_t total = 0;
+  for (size_t i = 0; i < count; ++i) {
+    total += w[i];
+  }
+  const size_t share = total / parts;
+  const size_t rest = total % parts;
+  size_t k = 1;
+  size_t sum = 0;
+  cuts[0] = 0;
+  for (size_t i = 0; i < count; ++i) {
+    /* bound: k only grows, to parts */
+    while (k < parts && sum >= share * k + rest * k / parts) {
+      cuts[k++] = i;
+    }
+    sum += w[i];
+  }
+  while (k <= parts) {
+    cuts[k++] = count;
+  }
+}
+
+/* The boundary of a leaf nearest to the point i (in the sorted order). */
+static size_t leaf_boundary(const myb_internal_fmm* f, size_t i) {
+  if (i >= f->count) {
+    return f->count;
+  }
+  size_t c = 0;
+  /* bound: one level per pass */
+  for (int level = 0; level < MAX_LEVELS && f->cells[c].children != 0; ++level) {
+    const cell* cl = &f->cells[c];
+    size_t next = cl->child + cl->children - 1;
+    for (unsigned k = 0; k + 1 < cl->children; ++k) {
+      if (i < f->cells[cl->child + k].end) {
+        next = cl->child + k;
+        break;
+      }
+    }
+    c = next;
+  }
+  const cell* leaf = &f->cells[c];
+  return i - leaf->begin <= leaf->end - i ? leaf->begin : leaf->end;
+}
+
+/* One level of the upward or downward pass on the team; a level of few cells on the calling
+ * thread (the same bits). */
+static void level_pass(myb_pool* pool, team_job* job, size_t lo, size_t hi,
+                       myb_internal_range_function* part,
+                       void (*cell_pass)(myb_internal_fmm*, size_t, const scratch*)) {
+  if (hi - lo < 2 * job->parts) {
+    for (size_t c = lo; c < hi; ++c) {
+      cell_pass(job->f, c, &job->f->own);
+    }
+    return;
+  }
+  job->lo = lo;
+  job->hi = hi;
+  myb_internal_pool_for(pool, job->parts, 1, part, job);
+}
+
+/* Everything after the tree on the threads of the pool: the bits of the serial evaluation. */
+static myb_status evaluate_team(myb_internal_fmm* f, myb_pool* pool, size_t team) {
+  const size_t n = f->count;
+  const size_t levels = (size_t)f->cells[f->ncells - 1].level + 1;
+  MYB_CHECK(levels <= MAX_LEVELS);
+  size_t level_begin[MAX_LEVELS + 1];
+  level_begin[0] = 0;
+  for (size_t c = 1; c < f->ncells; ++c) {
+    if (f->cells[c].level != f->cells[c - 1].level) {
+      level_begin[f->cells[c].level] = c; /* breadth first: the levels follow one another */
+    }
+  }
+  level_begin[levels] = f->ncells;
+  team_job job = {.f = f, .parts = team};
+  for (size_t level = levels; level-- > 0;) {
+    level_pass(pool, &job, level_begin[level], level_begin[level + 1], upward_part, upward_cell);
+  }
+  memset(f->local, 0, f->ncells * 2 * f->ncoef * sizeof(double));
+  memset(f->ax, 0, 3 * n * sizeof(double));
+  const myb_status status = walk(f, 1);
+  if (status != MYB_OK) {
+    return status;
+  }
+  /* M2L: the cells cut by the sides they receive; the flags of the cells that receive one */
+  size_t* work = f->work;
+  memset(work, 0, f->ncells * sizeof(size_t));
+  for (size_t e = 0; e < f->far_count; ++e) {
+    const cell_pair q = f->far_list[e];
+    if (f->cells[q.b].weight > 0.0) {
+      work[q.a]++;
+      f->cells[q.a].local = 1;
+    }
+    if (f->cells[q.a].weight > 0.0) {
+      work[q.b]++;
+      f->cells[q.b].local = 1;
+    }
+  }
+  cut_by_work(work, f->ncells, team, f->cuts);
+  myb_internal_pool_for(pool, team, 1, far_part, &job);
+  /* the near field: the points cut by their pairs (a difference array over the ranges of the
+   * cells, unsigned: what wraps around comes back in the running sum), the cuts moved to the
+   * nearest boundary of a leaf */
+  memset(work, 0, (n + 1) * sizeof(size_t));
+  for (size_t e = 0; e < f->near_count; ++e) {
+    const cell* ca = &f->cells[f->near_list[e].a];
+    const cell* cb = &f->cells[f->near_list[e].b];
+    const size_t na = ca->end - ca->begin;
+    const size_t nb = cb->end - cb->begin;
+    if (ca == cb) {
+      work[ca->begin] += na - 1;
+      work[ca->end] -= na - 1;
+    } else {
+      work[ca->begin] += nb;
+      work[ca->end] -= nb;
+      work[cb->begin] += na;
+      work[cb->end] -= na;
+    }
+  }
+  size_t running = 0;
+  for (size_t i = 0; i < n; ++i) {
+    running += work[i];
+    work[i] = running;
+  }
+  cut_by_work(work, n, team, f->cuts);
+  for (size_t k = 1; k < team; ++k) {
+    const size_t at = leaf_boundary(f, f->cuts[k]);
+    f->cuts[k] = at > f->cuts[k - 1] ? at : f->cuts[k - 1];
+  }
+  myb_internal_pool_for(pool, team, 1, near_part, &job);
+  for (size_t level = 0; level < levels; ++level) {
+    level_pass(pool, &job, level_begin[level], level_begin[level + 1], downward_part,
+               downward_cell);
+  }
+  return MYB_OK;
+}
+
+myb_status myb_internal_fmm_evaluate(myb_internal_fmm* fmm, myb_pool* pool, size_t massive,
+                                     const double* gm, const double* px, const double* py,
+                                     const double* pz, double* a) {
   MYB_CHECK(fmm != NULL && gm != NULL && px != NULL && py != NULL && pz != NULL && a != NULL &&
             massive <= fmm->count);
   myb_internal_fmm* f = fmm;
@@ -1062,7 +1686,7 @@ myb_status myb_internal_fmm_evaluate(myb_internal_fmm* fmm, size_t massive, cons
     largest = w > largest ? w : largest;
   }
   f->stats = (myb_internal_fmm_stats){.leaf_size = f->leaf, .direct_pairs = f->direct_pairs};
-  const myb_status status = build(f);
+  myb_status status = build(f);
   if (status != MYB_OK) {
     return status;
   }
@@ -1080,11 +1704,22 @@ myb_status myb_internal_fmm_evaluate(myb_internal_fmm* fmm, size_t massive, cons
   const double weight = largest > 0.0 ? power_of_two_at_least(largest) : 1.0;
   f->inv_weight = 1.0 / weight;
   f->far_scale = weight * f->inv_length * f->inv_length;
-  upward(f);
-  memset(f->local, 0, f->ncells * 2 * f->ncoef * sizeof(double));
-  memset(f->ax, 0, 3 * n * sizeof(double));
-  walk(f);
-  downward(f);
+  const size_t team = pool != NULL && n >= TEAM_MIN ? (size_t)myb_pool_threads(pool) : 1;
+  if (team > 1) {
+    status = prepare_team(f, team);
+    if (status == MYB_OK) {
+      status = evaluate_team(f, pool, team);
+    }
+  } else {
+    upward(f);
+    memset(f->local, 0, f->ncells * 2 * f->ncoef * sizeof(double));
+    memset(f->ax, 0, 3 * n * sizeof(double));
+    status = walk(f, 0); /* acts at once: allocates nothing */
+    downward(f);
+  }
+  if (status != MYB_OK) {
+    return status;
+  }
   for (size_t i = 0; i < n; ++i) {
     const size_t k = f->points[i].index;
     a[3 * k] = f->ax[i];

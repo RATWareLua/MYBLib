@@ -8,6 +8,8 @@
  * rotations, then fields, figures, tides, pairs, actions, contacts, dragging, the guided
  * bodies, and at the end the equations of rotation, which need the torques gathered on the
  * way. */
+#include "myb/system.h"
+
 #include <math.h> /* sqrt, fabs */
 #include <stdckdint.h>
 #include <stdint.h>
@@ -16,6 +18,7 @@
 #include "core/alloc.h"
 #include "core/base.h"
 #include "dyn/nbody_internal.h"
+#include "dyn/system_internal.h"
 #include "force/contact_internal.h"
 #include "frames/rotation.h"
 #include "integ/ias15_internal.h"
@@ -23,10 +26,10 @@
 #include "myb/cmath.h"
 #include "myb/contact.h"
 #include "myb/kin.h"
+#include "myb/model.h"
 #include "myb/num.h"
 #include "myb/rel.h"
 #include "myb/surface.h"
-#include "myb/system.h"
 #include "myb/time.h"
 #include "num/vec3.h"
 #include "rel/rel_internal.h"
@@ -111,6 +114,7 @@ typedef struct contact_entry {
   size_t body;
   size_t ground;
   myb_system_contact contact;
+  double gap; /* of the evaluation in hand (myb_contact_result.gap) */
 } contact_entry;
 
 /* A body whose motion is given. */
@@ -567,7 +571,7 @@ myb_status myb_system_add_contact(myb_system* system, size_t body, size_t ground
   if (system->contact_count >= MYB_SYSTEM_MAX_CONTACTS) {
     return MYB_E_OVERFLOW;
   }
-  system->contacts[system->contact_count++] = (contact_entry){body, ground, *contact};
+  system->contacts[system->contact_count++] = (contact_entry){body, ground, *contact, 0.0};
   return MYB_OK;
 }
 
@@ -675,10 +679,12 @@ myb_status myb_system_unpack_spins(const myb_system* system, size_t pair_index, 
   return MYB_OK;
 }
 
-myb_status myb_system_integrator(const myb_system* system, const myb_ias15_options* options,
-                                 const myb_allocator* allocator, myb_ias15** integrator) {
-  MYB_CHECK(system != NULL && integrator != NULL);
-  size_t groups[1 + MYB_SYSTEM_MAX_ROTATIONS + MYB_SYSTEM_MAX_PN_PAIRS];
+enum { MAX_GROUPS = 1 + MYB_SYSTEM_MAX_ROTATIONS + MYB_SYSTEM_MAX_PN_PAIRS };
+
+/* The options of an integrator of the system: those given (the precision, the step limits, the
+ * budget), blocks of three, a group for the positions, one per rotation, one per pair of spins. */
+static myb_ias15_options system_options(const myb_system* system, const myb_ias15_options* options,
+                                        size_t groups[MAX_GROUPS]) {
   size_t count = 0;
   groups[count++] = 3 * system->bodies;
   for (size_t k = 0; k < system->rotation_count; ++k) {
@@ -696,6 +702,14 @@ myb_status myb_system_integrator(const myb_system* system, const myb_ias15_optio
   o.block = 3;
   o.groups = groups;
   o.group_count = count;
+  return o;
+}
+
+myb_status myb_system_integrator(const myb_system* system, const myb_ias15_options* options,
+                                 const myb_allocator* allocator, myb_ias15** integrator) {
+  MYB_CHECK(system != NULL && integrator != NULL);
+  size_t groups[MAX_GROUPS];
+  const myb_ias15_options o = system_options(system, options, groups);
   return myb_ias15_create(myb_system_coordinates(system), &o, allocator, integrator);
 }
 
@@ -714,6 +728,23 @@ static void relative(const double* x, size_t from, size_t to, double d[3]) {
   }
 }
 
+/* The frames of the integrated rotations, from the state; their torques set to zero. */
+static myb_status read_rotations(myb_system* s, const double* x, const double* v) {
+  for (size_t k = 0; k < s->rotation_count; ++k) {
+    rotation_state* r = &s->rotations[k];
+    const size_t at = rotation_offset(s, (int)k);
+    if (!read_rotation(x + at, v + at, r->q, r->dq, r->omega, &r->norm)) {
+      return MYB_E_DOMAIN;
+    }
+    memcpy(r->core, v + at + CORE_OFFSET, sizeof r->core);
+    memset(r->torque, 0, sizeof r->torque);
+    body_model* m = &s->models[r->body];
+    myb_quat_to_matrix(r->q, m->m);
+    m->framed = 1;
+  }
+  return MYB_OK;
+}
+
 static myb_status frames(myb_system* s, double t, const double* x, const double* v) {
   for (size_t b = 0; b < s->bodies; ++b) {
     body_model* m = &s->models[b];
@@ -729,19 +760,7 @@ static myb_status frames(myb_system* s, double t, const double* x, const double*
       m->framed = 1;
     }
   }
-  for (size_t k = 0; k < s->rotation_count; ++k) {
-    rotation_state* r = &s->rotations[k];
-    const size_t at = rotation_offset(s, (int)k);
-    if (!read_rotation(x + at, v + at, r->q, r->dq, r->omega, &r->norm)) {
-      return MYB_E_DOMAIN;
-    }
-    memcpy(r->core, v + at + CORE_OFFSET, sizeof r->core);
-    memset(r->torque, 0, sizeof r->torque);
-    body_model* m = &s->models[r->body];
-    myb_quat_to_matrix(r->q, m->m);
-    m->framed = 1;
-  }
-  return MYB_OK;
+  return read_rotations(s, x, v);
 }
 
 /* The position and velocity of body `of` relative to body `from` a time `lag` before the
@@ -923,11 +942,16 @@ static myb_status figure_acceleration(myb_system* s, size_t body, const double r
   return MYB_OK;
 }
 
-static myb_status apply_fields(myb_system* s, const double* x, double* a) {
+/* The fields of the bodies on their points; with rotating_only those of the bodies whose rotation
+ * is integrated alone (the others have an analytic Jacobian: myb_system_partials). */
+static myb_status apply_fields(myb_system* s, const double* x, double* a, int rotating_only) {
   for (size_t k = 0; k < s->field_count; ++k) {
     const size_t body = s->fields[k].a;
     const size_t point = s->fields[k].b;
     const body_model* m = &s->models[body];
+    if (rotating_only && m->rotation == NO_ROTATION) {
+      continue;
+    }
     if (!m->framed) {
       return MYB_E_DOMAIN;
     }
@@ -1218,7 +1242,7 @@ static void frame_and_rate(const myb_system* s, size_t b, double m[9], double dm
  * on the ground at the same point, the torques on both. */
 static myb_status apply_contacts(myb_system* s, const double* x, const double* v, double* a) {
   for (size_t k = 0; k < s->contact_count; ++k) {
-    const contact_entry* e = &s->contacts[k];
+    contact_entry* e = &s->contacts[k];
     if (!s->models[e->body].present || !s->models[e->ground].present) {
       continue;
     }
@@ -1266,6 +1290,7 @@ static myb_status apply_contacts(myb_system* s, const double* x, const double* v
     if (st != MYB_OK) {
       return st;
     }
+    e->gap = r.gap;
     if (r.touching == 0) {
       continue;
     }
@@ -1569,7 +1594,7 @@ myb_status myb_system_acceleration(void* system, double t, const double* x, cons
     return st;
   }
   memset(a + translational, 0, (myb_system_coordinates(s) - translational) * sizeof *a);
-  st = apply_fields(s, x, a);
+  st = apply_fields(s, x, a, 0);
   if (st == MYB_OK) {
     st = apply_figures(s, x, a);
   }
@@ -1636,9 +1661,13 @@ static void set_gm(myb_system* s, size_t body, double gm) {
   myb_internal_nbody_set_gm(s->nbody, body, gm);
 }
 
-myb_status myb_system_partials(myb_system* system, const myb_ias15_options* options, double t0,
-                               const double* y0, double t1, const size_t* bodies, size_t count,
-                               double* y1, double* phi, double* sensitivity) {
+/* The derivatives by central differences of whole propagations: what myb_system_partials did
+ * before its variational equations (dyn/system_internal.h). */
+myb_status myb_internal_system_partials_differences(myb_system* system,
+                                                    const myb_ias15_options* options, double t0,
+                                                    const double* y0, double t1,
+                                                    const size_t* bodies, size_t count, double* y1,
+                                                    double* phi, double* sensitivity) {
   MYB_CHECK(system != NULL && y0 != NULL && (bodies != NULL || count == 0));
   myb_system* s = system;
   const size_t n = myb_system_coordinates(s);
@@ -1709,7 +1738,10 @@ myb_status myb_system_partials(myb_system* system, const myb_ias15_options* opti
   }
   for (size_t k = 0; k < count && sensitivity != NULL && st == MYB_OK; ++k) {
     const size_t body = bodies[k];
-    const double gm = s->gm[body];
+    /* a mass that changes: the derivative is with respect to the gm given (its value at the
+     * epoch), and what the system holds of the moment is put back as it was */
+    const double now = s->gm[body];
+    const double gm = s->models[body].gm_rate != 0.0 ? s->models[body].gm_base : now;
     const double h = 1e-6 * fabs(gm);
     set_gm(s, body, gm + h);
     st = propagate(s, in, t0, y0, t1, plus);
@@ -1718,11 +1750,790 @@ myb_status myb_system_partials(myb_system* system, const myb_ias15_options* opti
       st = propagate(s, in, t0, y0, t1, minus);
     }
     set_gm(s, body, gm);
+    s->gm[body] = now;
+    myb_internal_nbody_set_gm(s->nbody, body, now);
     for (size_t i = 0; i < m && st == MYB_OK; ++i) {
       sensitivity[i * count + k] = (plus[i] - minus[i]) / (2.0 * h);
     }
   }
   myb_internal_release(&s->allocator, block);
+  myb_ias15_destroy(in);
+  return st;
+}
+
+/* ---- Derivatives: the variational equations -------------------------------------------------
+ * myb_system_partials integrates, together with the state y = (x, v) of the system, the
+ * variations (dx, dv) of chosen columns:
+ *   dx'' = A dx + B dv (+ d a / d gm_k in the column of gm_k),
+ * A = d a / d x and B = d a / d v the Jacobian of myb_system_acceleration at the state of the
+ * moment — 2 n columns started from the unit matrix for phi, one started from zero for each gm.
+ * The columns ride along the steps of the state (myb_internal_ias15_create_followed): the state
+ * takes the steps, and has the bits, of a propagation without them, and a column has no say in
+ * the step (one whose acceleration passes through zero everywhere cannot stall it).
+ *
+ * The Jacobian is assembled at every evaluation, level by level, either way:
+ *   analytic     the Newtonian point masses: d a_i / d x_j = gm_j (1 - 3 e e^T) / r^3 over the
+ *                edges of the graph (the exact direct sums, also where the sums are
+ *                approximated by myb_nbody_set_approximation, whose own error, 1e-5 of the force
+ *                at p 8, then lies between the motion and its derivatives), and
+ *                d a_i / d gm_j = (x_j - x_i) / r^3, times 1 + rate (t - epoch) for a mass that
+ *                changes;
+ *                the field of a body whose frame is given from outside on a point: the gradient
+ *                of the harmonic field (myb_gravity_field_gradient of phase 14, exact to
+ *                rounding) carried into the axes of the system, M^T G M, on the point and back on
+ *                the body by the ratio of the masses (the field's own GM is not that of the
+ *                system: only the ratio depends on the gm);
+ *                the frame dragging: myb_rel_lense_thirring_jacobian in r and v, linear in gm;
+ *                the guided bodies: the Jacobian of a point mass at their places of the moment;
+ *   differences  every other level, all at once: the 1PN terms of the point masses (apart from
+ *                their Newtonian sum: myb_internal_nbody_acceleration_pn), the fields of the
+ *                bodies whose rotation is integrated (the degree 2 from an inertia that turns
+ *                and is distorted), the figures, the tides, the pairs beyond 1PN with their
+ *                spins, the actions, the contacts, and the equations of the rotations themselves
+ *                (the torques of all those levels, the inertia, the core). These levels alone
+ *                (numeric_levels: neither the Newtonian sums nor the analytic levels) are
+ *                evaluated at the state moved by +-h in one coordinate they depend on — or with
+ *                one gm moved — and their central difference is that column of the Jacobian.
+ *                The step is 2^-17 of the size of the coordinate, made a power of two (so that
+ *                y +- h are exact) and at least 2^12 ulps of it: for the position of a body the
+ *                distance to its nearest neighbour (to the surface under it for a contact), for
+ *                its velocity the speed relative to that neighbour or the circular speed there,
+ *                for a quaternion its norm, for its rate and for the core the rate of the
+ *                rotation (at least the orbital rate), for a spin its size (at least 0.01), for
+ *                a gm the gm. The error of such a difference is a few parts in 10^11 of the
+ *                derivative of the differenced levels, which are, but for the rotations, small
+ *                beside the point masses; it costs two evaluations of these levels per
+ *                coordinate, not a propagation.
+ * The variations are then the product of the Jacobian (its columns that are not zero) with the
+ * columns of the state. */
+
+typedef struct partials_work {
+  myb_system* system;
+  size_t n;        /* coordinates of the system */
+  size_t columns;  /* variations: 2 n (phi) and then count (the gm), or either */
+  size_t first_gm; /* the column of the first gm */
+  const size_t* bodies;
+  size_t count;
+  double* jacobian; /* n x 2 n: d a / d x, then d a / d v, row-major */
+  double* dgm;      /* n x count */
+  double* scales;   /* 2 n: the sizes of the coordinates differenced, 0 for the others */
+  double* xp;       /* n: the state moved */
+  double* vp;
+  double* plus; /* n: the differenced levels there */
+  double* minus;
+  double* pn;          /* 3 bodies: the 1PN terms of the point masses */
+  double* length;      /* bodies: the distance to the nearest neighbour */
+  double* speed;       /* bodies: the speed relative to it */
+  size_t* columns_x;   /* n: the columns of the Jacobian not zero, positions */
+  size_t* columns_v;   /* n: velocities */
+  unsigned char* move; /* 2 n: the coordinate is differenced */
+  int numeric;         /* some level is differenced */
+  int point_masses;    /* the differenced levels need the point masses (1PN, tides, distortion) */
+  int relativity;
+  myb_ppn ppn;
+} partials_work;
+
+/* The largest power of two not above x (2^-1022 below that, 2^1023 above). */
+static double power_of_two_at_most(double x) {
+  if (!(x >= 0x1p-1022)) {
+    return 0x1p-1022;
+  }
+  if (x >= 0x1p1023) {
+    return 0x1p1023;
+  }
+  uint64_t bits = 0;
+  memcpy(&bits, &x, sizeof bits);
+  bits &= UINT64_C(0x7ff0000000000000);
+  double p = 0.0;
+  memcpy(&p, &bits, sizeof p);
+  return p;
+}
+
+/* The step of a difference in a coordinate y of the given size (> 0). */
+static double step_of(double size, double y) {
+  double h = power_of_two_at_most(size * 0x1p-17);
+  const double least = fabs(y) * 0x1p-40; /* 2^12 ulps of y */
+  if (h < least) {
+    h = 2.0 * power_of_two_at_most(least);
+  }
+  return h;
+}
+
+/* 1 + rate (t - epoch): d gm(t) / d gm for a mass that changes, 1 otherwise. */
+static double mass_factor(const myb_system* s, size_t body, double t) {
+  const body_model* m = &s->models[body];
+  return m->gm_rate != 0.0 ? 1.0 + m->gm_rate * (t - m->gm_epoch) : 1.0;
+}
+
+/* jacobian[3 row + i][column + 3 j + k] += sign f[3 j + k]... : adds f (3 x 3) times `sign` to the
+ * block of body `row` and the coordinates starting at `column`. */
+static void add_block(partials_work* w, size_t row, size_t column, double sign, const double f[9]) {
+  const size_t stride = 2 * w->n;
+  for (size_t i = 0; i < 3; ++i) {
+    double* line = w->jacobian + (3 * row + i) * stride + column;
+    for (size_t j = 0; j < 3; ++j) {
+      line[j] += sign * f[3 * i + j];
+    }
+  }
+}
+
+/* dgm[3 row + i][k] += factor g[i] for every column k that is the gm of `body`. */
+static void add_gm(partials_work* w, size_t row, size_t body, double factor, const double g[3]) {
+  for (size_t k = 0; k < w->count; ++k) {
+    if (w->bodies[k] != body) {
+      continue;
+    }
+    for (size_t i = 0; i < 3; ++i) {
+      w->dgm[(3 * row + i) * w->count + k] += factor * g[i];
+    }
+  }
+}
+
+/* The analytic levels at the state of the evaluation just made (myb_system_acceleration). */
+static myb_status analytic_jacobian(partials_work* w, double t, const double* x, const double* v) {
+  myb_system* s = w->system;
+  const size_t n = w->n;
+  /* the Newtonian point masses */
+  for (size_t i = 0; i < s->bodies; ++i) {
+    for (size_t j = 0; j < s->bodies; ++j) {
+      if (!myb_internal_nbody_acts(s->nbody, i, j)) {
+        continue;
+      }
+      double r[3];
+      double d[9];
+      relative(x, j, i, r); /* x_i - x_j */
+      myb_point_mass_jacobian(s->gm[j], r, d);
+      add_block(w, i, 3 * i, 1.0, d);
+      add_block(w, i, 3 * j, -1.0, d);
+      const double r2 = myb_vec3_dot(r, r);
+      const double inv3 = 1.0 / (r2 * sqrt(r2));
+      const double pull[3] = {-r[0] * inv3, -r[1] * inv3, -r[2] * inv3};
+      add_gm(w, i, j, mass_factor(s, j, t), pull);
+    }
+  }
+  /* the fields of the bodies with an orientation from outside */
+  for (size_t k = 0; k < s->field_count; ++k) {
+    const size_t body = s->fields[k].a;
+    const size_t point = s->fields[k].b;
+    const body_model* m = &s->models[body];
+    if (m->rotation != NO_ROTATION) {
+      continue;
+    }
+    if (!m->framed || m->field == NULL) {
+      return MYB_E_DOMAIN;
+    }
+    double d[3];
+    double rb[3];
+    double gb[9];
+    double ab[3];
+    relative(x, body, point, d);
+    myb_internal_mat3_vec(m->m, d, rb);
+    myb_status st = myb_gravity_field_gradient(m->field, s->work, rb, 2, m->degree, gb);
+    if (st == MYB_OK) {
+      st = myb_gravity_field_eval(m->field, s->work, rb, 2, m->degree, NULL, ab);
+    }
+    if (st != MYB_OK) {
+      return st;
+    }
+    double h[9];
+    myb_quadrupole_rotate(m->m, gb, h); /* M^T G M: the gradient in the axes of the system */
+    double ai[3];
+    transposed_vec(m->m, ab, ai);
+    const double ratio = s->gm[point] / s->gm[body];
+    add_block(w, point, 3 * point, 1.0, h);
+    add_block(w, point, 3 * body, -1.0, h);
+    add_block(w, body, 3 * point, -ratio, h);
+    add_block(w, body, 3 * body, ratio, h);
+    const double back[3] = {-ai[0] / s->gm[body], -ai[1] / s->gm[body], -ai[2] / s->gm[body]};
+    add_gm(w, body, point, mass_factor(s, point, t), back);
+    const double more[3] = {ratio * ai[0] / s->gm[body], ratio * ai[1] / s->gm[body],
+                            ratio * ai[2] / s->gm[body]};
+    add_gm(w, body, body, mass_factor(s, body, t), more);
+  }
+  /* the frame dragging */
+  for (size_t k = 0; k < s->drag_count; ++k) {
+    const drag_entry* e = &s->drags[k];
+    if (!s->models[e->body].present || !s->models[e->point].present) {
+      continue;
+    }
+    double r[3];
+    double u[3];
+    double dr[9];
+    double dv[9];
+    double unit[3];
+    relative(x, e->body, e->point, r);
+    relative(v, e->body, e->point, u);
+    myb_status st = myb_rel_lense_thirring_jacobian(&w->ppn, s->gm[e->body], e->spin, r, u, dr, dv);
+    if (st == MYB_OK) {
+      st = myb_rel_lense_thirring(&w->ppn, 1.0, e->spin, r, u, unit);
+    }
+    if (st != MYB_OK) {
+      return st;
+    }
+    const double ratio = s->gm[e->body] > 0.0 ? s->gm[e->point] / s->gm[e->body] : 0.0;
+    add_block(w, e->point, 3 * e->point, 1.0, dr);
+    add_block(w, e->point, 3 * e->body, -1.0, dr);
+    add_block(w, e->body, 3 * e->point, -ratio, dr);
+    add_block(w, e->body, 3 * e->body, ratio, dr);
+    add_block(w, e->point, n + 3 * e->point, 1.0, dv);
+    add_block(w, e->point, n + 3 * e->body, -1.0, dv);
+    add_block(w, e->body, n + 3 * e->point, -ratio, dv);
+    add_block(w, e->body, n + 3 * e->body, ratio, dv);
+    /* the point gets gm_body unit, the body -gm_point unit: linear in one gm each */
+    add_gm(w, e->point, e->body, mass_factor(s, e->body, t), unit);
+    if (s->gm[e->body] > 0.0) {
+      const double minus[3] = {-unit[0], -unit[1], -unit[2]};
+      add_gm(w, e->body, e->point, mass_factor(s, e->point, t), minus);
+    }
+  }
+  /* the guided bodies, at the places kept for this instant */
+  if (s->guided_count > 0) {
+    int slot = -1;
+    for (int i = 0; i < GUIDED_SLOTS; ++i) {
+      if (s->guided_filled[i] && s->guided_time[i] == t) {
+        slot = i;
+      }
+    }
+    MYB_CHECK(slot >= 0); /* the evaluation at t has just asked for them */
+    const double* places = s->guided_places + (size_t)slot * 3 * s->guided_capacity;
+    for (size_t b = 0; b < s->bodies; ++b) {
+      if (!s->models[b].present) {
+        continue;
+      }
+      for (size_t k = 0; k < s->guided_count; ++k) {
+        const double r[3] = {x[3 * b] - places[3 * k], x[3 * b + 1] - places[3 * k + 1],
+                             x[3 * b + 2] - places[3 * k + 2]};
+        double d[9];
+        myb_point_mass_jacobian(s->guided[k].gm, r, d);
+        add_block(w, b, 3 * b, 1.0, d);
+      }
+    }
+  }
+  return MYB_OK;
+}
+
+/* The levels whose derivatives are taken by differences, at (t, x, v) with the masses of the
+ * moment: out (n values) = the 1PN terms of the point masses, the accelerations of the fields of
+ * the bodies with an integrated rotation, of the figures, tides, pairs, actions and contacts, and
+ * the whole second derivatives of the rotations and of the spins. The frames from outside are
+ * those of the evaluation at t, which these share. */
+static myb_status numeric_levels(partials_work* w, double t, const double* x, const double* v,
+                                 double* out) {
+  myb_system* s = w->system;
+  for (size_t b = 0; b < s->bodies; ++b) { /* as prepare() */
+    const body_model* m = &s->models[b];
+    if (m->gm_rate != 0.0 && m->present) {
+      const double gm = m->gm_base * (1.0 + m->gm_rate * (t - m->gm_epoch));
+      if (!(gm >= 0.0) || !isfinite(gm)) {
+        return MYB_E_DOMAIN;
+      }
+      s->gm[b] = gm;
+      myb_internal_nbody_set_gm(s->nbody, b, gm);
+    }
+  }
+  memset(out, 0, w->n * sizeof *out);
+  myb_status st = MYB_OK;
+  if (w->point_masses) {
+    st = myb_internal_nbody_acceleration_pn(s->nbody, x, v, s->point, w->pn);
+    if (st != MYB_OK) {
+      return st;
+    }
+    if (w->relativity) {
+      memcpy(out, w->pn, 3 * s->bodies * sizeof *out);
+    }
+  }
+  st = read_rotations(s, x, v);
+  for (size_t k = 0; k < s->rotation_count && st == MYB_OK; ++k) {
+    st = distort(s, &s->rotations[k], x, v);
+  }
+  if (st == MYB_OK) {
+    st = apply_fields(s, x, out, 1);
+  }
+  if (st == MYB_OK) {
+    st = apply_figures(s, x, out);
+  }
+  if (st == MYB_OK) {
+    st = apply_tides(s, x, v, out);
+  }
+  if (st == MYB_OK) {
+    st = apply_pairs(s, x, v, out);
+  }
+  if (st == MYB_OK) {
+    st = apply_actions(s, t, x, v, out);
+  }
+  if (st == MYB_OK) {
+    st = apply_contacts(s, x, v, out);
+  }
+  for (size_t k = 0; k < s->rotation_count && st == MYB_OK; ++k) {
+    st = rotate(s, &s->rotations[k], out + rotation_offset(s, (int)k));
+  }
+  return st;
+}
+
+/* The sizes of the coordinates differenced (see the comment above), at the state of the moment. */
+static void difference_scales(partials_work* w, const double* x, const double* v) {
+  myb_system* s = w->system;
+  const size_t n = w->n;
+  for (size_t b = 0; b < s->bodies; ++b) {
+    double length = (double)INFINITY;
+    size_t near = b;
+    for (size_t c = 0; c < s->bodies; ++c) {
+      if (c == b || !s->models[c].present) {
+        continue;
+      }
+      double d[3];
+      relative(x, b, c, d);
+      const double r = myb_vec3_norm(d);
+      if (r < length) {
+        length = r;
+        near = c;
+      }
+    }
+    double speed = 0.0;
+    if (near == b) {
+      length = fmax(myb_vec3_norm(x + 3 * b), 1.0);
+      speed = myb_vec3_norm(v + 3 * b);
+    } else {
+      double d[3];
+      relative(v, b, near, d);
+      speed = fmax(myb_vec3_norm(d), sqrt((s->gm[b] + s->gm[near]) / length));
+    }
+    w->length[b] = length > 0.0 && isfinite(length) ? length : 1.0;
+    w->speed[b] = speed > 0.0 && isfinite(speed) ? speed : 1.0;
+  }
+  for (size_t k = 0; k < s->contact_count; ++k) {
+    const contact_entry* e = &s->contacts[k];
+    const size_t two[2] = {e->body, e->ground};
+    for (int i = 0; i < 2; ++i) {
+      const double l = w->length[two[i]];
+      w->length[two[i]] = fmin(l, fmax(fabs(e->gap), l * 0x1p-20));
+    }
+  }
+  for (size_t b = 0; b < s->bodies; ++b) {
+    for (size_t i = 0; i < 3; ++i) {
+      w->scales[3 * b + i] = w->length[b];
+      w->scales[n + 3 * b + i] = w->speed[b];
+    }
+  }
+  for (size_t k = 0; k < s->rotation_count; ++k) {
+    const rotation_state* r = &s->rotations[k];
+    const size_t at = rotation_offset(s, (int)k);
+    double rate = fmax(myb_vec3_norm(r->omega), myb_vec3_norm(r->core));
+    rate = fmax(rate, fmax(r->model.mean_motion, w->speed[r->body] / w->length[r->body]));
+    rate = rate > 0.0 && isfinite(rate) ? rate : 1.0;
+    const double norm = r->norm > 0.0 ? r->norm : 1.0;
+    for (size_t i = 0; i < 4; ++i) {
+      w->scales[at + i] = norm;
+      w->scales[n + at + i] = 0.5 * norm * rate;
+    }
+    for (size_t i = 0; i < 3; ++i) {
+      w->scales[n + at + CORE_OFFSET + i] = rate;
+    }
+  }
+  for (size_t k = 0; k < s->pn_count; ++k) {
+    if (!s->pn[k].spins) {
+      continue;
+    }
+    const size_t at = spin_offset(s, k);
+    const double size = fmax(fmax(myb_vec3_norm(v + at), myb_vec3_norm(v + at + 3)), 0.01);
+    for (size_t i = 0; i < SPIN_COORDINATES; ++i) {
+      w->scales[n + at + i] = size;
+    }
+  }
+}
+
+/* The differenced levels: their columns of the Jacobian and of the gm. */
+static myb_status numeric_jacobian(partials_work* w, double t, const double* x, const double* v) {
+  myb_system* s = w->system;
+  const size_t n = w->n;
+  const size_t stride = 2 * n;
+  difference_scales(w, x, v);
+  memcpy(w->xp, x, n * sizeof *x);
+  memcpy(w->vp, v, n * sizeof *v);
+  myb_status st = MYB_OK;
+  for (size_t j = 0; j < 2 * n && st == MYB_OK; ++j) {
+    if (!w->move[j]) {
+      continue;
+    }
+    double* y = j < n ? w->xp + j : w->vp + (j - n);
+    const double y0 = *y;
+    const double h = step_of(w->scales[j], y0);
+    *y = y0 + h;
+    const double up = *y;
+    st = numeric_levels(w, t, w->xp, w->vp, w->plus);
+    *y = y0 - h;
+    const double down = *y;
+    if (st == MYB_OK) {
+      st = numeric_levels(w, t, w->xp, w->vp, w->minus);
+    }
+    *y = y0;
+    const double width = up - down;
+    for (size_t i = 0; i < n && st == MYB_OK; ++i) {
+      w->jacobian[i * stride + j] += (w->plus[i] - w->minus[i]) / width;
+    }
+  }
+  for (size_t k = 0; k < w->count && st == MYB_OK; ++k) {
+    const size_t b = w->bodies[k];
+    body_model* m = &s->models[b];
+    const double gm = s->gm[b];
+    const double base = m->gm_base;
+    const int changing = m->gm_rate != 0.0;
+    const double y0 = changing ? base : gm;
+    const double h = step_of(fabs(y0), y0);
+    const double up = y0 + h;
+    const double down = y0 - h;
+    for (int side = 0; side < 2 && st == MYB_OK; ++side) {
+      const double moved = side == 0 ? up : down;
+      if (changing) {
+        m->gm_base = moved; /* numeric_levels takes the mass of the moment from it */
+      } else {
+        s->gm[b] = moved;
+        myb_internal_nbody_set_gm(s->nbody, b, moved);
+      }
+      st = numeric_levels(w, t, x, v, side == 0 ? w->plus : w->minus);
+    }
+    m->gm_base = base;
+    s->gm[b] = gm;
+    myb_internal_nbody_set_gm(s->nbody, b, gm);
+    const double width = up - down;
+    for (size_t i = 0; i < n && st == MYB_OK; ++i) {
+      w->dgm[i * w->count + k] += (w->plus[i] - w->minus[i]) / width;
+    }
+  }
+  return st;
+}
+
+/* The state and its variations (myb_accel_function; the context is the partials_work). */
+static myb_status partials_acceleration(void* context, double t, const double* x, const double* v,
+                                        double* a) {
+  partials_work* w = context;
+  const size_t n = w->n;
+  const size_t stride = 2 * n;
+  myb_status st = myb_system_acceleration(w->system, t, x, v, a);
+  if (st != MYB_OK) {
+    return st;
+  }
+  memset(w->jacobian, 0, n * stride * sizeof *w->jacobian);
+  if (w->count > 0) {
+    memset(w->dgm, 0, n * w->count * sizeof *w->dgm);
+  }
+  st = analytic_jacobian(w, t, x, v);
+  if (st == MYB_OK && w->numeric) {
+    st = numeric_jacobian(w, t, x, v);
+  }
+  if (st != MYB_OK) {
+    return st;
+  }
+  /* the columns of the Jacobian that are not zero */
+  size_t nx = 0;
+  size_t nv = 0;
+  for (size_t j = 0; j < stride; ++j) {
+    for (size_t i = 0; i < n; ++i) {
+      if (w->jacobian[i * stride + j] != 0.0) {
+        if (j < n) {
+          w->columns_x[nx++] = j;
+        } else {
+          w->columns_v[nv++] = j;
+        }
+        break;
+      }
+    }
+  }
+  for (size_t c = 0; c < w->columns; ++c) {
+    const double* dx = x + n + c * n;
+    const double* dv = v + n + c * n;
+    double* da = a + n + c * n;
+    const double* gm_column = c >= w->first_gm ? w->dgm + (c - w->first_gm) : NULL;
+    for (size_t i = 0; i < n; ++i) {
+      const double* line = w->jacobian + i * stride;
+      double sum = gm_column != NULL ? gm_column[i * w->count] : 0.0;
+      for (size_t k = 0; k < nx; ++k) {
+        sum += line[w->columns_x[k]] * dx[w->columns_x[k]];
+      }
+      for (size_t k = 0; k < nv; ++k) {
+        sum += line[w->columns_v[k]] * dv[w->columns_v[k] - n];
+      }
+      da[i] = sum;
+    }
+  }
+  return MYB_OK;
+}
+
+/* Which levels are differenced, and in which coordinates. */
+static void plan_differences(partials_work* w) {
+  myb_system* s = w->system;
+  const size_t n = w->n;
+  w->relativity = myb_internal_nbody_relativity(s->nbody, &w->ppn);
+  int distortion = 0;
+  for (size_t k = 0; k < s->distortion_count; ++k) {
+    const int r = s->models[s->distortions[k].a].rotation;
+    distortion |= r != NO_ROTATION && s->rotations[r].model.k2 != 0.0;
+  }
+  int rotating_field = 0;
+  for (size_t k = 0; k < s->field_count; ++k) {
+    rotating_field |= s->models[s->fields[k].a].rotation != NO_ROTATION;
+  }
+  int pairs = 0;
+  for (size_t k = 0; k < s->pn_count; ++k) {
+    pairs |= !s->pn[k].ended;
+  }
+  w->point_masses = w->relativity || s->tide_count > 0 || distortion;
+  w->numeric = w->point_masses || rotating_field || pairs || s->rotation_count > 0 ||
+               s->figure_count > 0 || s->action_count > 0 || s->contact_count > 0;
+  memset(w->move, 0, 2 * n);
+  if (!w->numeric) {
+    return;
+  }
+  /* a level of the whole system, or one that sees every body (an action, the point masses in
+   * the series of a tide or a distortion): every present body; otherwise the bodies named */
+  const int everyone = w->point_masses || s->action_count > 0;
+  for (size_t b = 0; b < s->bodies; ++b) {
+    const int moves = everyone && s->models[b].present;
+    for (size_t i = 0; i < 3; ++i) {
+      w->move[3 * b + i] = (unsigned char)moves;
+      w->move[n + 3 * b + i] = (unsigned char)moves;
+    }
+  }
+  for (size_t k = 0; k < s->field_count; ++k) {
+    if (s->models[s->fields[k].a].rotation != NO_ROTATION) {
+      memset(w->move + 3 * s->fields[k].a, 1, 3);
+      memset(w->move + 3 * s->fields[k].b, 1, 3);
+    }
+  }
+  for (size_t k = 0; k < s->figure_count; ++k) {
+    memset(w->move + 3 * s->figures[k].a, 1, 3);
+    memset(w->move + 3 * s->figures[k].b, 1, 3);
+  }
+  for (size_t k = 0; k < s->pn_count; ++k) {
+    if (!s->pn[k].ended) {
+      const size_t two[2] = {s->pn[k].a, s->pn[k].b};
+      for (int i = 0; i < 2; ++i) {
+        memset(w->move + 3 * two[i], 1, 3);
+        memset(w->move + n + 3 * two[i], 1, 3);
+      }
+    }
+  }
+  for (size_t k = 0; k < s->contact_count; ++k) {
+    const size_t two[2] = {s->contacts[k].body, s->contacts[k].ground};
+    for (int i = 0; i < 2; ++i) {
+      memset(w->move + 3 * two[i], 1, 3);
+      memset(w->move + n + 3 * two[i], 1, 3);
+    }
+  }
+  for (size_t k = 0; k < s->rotation_count; ++k) {
+    const size_t at = rotation_offset(s, (int)k);
+    memset(w->move + at, 1, 4);                   /* q */
+    memset(w->move + n + at, 1, 4);               /* its rate */
+    memset(w->move + n + at + CORE_OFFSET, 1, 3); /* the core */
+  }
+  for (size_t k = 0; k < s->pn_count; ++k) {
+    if (s->pn[k].spins && !s->pn[k].ended) {
+      memset(w->move + n + spin_offset(s, k), 1, SPIN_COORDINATES);
+    }
+  }
+}
+
+/* The memory of a partials_work. */
+typedef struct work_memory {
+  void* doubles;
+  void* indices;
+  void* flags;
+} work_memory;
+
+static void work_destroy(myb_system* s, work_memory* memory) {
+  myb_internal_release(&s->allocator, memory->flags);
+  myb_internal_release(&s->allocator, memory->indices);
+  myb_internal_release(&s->allocator, memory->doubles);
+}
+
+/* The work of the Jacobian for `count` gm (the bodies, the columns and first_gm are the caller's),
+ * with `front` doubles before it for the caller (*front_out). */
+static myb_status work_create(myb_system* s, size_t front, size_t count, partials_work* w,
+                              work_memory* memory, double** front_out) {
+  const size_t n = myb_system_coordinates(s);
+  /* the Jacobian (2 n^2), the gm (n count), the sizes (2 n), the moved state and the levels there
+   * (4 n), the 1PN terms and the scales of the bodies (5 per body); 2 n indices and 2 n flags */
+  size_t doubles = 0;
+  size_t square = 0;
+  size_t gm_size = 0;
+  if (ckd_mul(&square, n, 2 * n) || ckd_mul(&gm_size, n, count) ||
+      ckd_add(&doubles, front, square) || ckd_add(&doubles, doubles, gm_size) ||
+      ckd_add(&doubles, doubles, 6 * n) || ckd_add(&doubles, doubles, 5 * s->bodies)) {
+    return MYB_E_OVERFLOW;
+  }
+  *memory = (work_memory){0};
+  myb_status st =
+      myb_internal_alloc_array(&s->allocator, doubles, sizeof(double), &memory->doubles);
+  if (st == MYB_OK) {
+    st = myb_internal_alloc_array(&s->allocator, 2 * n, sizeof(size_t), &memory->indices);
+  }
+  if (st == MYB_OK) {
+    st = myb_internal_alloc_array(&s->allocator, 2 * n, 1, &memory->flags);
+  }
+  if (st != MYB_OK) {
+    work_destroy(s, memory);
+    return st;
+  }
+  double* p = memory->doubles;
+  *front_out = p;
+  w->system = s;
+  w->n = n;
+  w->count = count;
+  w->jacobian = p + front;
+  w->dgm = w->jacobian + square;
+  w->scales = w->dgm + gm_size;
+  w->xp = w->scales + 2 * n;
+  w->vp = w->xp + n;
+  w->plus = w->vp + n;
+  w->minus = w->plus + n;
+  w->pn = w->minus + n;
+  w->length = w->pn + 3 * s->bodies;
+  w->speed = w->length + s->bodies;
+  w->columns_x = memory->indices;
+  w->columns_v = w->columns_x + n;
+  w->move = memory->flags;
+  plan_differences(w);
+  return MYB_OK;
+}
+
+/* The checks of myb_system_partials on its input. */
+static myb_status partials_input(const myb_system* s, const double* y0, const size_t* bodies,
+                                 size_t count) {
+  const size_t n = myb_system_coordinates(s);
+  for (size_t i = 0; i < 2 * n; ++i) {
+    if (!isfinite(y0[i])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  for (size_t k = 0; k < count; ++k) {
+    if (bodies[k] >= s->bodies || !(s->gm[bodies[k]] != 0.0)) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  return MYB_OK;
+}
+
+myb_status myb_internal_system_jacobian(myb_system* system, double t, const double* y,
+                                        const size_t* bodies, size_t count, double* jacobian,
+                                        double* dgm) {
+  MYB_CHECK(system != NULL && y != NULL && jacobian != NULL &&
+            (count == 0 || (bodies != NULL && dgm != NULL)));
+  myb_system* s = system;
+  const size_t n = myb_system_coordinates(s);
+  myb_status st = partials_input(s, y, bodies, count);
+  if (st != MYB_OK || !isfinite(t)) {
+    return st != MYB_OK ? st : MYB_E_DOMAIN;
+  }
+  partials_work w = {.bodies = bodies};
+  work_memory memory;
+  double* a = NULL;
+  st = work_create(s, n, count, &w, &memory, &a);
+  if (st != MYB_OK) {
+    return st;
+  }
+  st = myb_system_acceleration(s, t, y, y + n, a);
+  if (st == MYB_OK) {
+    memset(w.jacobian, 0, 2 * n * n * sizeof *w.jacobian);
+    memset(w.dgm, 0, n * count * sizeof *w.dgm);
+    st = analytic_jacobian(&w, t, y, y + n);
+  }
+  if (st == MYB_OK && w.numeric) {
+    st = numeric_jacobian(&w, t, y, y + n);
+  }
+  if (st == MYB_OK) {
+    memcpy(jacobian, w.jacobian, 2 * n * n * sizeof *jacobian);
+    if (count > 0) {
+      memcpy(dgm, w.dgm, n * count * sizeof *dgm);
+    }
+  }
+  work_destroy(s, &memory);
+  return st;
+}
+
+myb_status myb_system_partials(myb_system* system, const myb_ias15_options* options, double t0,
+                               const double* y0, double t1, const size_t* bodies, size_t count,
+                               double* y1, double* phi, double* sensitivity) {
+  MYB_CHECK(system != NULL && y0 != NULL && (bodies != NULL || count == 0));
+  myb_system* s = system;
+  const size_t n = myb_system_coordinates(s);
+  if (!isfinite(t0) || !isfinite(t1) || t0 == t1) {
+    return MYB_E_DOMAIN;
+  }
+  myb_status st = partials_input(s, y0, bodies, count);
+  if (st != MYB_OK) {
+    return st;
+  }
+  const size_t phi_columns = phi != NULL ? 2 * n : 0;
+  const size_t gm_columns = sensitivity != NULL ? count : 0;
+  const size_t columns = phi_columns + gm_columns;
+  size_t total = 0;
+  size_t followers = 0;
+  size_t state = 0;
+  if (ckd_add(&total, columns, (size_t)1) || ckd_mul(&total, total, n) ||
+      ckd_mul(&followers, columns, n) || ckd_mul(&state, total, (size_t)2)) {
+    return MYB_E_OVERFLOW;
+  }
+  size_t groups[MAX_GROUPS];
+  const myb_ias15_options o = system_options(s, options, groups);
+  myb_ias15* in = NULL;
+  st = columns == 0 ? myb_ias15_create(n, &o, &s->allocator, &in)
+                    : myb_internal_ias15_create_followed(total, followers, &o, &s->allocator, &in);
+  if (st != MYB_OK) {
+    return st;
+  }
+  if (columns == 0) {
+    if (y1 != NULL) {
+      st = propagate(s, in, t0, y0, t1, y1);
+    }
+    myb_ias15_destroy(in);
+    return st;
+  }
+  /* phi alone: no gm is differenced */
+  partials_work w = {.columns = columns, .first_gm = phi_columns, .bodies = bodies};
+  work_memory memory;
+  double* y = NULL;
+  st = work_create(s, state, gm_columns, &w, &memory, &y);
+  if (st != MYB_OK) {
+    myb_ias15_destroy(in);
+    return st;
+  }
+  /* the state, the unit matrix in the columns of phi, zeros in those of the gm */
+  memset(y, 0, state * sizeof *y);
+  memcpy(y, y0, n * sizeof *y);
+  memcpy(y + total, y0 + n, n * sizeof *y);
+  for (size_t c = 0; c < phi_columns; ++c) {
+    if (c < n) {
+      y[n + c * n + c] = 1.0;
+    } else {
+      y[total + n + c * n + (c - n)] = 1.0;
+    }
+  }
+  st = myb_ias15_start(in, partials_acceleration, &w, t0, y);
+  if (st == MYB_OK) {
+    st = myb_ias15_integrate(in, t1);
+  }
+  if (st == MYB_OK) {
+    const double* xf = myb_ias15_state(in);
+    const double* vf = xf + total;
+    if (y1 != NULL) {
+      memcpy(y1, xf, n * sizeof *y1);
+      memcpy(y1 + n, vf, n * sizeof *y1);
+    }
+    for (size_t c = 0; c < phi_columns; ++c) {
+      for (size_t i = 0; i < n; ++i) {
+        phi[i * 2 * n + c] = xf[n + c * n + i];
+        phi[(n + i) * 2 * n + c] = vf[n + c * n + i];
+      }
+    }
+    for (size_t k = 0; k < gm_columns; ++k) {
+      const size_t c = phi_columns + k;
+      for (size_t i = 0; i < n; ++i) {
+        sensitivity[i * gm_columns + k] = xf[n + c * n + i];
+        sensitivity[(n + i) * gm_columns + k] = vf[n + c * n + i];
+      }
+    }
+  }
+  work_destroy(s, &memory);
   myb_ias15_destroy(in);
   return st;
 }

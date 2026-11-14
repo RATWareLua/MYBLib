@@ -22,4 +22,14 @@
 [[nodiscard]] myb_status myb_internal_eigenvector_real(size_t n, const double* a, double lambda,
                                                        double* v, double* work);
 
+/* An eigenvector v = vr + i vi of the real matrix a (n x n, row-major) for the eigenvalue
+ * re + i im, by inverse iteration in complex arithmetic: (A - (lambda + delta) I) x = v three
+ * times from a fixed start, delta = 1e-10 (|lambda| + max |a_ij|) keeping the system just
+ * regular, one LU with partial pivoting (by |re| + |im|) for all three. v of unit Euclidean
+ * norm, its largest component real and positive. work: 2 n^2 + n doubles. Errors: MYB_E_DOMAIN
+ * (values not finite, a singular system), MYB_E_NOCONV (no vector came out). */
+[[nodiscard]] myb_status myb_internal_eigenvector_complex(size_t n, const double* a, double re,
+                                                          double im, double* vr, double* vi,
+                                                          double* work);
+
 #endif /* MYB_SRC_NUM_LINALG_INTERNAL_H_ */

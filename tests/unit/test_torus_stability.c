@@ -23,6 +23,7 @@
 #include "mtest.h"
 #include "myb/cr3bp.h"
 #include "myb/integ.h"
+#include "myb/num.h"
 
 static const double MU = 1.215058560962404e-02;
 static const double PI = 3.141592653589793;
@@ -512,6 +513,354 @@ static void test_section(void) {
   MT_CHECK(planar[0] < 1e-3);
 }
 
+/* ---- The normal rotation of an elliptic torus ---------------------------------------------- */
+
+/* The eigenvector a + i b of a monodromy matrix for exp(i sigma) on the unit circle, by inverse
+ * iteration on the real form of M - exp(i sigma'), sigma' beside sigma; |a|^2 + |b|^2 = 1. */
+static void orbit_eigenvector(const double mono[36], double sigma, double v[12]) {
+  const double c = cos(sigma + 1e-7);
+  const double s = sin(sigma + 1e-7);
+  for (int k = 0; k < 12; ++k) {
+    v[k] = 1.0 / (1.0 + (double)((5 * k) % 12));
+  }
+  for (int it = 0; it < 4; ++it) {
+    double big[144] = {0};
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < 6; ++j) {
+        const double entry = mono[6 * i + j] - (i == j ? c : 0.0);
+        big[12 * i + j] = entry;
+        big[12 * (6 + i) + 6 + j] = entry;
+      }
+      big[12 * i + 6 + i] = s;
+      big[12 * (6 + i) + i] = -s;
+    }
+    MT_CHECK(myb_lu_solve(12, big, v, 1) == MYB_OK);
+    double norm = 0.0;
+    for (int k = 0; k < 12; ++k) {
+      norm += v[k] * v[k];
+    }
+    for (int k = 0; k < 12; ++k) {
+      v[k] /= sqrt(norm);
+    }
+  }
+}
+
+/* The part of the complex 6-vector (re, im) not along the unit complex vector v = (a, b),
+ * relative to its length: |w - (v^H w) v| / |w|, whatever the phases. */
+static double off_vector(const double* re, const double* im, const double v[12]) {
+  double pr = 0.0; /* v^H w */
+  double pi = 0.0;
+  double size = 0.0;
+  for (int k = 0; k < 6; ++k) {
+    pr += v[k] * re[k] + v[6 + k] * im[k];
+    pi += v[k] * im[k] - v[6 + k] * re[k];
+    size += re[k] * re[k] + im[k] * im[k];
+  }
+  double miss = 0.0;
+  for (int k = 0; k < 6; ++k) {
+    const double dr = re[k] - (pr * v[k] - pi * v[6 + k]);
+    const double di = im[k] - (pr * v[6 + k] + pi * v[k]);
+    miss += dr * dr + di * di;
+  }
+  return sqrt(miss / size);
+}
+
+/* Phi(theta) psi(theta) against lambda psi(theta + rho) at seven angles between the points:
+ * the point of the circle and psi there by the interpolant, Phi by the variational equations
+ * from that point over T (myb_cr3bp_monodromy, any state). The largest |difference| / |psi|.
+ * In real terms: the map carries the plane of Re psi, Im psi at theta onto the plane at
+ * theta + rho, turned by sigma. */
+static double normal_invariance(const myb_cr3bp_torus* torus, const myb_cr3bp_torus_spectrum* s) {
+  static myb_cr3bp_torus re;
+  static myb_cr3bp_torus im;
+  re = *torus;
+  im = *torus;
+  memcpy(re.states, s->normal_re, sizeof re.states);
+  memcpy(im.states, s->normal_im, sizeof im.states);
+  const double lr = s->normal_eigenvalue[0];
+  const double li = s->normal_eigenvalue[1];
+  double worst = 0.0;
+  for (int k = 0; k < 7; ++k) {
+    const double angle = 2.0 * PI * k / 7.0 + 0.1;
+    double u[6];
+    double phi[36];
+    double ar[6];
+    double ai[6];
+    double br[6];
+    double bi[6];
+    myb_cr3bp_torus_state(torus, angle, u);
+    MT_CHECK(myb_cr3bp_monodromy(MU, u, torus->period, phi) == MYB_OK);
+    myb_cr3bp_torus_state(&re, angle, ar);
+    myb_cr3bp_torus_state(&im, angle, ai);
+    myb_cr3bp_torus_state(&re, angle + torus->rotation, br);
+    myb_cr3bp_torus_state(&im, angle + torus->rotation, bi);
+    double miss = 0.0;
+    double size = 0.0;
+    for (int i = 0; i < 6; ++i) {
+      double pr = 0.0;
+      double pi = 0.0;
+      for (int j = 0; j < 6; ++j) {
+        pr += phi[6 * i + j] * ar[j];
+        pi += phi[6 * i + j] * ai[j];
+      }
+      const double dr = pr - (lr * br[i] - li * bi[i]);
+      const double di = pi - (li * br[i] + lr * bi[i]);
+      miss += dr * dr + di * di;
+      size += ar[i] * ar[i] + ai[i] * ai[i];
+    }
+    worst = fmax(worst, sqrt(miss / size));
+  }
+  return worst;
+}
+
+/* About the distant retrograde orbit both pairs of the monodromy matrix are on the unit
+ * circle: a torus built on one is elliptic, and its normal pair is the other. As the torus
+ * shrinks its normal rotation sigma tends to the angle of that pair as the square of the size,
+ * its eigenfunction to the eigenvector of the orbit (as the size, its mean over the circle as
+ * the size squared); the map carries the normal bundle into itself turned by sigma, measured
+ * between the points; the number of points does not move sigma; a hyperbolic torus has none.
+ * Both pairs, each in turn the one of the torus. */
+static void test_normal_rotation(void) {
+  double dro[6] = {8.2915209119468902e-01, 0.0, 0.0, 0.0, 4.9478973105640744e-01, 0.0};
+  double period = 0.0;
+  double index = 0.0;
+  (void)orbit_lambda(dro, 0, &period, &index);
+  double mono[36];
+  double re[6];
+  double im[6];
+  MT_CHECK(myb_cr3bp_monodromy(MU, dro, period, mono) == MYB_OK);
+  MT_CHECK(myb_cr3bp_stability(mono, re, im, &index) == MYB_OK);
+  printf("the normal rotation of tori about the distant retrograde orbit (index %.12f)\n", index);
+  for (int pair = 0; pair < 2; ++pair) {
+    /* the angles of the two pairs, from 0 to pi */
+    double angles[2] = {0.0, 0.0};
+    int count = 0;
+    for (int k = 0; k < 6; ++k) {
+      if (im[k] > 1e-3 && count < 2) {
+        angles[count++] = atan2(im[k], re[k]);
+      }
+    }
+    MT_CHECK(count == 2);
+    if (angles[0] > angles[1]) {
+      const double t = angles[0];
+      angles[0] = angles[1];
+      angles[1] = t;
+    }
+    const double sigma0 = angles[1 - pair]; /* the pair the torus is not built on */
+    double v[12];
+    orbit_eigenvector(mono, sigma0, v);
+    const double sizes[3] = {1e-3, 2e-3, 4e-3};
+    double differences[3];
+    double offs[3];
+    double mean_offs[3];
+    double sigma_25 = 0.0;
+    for (int k = 0; k < 3; ++k) {
+      MT_CHECK(myb_cr3bp_torus_from_orbit(MU, dro, period, 21, pair, sizes[k], &g_scratch) ==
+               MYB_OK);
+      MT_CHECK(myb_cr3bp_torus_continue(MU, &g_scratch, MYB_CR3BP_TORUS_JACOBI, 0.0, 0.0, 0) ==
+               MYB_OK);
+      MT_CHECK(myb_cr3bp_torus_stability(MU, &g_scratch, 0.0, &g_spectrum) == MYB_OK);
+      const myb_cr3bp_torus_spectrum* s = &g_spectrum;
+      differences[k] = s->normal_rotation - sigma0;
+      /* the eigenfunction against the eigenvector of the orbit: at every point, and its mean */
+      double mean_re[6] = {0.0};
+      double mean_im[6] = {0.0};
+      offs[k] = 0.0;
+      for (size_t j = 0; j < g_scratch.points; ++j) {
+        offs[k] = fmax(offs[k], off_vector(s->normal_re + 6 * j, s->normal_im + 6 * j, v));
+        for (int c = 0; c < 6; ++c) {
+          mean_re[c] += s->normal_re[6 * j + (size_t)c];
+          mean_im[c] += s->normal_im[6 * j + (size_t)c];
+        }
+      }
+      mean_offs[k] = off_vector(mean_re, mean_im, v);
+      const double modulus = hypot(s->normal_eigenvalue[0], s->normal_eigenvalue[1]);
+      printf(
+          "  torus on the pair %d (rho %.9f), size %.0e: sigma = %.12f against %.12f of the "
+          "orbit, %+.3e; |lambda| - 1 = %+.1e; the eigenfunction off the eigenvector of the "
+          "orbit by %.1e, its mean by %.1e; rms frequency %.1e; A psi - lambda psi %.1e\n",
+          pair, g_scratch.rotation, sizes[k], s->normal_rotation, sigma0, differences[k],
+          modulus - 1.0, offs[k], mean_offs[k], s->normal_frequency, s->normal_residual);
+      MT_CHECK(s->elliptic > 0 && s->hyperbolic == 0);
+      MT_CHECK(fabs(modulus - 1.0) < 1e-8 && s->normal_residual < 1e-12);
+      MT_CHECK(fabs(atan2(s->normal_eigenvalue[1], s->normal_eigenvalue[0]) -
+                    s->normal_rotation) == 0.0);
+      if (k == 0) {
+        /* between the points: the bundle carried into itself */
+        const double invariance = normal_invariance(&g_scratch, s);
+        /* unit in the mean square over the points, the mean's largest component real */
+        double norm = 0.0;
+        for (size_t i = 0; i < 6 * g_scratch.points; ++i) {
+          norm += s->normal_re[i] * s->normal_re[i] + s->normal_im[i] * s->normal_im[i];
+        }
+        printf(
+            "    between the points Phi(theta) psi(theta) - lambda psi(theta + rho): %.1e of "
+            "psi; mean square of psi over the points - 1 = %.1e\n",
+            invariance, norm / (double)g_scratch.points - 1.0);
+        MT_CHECK(invariance < 1e-8);
+        MT_CHECK(fabs(norm / (double)g_scratch.points - 1.0) < 1e-13);
+        /* 25 and 35 points */
+        const size_t more[2] = {25, MYB_CR3BP_MAX_CIRCLE};
+        for (int p = 0; p < 2; ++p) {
+          static myb_cr3bp_torus other;
+          static myb_cr3bp_torus_spectrum other_spectrum;
+          MT_CHECK(myb_cr3bp_torus_from_orbit(MU, dro, period, more[p], pair, sizes[0], &other) ==
+                   MYB_OK);
+          MT_CHECK(myb_cr3bp_torus_continue(MU, &other, MYB_CR3BP_TORUS_JACOBI, 0.0, 0.0, 0) ==
+                   MYB_OK);
+          MT_CHECK(myb_cr3bp_torus_stability(MU, &other, 0.0, &other_spectrum) == MYB_OK);
+          printf("    %zu points: sigma %+.1e from that of 21\n", more[p],
+                 other_spectrum.normal_rotation - s->normal_rotation);
+          MT_CHECK(fabs(other_spectrum.normal_rotation - s->normal_rotation) < 1e-13);
+          if (p == 0) {
+            sigma_25 = other_spectrum.normal_rotation;
+          }
+        }
+      }
+    }
+    printf(
+        "    from the size 1e-3 to 2e-3 and to 4e-3: sigma - sigma0 grows %.3f and %.3f times "
+        "(the square), the eigenfunction off the orbit's %.3f and %.3f (the size), its mean "
+        "%.3f and %.3f (the square)\n",
+        differences[1] / differences[0], differences[2] / differences[1], offs[1] / offs[0],
+        offs[2] / offs[1], mean_offs[1] / mean_offs[0], mean_offs[2] / mean_offs[1]);
+    MT_CHECK(fabs(differences[0]) < 1e-5 && sigma_25 != 0.0);
+    MT_CHECK(fabs(differences[1] / differences[0] - 4.0) < 0.1);
+    MT_CHECK(fabs(differences[2] / differences[1] - 4.0) < 0.1);
+    MT_CHECK(fabs(offs[1] / offs[0] - 2.0) < 0.1 && fabs(offs[2] / offs[1] - 2.0) < 0.1);
+    MT_CHECK(fabs(mean_offs[1] / mean_offs[0] - 4.0) < 0.4);
+  }
+  /* a hyperbolic torus has no normal rotation */
+  MT_CHECK(g_spectra[0].normal_rotation == 0.0 && g_spectra[0].normal_residual == 0.0);
+}
+
+/* ---- Tori about vertical Lyapunov orbits ---------------------------------------------------- */
+
+/* The vertical Lyapunov orbit of amplitude amp out of the plane about L1 (point 0) or L2 (1),
+ * from its second-order guess at the node: z = amp sin(w t), the figure eight x = x0 + a
+ * cos(2 w t), y = b sin(2 w t) that the force (k / 2) z^2 along x drives (k from differences of
+ * the acceleration), corrected with the symmetry about the x-axis to the second crossing of
+ * y = 0, vz held. */
+static void vertical_orbit(int point, double amp, double y0[6], double* period) {
+  double l[5][3];
+  MT_CHECK(myb_cr3bp_lagrange(MU, l) == MYB_OK);
+  const double at[3] = {l[point][0], 0.0, 0.0};
+  const double zero[3] = {0.0, 0.0, 0.0};
+  double dadx[9];
+  double dadv[9];
+  myb_cr3bp_jacobian(MU, at, dadx, dadv);
+  const double w2 = -dadx[8];
+  const double w = sqrt(w2);
+  const double h = 1e-4;
+  const double up[3] = {at[0], 0.0, h};
+  const double down[3] = {at[0], 0.0, -h};
+  double a0[3];
+  double a1[3];
+  double a2[3];
+  myb_cr3bp_acceleration(MU, at, zero, a0);
+  myb_cr3bp_acceleration(MU, up, zero, a1);
+  myb_cr3bp_acceleration(MU, down, zero, a2);
+  const double k = (a1[0] - 2.0 * a0[0] + a2[0]) / (h * h);
+  const double force = -0.25 * k * amp * amp; /* of cos(2 w t) */
+  const double a =
+      force / (-4.0 * w2 - dadx[0] + 16.0 * w2 / (4.0 * w2 + dadx[4]));
+  const double b = -4.0 * w * a / (4.0 * w2 + dadx[4]);
+  y0[0] = at[0] - 0.25 * k * amp * amp / dadx[0] + a;
+  y0[1] = y0[2] = y0[3] = 0.0;
+  y0[4] = 2.0 * w * b;
+  y0[5] = w * amp;
+  const myb_cr3bp_correction c = {.symmetry = MYB_CR3BP_SYMMETRY_X, .fixed = 5, .crossing = 2};
+  MT_CHECK(myb_cr3bp_correct(MU, &c, y0, period) == MYB_OK);
+  MT_CHECK(fabs(*period - 2.0 * PI / w) < 0.05 * *period);
+}
+
+/* The point of the circle at the angle 0 carried one turn by DOP853 against the circle at the
+ * angle rho, and the spread of the Jacobi constant over the points. */
+static double one_turn(const myb_cr3bp_torus* torus, double* spread) {
+  double y[6];
+  double on[6];
+  flow(torus->period, torus->states, y);
+  myb_cr3bp_torus_state(torus, torus->rotation, on);
+  double worst = 0.0;
+  for (int i = 0; i < 6; ++i) {
+    worst = fmax(worst, fabs(y[i] - on[i]));
+  }
+  double lo = HUGE_VAL;
+  double hi = -HUGE_VAL;
+  for (size_t j = 0; j < torus->points; ++j) {
+    const double c = myb_cr3bp_jacobi(MU, torus->states + 6 * j);
+    lo = fmin(lo, c);
+    hi = fmax(hi, c);
+  }
+  *spread = hi - lo;
+  return worst;
+}
+
+/* Lissajous tori about the vertical Lyapunov orbits of L1 and L2 (11 500 km out of the plane):
+ * seeded from the centre pair of the orbit and corrected by the invariant circle; the circle
+ * returns onto itself, the Jacobi constant is one over it, the rotation number tends to the
+ * angle of the centre pair as the square of the size, and the stability: hyperbolic, the
+ * unstable eigenvalue that of the orbit as the square of the size, no normal rotation. */
+static void test_vertical(void) {
+  for (int point = 0; point < 2; ++point) {
+    double y0[6];
+    double period = 0.0;
+    vertical_orbit(point, 0.03, y0, &period);
+    double mono[36];
+    double re[6];
+    double im[6];
+    double index = 0.0;
+    MT_CHECK(myb_cr3bp_monodromy(MU, y0, period, mono) == MYB_OK);
+    MT_CHECK(myb_cr3bp_stability(mono, re, im, &index) == MYB_OK);
+    double centre = 0.0;
+    for (int k = 0; k < 6; ++k) {
+      if (im[k] > 1e-3) {
+        centre = atan2(im[k], re[k]);
+      }
+    }
+    const double lambda = index + sqrt(index * index - 1.0);
+    printf(
+        "a vertical Lyapunov orbit of L%d, z up to %.0f km: T = %.9f, the centre pair at "
+        "%.9f rad, lambda = %.4f\n",
+        point + 1, 0.03 * 384400.0, period, centre, lambda);
+    MT_CHECK(centre > 0.1 && index > 100.0);
+    const double sizes[3] = {1e-3, 2e-3, 4e-3};
+    double turns[3];
+    double unstable[3];
+    for (int k = 0; k < 3; ++k) {
+      MT_CHECK(myb_cr3bp_torus_from_orbit(MU, y0, period, 25, 0, sizes[k], &g_scratch) ==
+               MYB_OK);
+      MT_CHECK(g_scratch.rotation == centre);
+      MT_CHECK(myb_cr3bp_torus_continue(MU, &g_scratch, MYB_CR3BP_TORUS_JACOBI, 0.0, 0.0, 0) ==
+               MYB_OK);
+      double spread = 0.0;
+      const double returns = one_turn(&g_scratch, &spread);
+      MT_CHECK(myb_cr3bp_torus_stability(MU, &g_scratch, 0.0, &g_spectrum) == MYB_OK);
+      turns[k] = g_scratch.rotation - centre;
+      unstable[k] = g_spectrum.unstable / lambda - 1.0;
+      printf(
+          "  size %.0e: rho = %.12f (%+.3e from the centre pair); after a turn on the circle "
+          "to %.1e, the Jacobi constant over it to %.1e, multipliers left %.1e; %zu "
+          "hyperbolic, %zu elliptic, the unstable eigenvalue %+.3e from that of the orbit, "
+          "normal rotation %g\n",
+          sizes[k], g_scratch.rotation, turns[k], returns, spread, g_scratch.defect,
+          g_spectrum.hyperbolic, g_spectrum.elliptic, unstable[k], g_spectrum.normal_rotation);
+      MT_CHECK(returns < 1e-6 && spread < 1e-10 && g_scratch.defect < 1e-9);
+      MT_CHECK(g_spectrum.hyperbolic == 50 && g_spectrum.elliptic == 0);
+      MT_CHECK(g_spectrum.normal_rotation == 0.0);
+      MT_CHECK(fabs(g_spectrum.unstable * g_spectrum.stable - 1.0) < 1e-8);
+    }
+    printf("    from the size 1e-3 to 2e-3 and 4e-3: rho grows away %.3f and %.3f times, the "
+           "unstable eigenvalue %.3f and %.3f\n",
+           turns[1] / turns[0], turns[2] / turns[1], unstable[1] / unstable[0],
+           unstable[2] / unstable[1]);
+    MT_CHECK(fabs(turns[0]) < 1e-5 && fabs(unstable[0]) < 1e-4);
+    MT_CHECK(fabs(turns[1] / turns[0] - 4.0) < 0.1 && fabs(turns[2] / turns[1] - 4.0) < 0.1);
+    MT_CHECK(fabs(unstable[1] / unstable[0] - 4.0) < 0.1 &&
+             fabs(unstable[2] / unstable[1] - 4.0) < 0.1);
+  }
+}
+
 /* ---- Refused ------------------------------------------------------------------------------- */
 
 static void test_refused(void) {
@@ -546,6 +895,8 @@ int main(void) {
   test_section();
   test_halo();
   test_stable();
+  test_normal_rotation();
+  test_vertical();
   test_refused();
   return mt_finish("test_torus_stability");
 }

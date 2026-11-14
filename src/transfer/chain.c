@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Chains of legs of Sims and Flanagan joined by flybys (myb/optimal.h): one nonlinear program
  * whose unknowns are the times, the excess velocities at the bodies and the throttles of every
- * leg. The legs are swept by transfer/leg_internal.h, which gives the derivatives of each
- * mismatch at fixed impulses; here they are carried to the unknowns: the impulses grow with
- * the length of their segment and fall with the mass, the mass carries from leg to leg, and
- * the ends of a leg move with the bodies. */
+ * leg, and the periapsis and the impulse of each powered flyby. The legs are swept by
+ * transfer/leg_internal.h, which gives the derivatives of each mismatch at fixed impulses;
+ * here they are carried to the unknowns: the impulses grow with the length of their segment
+ * and fall with the mass, the mass carries from leg to leg (through the impulse of a powered
+ * flyby between), and the ends of a leg move with the bodies. */
 #include <math.h> /* sqrt, fabs */
 #include <string.h>
 
@@ -22,9 +23,13 @@ enum {
   MAX_SEGMENTS = MYB_SIMS_FLANAGAN_MAX_SEGMENTS,
   PER_SEGMENT = 4,  /* columns of the core for a segment: its size through the masses, then its
                        impulse at fixed masses (3) */
+  PER_FLYBY = 2,    /* unknowns of a powered flyby: r_p and dv */
   FIRST_OUTER = 10, /* updates of the multipliers in the first pass */
-  FIRST_INNER = 300 /* and steps between two of them */
+  FIRST_INNER = 300, /* and steps between two of them */
+  BISECTIONS = 100  /* of the periapsis of the first guess of a powered flyby */
 };
+
+static const size_t UNPOWERED = (size_t)-1;
 
 /* The step of the central differences of the velocity of a body (units of the solver). */
 static const double rate_step = 1e-4;
@@ -52,10 +57,13 @@ typedef struct state {
   size_t total;                /* segments in all */
   size_t offset[MAX_LEGS + 1]; /* the first segment of each leg */
   size_t largest;              /* segments of the longest leg */
+  size_t powered;              /* powered flybys */
+  size_t flyby[MAX_LEGS + 1];  /* the index of the powered flyby of each body; UNPOWERED: none */
+  double factor[MAX_LEGS + 1]; /* exp(-dv / c) of each, of the last evaluation (1: none) */
   size_t n;                    /* unknowns of the chain, and of the second pass */
   size_t m;                    /* constraints of the chain */
   size_t solver;               /* unknowns of the first pass: 4 per segment */
-  size_t width;                /* columns of the core: 7 legs + 1 + 4 total */
+  size_t width;                /* columns of the core: 7 legs + 1 + 4 total + 2 powered */
   double length;               /* m */
   double time;                 /* s */
   double speed;                /* m/s */
@@ -85,8 +93,9 @@ typedef struct state {
 
 /* ---- The problem ----------------------------------------------------------------------------- */
 
-static int chain_valid(const myb_chain* c, size_t* total) {
+static int chain_valid(const myb_chain* c, size_t* total, size_t* powered) {
   *total = 0;
+  *powered = 0;
   if (c->legs < 1 || c->legs > MAX_LEGS) {
     return 0;
   }
@@ -101,34 +110,101 @@ static int chain_valid(const myb_chain* c, size_t* total) {
             c->flight[k][0] > 0.0 && c->flight[k][0] <= c->flight[k][1];
     segments += c->segments[k] <= MAX_SEGMENTS ? c->segments[k] : 0;
   }
+  size_t impulses = 0;
   for (size_t b = 0; b <= c->legs; ++b) {
     const myb_chain_body* body = &c->bodies[b];
-    valid = valid && body->state != NULL;
+    const double exhaust = c->impulse_exhaust[b];
+    valid = valid && body->state != NULL && exhaust >= 0.0;
+    sum += exhaust;
     if (b > 0 && b < c->legs) {
       sum += body->gm + body->periapsis;
       valid = valid && body->gm > 0.0 && body->periapsis > 0.0;
+      impulses += exhaust > 0.0;
+    } else {
+      valid = valid && exhaust == 0.0; /* no flyby at the ends */
     }
   }
   *total = segments;
-  return valid && isfinite(sum) && 7 * c->legs + 1 + 4 * segments <= MYB_NLP_MAX_UNKNOWNS &&
-         8 * c->legs + segments <= MYB_NLP_MAX_CONSTRAINTS;
+  *powered = impulses;
+  return valid && isfinite(sum) &&
+         7 * c->legs + 1 + 4 * segments + PER_FLYBY * impulses <= MYB_NLP_MAX_UNKNOWNS &&
+         8 * c->legs + segments + impulses <= MYB_NLP_MAX_CONSTRAINTS;
 }
 
 myb_status myb_chain_size(const myb_chain* chain, size_t* unknowns, size_t* equalities,
                           size_t* inequalities) {
   MYB_CHECK(chain != NULL);
   size_t total = 0;
-  if (!chain_valid(chain, &total)) {
+  size_t powered = 0;
+  if (!chain_valid(chain, &total, &powered)) {
     return MYB_E_DOMAIN;
   }
   if (unknowns != NULL) {
-    *unknowns = 7 * chain->legs + 1 + 3 * total;
+    *unknowns = 7 * chain->legs + 1 + 3 * total + PER_FLYBY * powered;
   }
   if (equalities != NULL) {
     *equalities = 7 * chain->legs - 1;
   }
   if (inequalities != NULL) {
-    *inequalities = chain->legs + 1;
+    *inequalities = chain->legs + 1 + powered;
+  }
+  return MYB_OK;
+}
+
+/* ---- The powered flyby ------------------------------------------------------------------------ */
+
+/* The two hyperbolas of a powered flyby with the excess speeds v_in, v_out and the periapsis
+ * rp (any consistent units, gm the body's): the turn of the excess velocity and the difference
+ * of the speeds at the periapsis, with their derivatives by v_in, v_out and rp. */
+typedef struct flyby_values {
+  double turn;       /* asin(1 / e_in) + asin(1 / e_out) */
+  double diff;       /* sqrt(v_out^2 + 2 gm / rp) - sqrt(v_in^2 + 2 gm / rp) */
+  double d_turn[3];
+  double d_diff[3];
+} flyby_values;
+
+static void flyby_compute(double gm, double v_in, double v_out, double rp, flyby_values* f) {
+  const double q_in = rp * v_in * v_in / gm; /* e - 1 */
+  const double q_out = rp * v_out * v_out / gm;
+  const double e_in = 1.0 + q_in;
+  const double e_out = 1.0 + q_out;
+  f->turn = myb_asin(1.0 / e_in) + myb_asin(1.0 / e_out);
+  /* d asin(1 / e) / de = -1 / (e sqrt(e^2 - 1)), e^2 - 1 = q (2 + q) */
+  const double by_in = -1.0 / (e_in * sqrt(q_in * (2.0 + q_in)));
+  const double by_out = -1.0 / (e_out * sqrt(q_out * (2.0 + q_out)));
+  f->d_turn[0] = by_in * 2.0 * rp * v_in / gm;
+  f->d_turn[1] = by_out * 2.0 * rp * v_out / gm;
+  f->d_turn[2] = by_in * v_in * v_in / gm + by_out * v_out * v_out / gm;
+  const double escape = 2.0 * gm / rp; /* the square of the escape speed at the periapsis */
+  const double p_in = sqrt(v_in * v_in + escape);
+  const double p_out = sqrt(v_out * v_out + escape);
+  f->diff = (v_out - v_in) * (v_out + v_in) / (p_out + p_in);
+  f->d_diff[0] = -v_in / p_in;
+  f->d_diff[1] = v_out / p_out;
+  /* -(gm / rp^2) (1 / p_out - 1 / p_in), the difference taken as -diff / (p_in p_out) */
+  f->d_diff[2] = (gm / (rp * rp)) * f->diff / (p_in * p_out);
+}
+
+myb_status myb_chain_flyby(double gm, double v_in, double v_out, double periapsis, double* dv,
+                           double* turn, double partials[6]) {
+  if (!(gm > 0.0) || !(v_in > 0.0) || !(v_out > 0.0) || !(periapsis > 0.0) ||
+      !isfinite(gm + v_in + v_out + periapsis)) {
+    return MYB_E_DOMAIN;
+  }
+  flyby_values f;
+  flyby_compute(gm, v_in, v_out, periapsis, &f);
+  const double sign = f.diff < 0.0 ? -1.0 : 1.0;
+  if (dv != NULL) {
+    *dv = fabs(f.diff);
+  }
+  if (turn != NULL) {
+    *turn = f.turn;
+  }
+  if (partials != NULL) {
+    for (int i = 0; i < 3; ++i) {
+      partials[i] = sign * f.d_diff[i];
+      partials[3 + i] = f.d_turn[i];
+    }
   }
   return MYB_OK;
 }
@@ -157,7 +233,7 @@ static void state_close(state* s) {
 static myb_status state_open(state* s, const myb_chain* chain, const myb_allocator* allocator) {
   memset(s, 0, sizeof *s);
   s->allocator = myb_internal_allocator(allocator);
-  if (!chain_valid(chain, &s->total)) {
+  if (!chain_valid(chain, &s->total, &s->powered)) {
     return MYB_E_DOMAIN;
   }
   s->chain = chain;
@@ -166,10 +242,15 @@ static myb_status state_open(state* s, const myb_chain* chain, const myb_allocat
     s->offset[k + 1] = s->offset[k] + chain->segments[k];
     s->largest = chain->segments[k] > s->largest ? chain->segments[k] : s->largest;
   }
-  s->n = 7 * s->legs + 1 + 3 * s->total;
-  s->m = 8 * s->legs;
-  s->solver = 7 * s->legs + 1 + 4 * s->total;
-  s->width = 7 * s->legs + 1 + PER_SEGMENT * s->total;
+  size_t index = 0;
+  for (size_t b = 0; b <= s->legs; ++b) {
+    s->flyby[b] = chain->impulse_exhaust[b] > 0.0 ? index++ : UNPOWERED;
+    s->factor[b] = 1.0;
+  }
+  s->n = 7 * s->legs + 1 + 3 * s->total + PER_FLYBY * s->powered;
+  s->m = 8 * s->legs + s->powered;
+  s->solver = 7 * s->legs + 1 + 4 * s->total + PER_FLYBY * s->powered;
+  s->width = 7 * s->legs + 1 + PER_SEGMENT * s->total + PER_FLYBY * s->powered;
   /* the units: the distance of the first body at the earliest departure */
   double y[6];
   myb_status st = body_state(chain, 0, chain->departure[0], y);
@@ -258,10 +339,24 @@ static size_t column_segment(const state* s, size_t segment) {
   return 7 * s->legs + 1 + PER_SEGMENT * segment;
 }
 
+/* The columns of the powered flyby of index p: r_p, then dv. */
+static size_t column_flyby(const state* s, size_t p) {
+  return 7 * s->legs + 1 + PER_SEGMENT * s->total + PER_FLYBY * p;
+}
+
+/* The effective exhaust velocity of the impulse at body b in the units of the solver. */
+static double impulse_exhaust(const state* s, size_t b) {
+  return s->chain->impulse_exhaust[b] / s->speed;
+}
+
 /* What leg k does: its impulses from the throttles, its mismatch c, the part of the first mass
  * a unit of throttle spends in it (*spent) and the sum of its throttles (*sum); with
- * derivatives its rows of the core and its part of the gradient of the objective. at: the
- * times of the bodies; mass: at its start; spent, sums: of the earlier legs. */
+ * derivatives its rows of the core and its part of the gradient of the objective (as if
+ * nothing followed it: core() carries that through the powered flybys after it). at: the
+ * times of the bodies; mass: at its start; spent, sums: of the earlier legs. With powered
+ * flybys before it the mass at its start is (that of an earlier leg less its propellant) times
+ * the factors exp(-dv / c) of the flybys between, and the start masses and factors of those
+ * flybys (s->start_mass, s->factor) are those of this evaluation. */
 static myb_status leg_values(state* s, size_t k, const double* at, double flight, double mass,
                              const double* bodies, const double* rates, const double* excess,
                              const double* spent, const double* sums, int derivatives, double c[6],
@@ -337,6 +432,13 @@ static myb_status leg_values(state* s, size_t k, const double* at, double flight
       later[r] += moved * rho / m;
     }
   }
+  /* what reaches the start of this leg of a unit of mass at the end of leg j: the factors of
+   * the powered flybys between (carry[k] = 1) */
+  double carry[MAX_LEGS + 1];
+  carry[k] = 1.0;
+  for (size_t j = k; j-- > 0;) {
+    carry[j] = carry[j + 1] * s->factor[j + 1];
+  }
   /* the times: the leg moved as a whole with its bodies, and its segments made longer (the end
    * and its body move n times as fast) */
   const double* start_rate = rates + 6 * k;
@@ -353,7 +455,11 @@ static myb_status leg_values(state* s, size_t k, const double* at, double flight
     row[0] = shift;
     for (size_t j = 0; j < k; ++j) {
       /* an earlier flight: later here, and less mass at the start */
-      row[1 + j] = shift - by_mass[r] * ratio * sums[j] / (double)chain->segments[j];
+      double lost = by_mass[r] * ratio * sums[j] / (double)chain->segments[j];
+      if (s->powered > 0) {
+        lost *= carry[j];
+      }
+      row[1 + j] = shift - lost;
     }
     row[1 + k] = (grow[r] + (double)n * end) / (double)n;
     for (size_t j = 0; j < 3; ++j) {
@@ -361,8 +467,19 @@ static myb_status leg_values(state* s, size_t k, const double* at, double flight
       row[column_excess(s, 2 * k + 1) + j] = out.by_end[6 * r + 3 + j];
     }
     for (size_t j = 0; j < k; ++j) {
+      double lost = -by_mass[r] * spent[j];
+      if (s->powered > 0) {
+        lost *= carry[j];
+      }
       for (size_t i = s->offset[j]; i < s->offset[j + 1]; ++i) {
-        row[column_segment(s, i)] = -by_mass[r] * spent[j];
+        row[column_segment(s, i)] = lost;
+      }
+    }
+    /* the impulse of a powered flyby before: m -> m exp(-dv / c) there */
+    for (size_t b = 1; b <= k && s->powered > 0; ++b) {
+      if (s->flyby[b] != UNPOWERED) {
+        row[column_flyby(s, s->flyby[b]) + 1] =
+            -by_mass[r] * s->start_mass[b] / impulse_exhaust(s, b) * carry[b];
       }
     }
   }
@@ -373,12 +490,25 @@ static myb_status leg_values(state* s, size_t k, const double* at, double flight
   return MYB_OK;
 }
 
+/* The two hyperbolas of the powered flyby of body j, from its unknowns (rp in units of the
+ * least distance, its index p) and the excess speeds a, b, in the units of the solver: the
+ * derivatives by rp per unit of the least distance. */
+static void flyby_of(const state* s, size_t j, const double* flyby, double a, double b,
+                     flyby_values* v) {
+  const myb_chain_body* body = &s->chain->bodies[j];
+  const double least = body->periapsis / s->length;
+  flyby_compute(body->gm / s->chain->mu, a, b, flyby[PER_FLYBY * s->flyby[j]] * least, v);
+  v->d_turn[2] *= least;
+  v->d_diff[2] *= least;
+}
+
 /* The objective (the part of the first mass spent), the constraints (equalities first) and,
  * with derivatives, the core and its gradient. times: the departure (from the earliest), then
- * the flights; excess: 2 legs vectors; the throttles in s->throttles, their sizes for the
+ * the flights; excess: 2 legs vectors; flyby: rp (in units of the least distance) and dv of
+ * each powered flyby (unused without); the throttles in s->throttles, their sizes for the
  * masses in s->sizes. */
-static myb_status core(state* s, const double* times, const double* excess, double* f, double* c,
-                       int derivatives) {
+static myb_status core(state* s, const double* times, const double* excess, const double* flyby,
+                       double* f, double* c, int derivatives) {
   const myb_chain* chain = s->chain;
   const size_t legs = s->legs;
   const size_t width = s->width;
@@ -400,6 +530,12 @@ static myb_status core(state* s, const double* times, const double* excess, doub
   for (size_t b = 0; b <= legs && st == MYB_OK; ++b) {
     st = body_at(s, b, at[b], bodies + 6 * b, derivatives ? rates + 6 * b : NULL);
   }
+  for (size_t j = 1; j < legs && st == MYB_OK; ++j) {
+    if (s->flyby[j] != UNPOWERED && (!(flyby[PER_FLYBY * s->flyby[j]] > 0.0) ||
+                                     !(flyby[PER_FLYBY * s->flyby[j] + 1] >= 0.0))) {
+      st = MYB_E_DOMAIN; /* a periapsis not positive, an impulse that is negative */
+    }
+  }
   double spent[MAX_LEGS];
   double sums[MAX_LEGS];
   double mass = 1.0;
@@ -410,14 +546,40 @@ static myb_status core(state* s, const double* times, const double* excess, doub
                     c + 6 * k, &spent[k], &sums[k]);
     objective += spent[k] * sums[k];
     mass -= spent[k] * sums[k];
+    if (k + 1 < legs && s->flyby[k + 1] != UNPOWERED) {
+      /* the impulse at the periapsis, by the rocket equation */
+      const double ratio = -flyby[PER_FLYBY * s->flyby[k + 1] + 1] / impulse_exhaust(s, k + 1);
+      const double burned = -mass * myb_expm1(ratio);
+      s->factor[k + 1] = myb_exp(ratio);
+      objective += burned;
+      mass -= burned;
+    }
     s->start_mass[k + 1] = mass;
   }
   if (st != MYB_OK) {
     return st;
   }
   *f = objective;
+  if (derivatives && s->powered > 0) {
+    /* what a leg spends, and an impulse, is lost to all that follows: the propellant is the
+     * first mass less the last, and a unit of mass at the end of leg k (after the impulse at
+     * body k) reaches the end as the product of the factors of the flybys after it */
+    double after = 1.0;
+    for (size_t k = legs; k-- > 0;) {
+      s->gradient[1 + k] *= after;
+      for (size_t i = s->offset[k]; i < s->offset[k + 1]; ++i) {
+        s->gradient[column_segment(s, i)] *= after;
+      }
+      if (s->flyby[k] != UNPOWERED) {
+        s->gradient[column_flyby(s, s->flyby[k]) + 1] =
+            s->start_mass[k] / impulse_exhaust(s, k) * after;
+      }
+      after *= s->factor[k];
+    }
+  }
   /* the flybys: the excess speed kept, and the turn within the least distance; the speeds
-   * themselves and not their squares, whose gradients would be as small as the speeds */
+   * themselves and not their squares, whose gradients would be as small as the speeds. A
+   * powered flyby: the turn of its two hyperbolas */
   size_t row = 6 * legs;
   for (size_t j = 1; j < legs; ++j, ++row) {
     const double* in = excess + 3 * (2 * j - 1);
@@ -427,6 +589,27 @@ static myb_status core(state* s, const double* times, const double* excess, doub
     if (!(a > 0.0) || !(b > 0.0)) {
       return MYB_E_DOMAIN; /* a flyby without an excess speed has no turn */
     }
+    if (s->flyby[j] != UNPOWERED) {
+      flyby_values v;
+      flyby_of(s, j, flyby, a, b, &v);
+      double normal[3];
+      myb_vec3_cross(in, out, normal);
+      const double sine = myb_vec3_norm(normal); /* a b sin(turn) */
+      const double cosine = myb_vec3_dot(in, out);
+      c[row] = myb_atan2(sine, cosine) - v.turn;
+      if (derivatives) {
+        double* to = s->core + row * width;
+        /* d turn / d in = (cosine in / a^2 - out) / sine, none where they are parallel */
+        for (size_t i = 0; i < 3; ++i) {
+          const double by_in = sine > 0.0 ? (cosine * in[i] / (a * a) - out[i]) / sine : 0.0;
+          const double by_out = sine > 0.0 ? (cosine * out[i] / (b * b) - in[i]) / sine : 0.0;
+          to[column_excess(s, 2 * j - 1) + i] = by_in - v.d_turn[0] * in[i] / a;
+          to[column_excess(s, 2 * j) + i] = by_out - v.d_turn[1] * out[i] / b;
+        }
+        to[column_flyby(s, s->flyby[j])] = -v.d_turn[2];
+      }
+      continue;
+    }
     c[row] = a - b;
     if (derivatives) {
       for (size_t i = 0; i < 3; ++i) {
@@ -435,11 +618,32 @@ static myb_status core(state* s, const double* times, const double* excess, doub
       }
     }
   }
+  /* the inequalities of the flybys: the turn within the least distance; for a powered flyby
+   * the difference of the speeds at the periapsis no more than dv (its other side after the
+   * speeds at the ends) */
   for (size_t j = 1; j < legs; ++j, ++row) {
     const double* in = excess + 3 * (2 * j - 1);
     const double* out = excess + 3 * (2 * j);
     const double a = myb_vec3_norm(in);
     const double b = myb_vec3_norm(out);
+    if (s->flyby[j] != UNPOWERED) {
+      flyby_values v;
+      flyby_of(s, j, flyby, a, b, &v);
+      const size_t p = s->flyby[j];
+      c[row] = v.diff - flyby[PER_FLYBY * p + 1];
+      c[s->m - s->powered + p] = -v.diff - flyby[PER_FLYBY * p + 1];
+      for (size_t side = 0; side < 2 && derivatives; ++side) {
+        const double sign = side == 0 ? 1.0 : -1.0;
+        double* to = s->core + (side == 0 ? row : s->m - s->powered + p) * width;
+        for (size_t i = 0; i < 3; ++i) {
+          to[column_excess(s, 2 * j - 1) + i] = sign * v.d_diff[0] * in[i] / a;
+          to[column_excess(s, 2 * j) + i] = sign * v.d_diff[1] * out[i] / b;
+        }
+        to[column_flyby(s, p)] = sign * v.d_diff[2];
+        to[column_flyby(s, p) + 1] = -1.0;
+      }
+      continue;
+    }
     const myb_chain_body* body = &chain->bodies[j];
     const double kappa = body->periapsis / s->length / (body->gm / chain->mu);
     const double e = 1.0 + kappa * a * b;
@@ -471,17 +675,17 @@ static myb_status core(state* s, const double* times, const double* excess, doub
 }
 
 /* The scale of constraint r in SI: the mismatches in m and m/s, the speeds in m/s, the turns
- * without a unit. */
+ * without a unit (the turn of a powered flyby in rad, the differences of its speeds in m/s). */
 static double row_unit(const state* s, size_t r) {
   const size_t legs = s->legs;
   if (r < 6 * legs) {
     return r % 6 < 3 ? s->length : s->speed;
   }
   if (r < 7 * legs - 1) {
-    return s->speed;
+    return s->flyby[r - 6 * legs + 1] != UNPOWERED ? 1.0 : s->speed;
   }
   if (r < 8 * legs - 2) {
-    return 1.0;
+    return s->flyby[r - 7 * legs + 2] != UNPOWERED ? s->speed : 1.0;
   }
   return s->speed;
 }
@@ -494,6 +698,21 @@ static void scale_in(const state* s, const double* x, double* z) {
   }
   for (size_t i = 0; i < 6 * s->legs; ++i) {
     z[1 + s->legs + i] = x[1 + s->legs + i] / s->speed;
+  }
+}
+
+/* The unknowns of the powered flybys, r_p (m) and dv (m/s), in or out of those of the solver:
+ * r_p in units of the least distance, dv in the speed of the solver. */
+static void scale_flybys(const state* s, const double* from, double* to, int in) {
+  for (size_t b = 1; b < s->legs; ++b) {
+    const size_t p = s->flyby[b];
+    if (p == UNPOWERED) {
+      continue;
+    }
+    const double least = s->chain->bodies[b].periapsis;
+    to[PER_FLYBY * p] = in ? from[PER_FLYBY * p] / least : from[PER_FLYBY * p] * least;
+    to[PER_FLYBY * p + 1] =
+        in ? from[PER_FLYBY * p + 1] / s->speed : from[PER_FLYBY * p + 1] * s->speed;
   }
 }
 
@@ -531,12 +750,14 @@ myb_status myb_chain_evaluate(const myb_chain* chain, const double* x, double* p
       st = MYB_E_DOMAIN;
     }
   }
+  const size_t extras = base + 3 * s.total; /* the unknowns of the powered flybys in x */
   if (st == MYB_OK) {
     scale_in(&s, x, s.z);
+    scale_flybys(&s, x + extras, s.z + base, 1);
     st = take_throttles(&s, x + base);
   }
   if (st == MYB_OK) {
-    st = core(&s, s.z, s.z + 1 + s.legs, &f, c, derivatives);
+    st = core(&s, s.z, s.z + 1 + s.legs, s.z + base, &f, c, derivatives);
   }
   if (st == MYB_OK) {
     if (propellant != NULL) {
@@ -568,6 +789,15 @@ myb_status myb_chain_evaluate(const myb_chain* chain, const double* x, double* p
         for (size_t j = 0; j < 3; ++j) {
           const double along = size > 0.0 ? tau[j] / size : 0.0;
           to[base + 3 * i + j] = (segment[1 + j] + segment[0] * along) * unit;
+        }
+      }
+      /* r_p per m, dv per m/s */
+      for (size_t b = 1; b < s.legs; ++b) {
+        const size_t p = s.flyby[b];
+        if (p != UNPOWERED) {
+          const double* column = from + column_flyby(&s, p);
+          to[extras + PER_FLYBY * p] = column[0] * unit / chain->bodies[b].periapsis;
+          to[extras + PER_FLYBY * p + 1] = column[1] * unit / s.speed;
         }
       }
     }
@@ -631,14 +861,68 @@ myb_status myb_chain_guess(const myb_chain* chain, double* x) {
       }
     }
   }
+  /* a powered flyby: the periapsis whose two hyperbolas turn the excess velocities of the
+   * conics into each other, and the impulse there. The turn falls as the periapsis grows:
+   * bisection in 1 / r_p between 0 (no turn) and the least distance */
+  size_t total = 0;
+  for (size_t k = 0; k < legs; ++k) {
+    total += chain->segments[k];
+  }
+  double* flybys = x + 7 * legs + 1 + 3 * total;
+  for (size_t b = 1; b < legs; ++b) {
+    const myb_chain_body* body = &chain->bodies[b];
+    if (!(chain->impulse_exhaust[b] > 0.0)) {
+      continue;
+    }
+    const double* in = x + 1 + legs + 3 * (2 * b - 1);
+    const double* out = x + 1 + legs + 3 * (2 * b);
+    const double v_in = myb_vec3_norm(in);
+    const double v_out = myb_vec3_norm(out);
+    double normal[3];
+    myb_vec3_cross(in, out, normal);
+    const double wanted = myb_atan2(myb_vec3_norm(normal), myb_vec3_dot(in, out));
+    double rp = body->periapsis;
+    double dv = 0.0;
+    double turn = 0.0;
+    st = myb_chain_flyby(body->gm, v_in, v_out, rp, &dv, &turn, NULL);
+    if (st != MYB_OK) {
+      return st;
+    }
+    if (turn > wanted) {
+      double low = 0.0; /* 1 / r_p: no turn */
+      double high = 1.0 / body->periapsis;
+      /* bound: BISECTIONS */
+      for (int it = 0; it < BISECTIONS; ++it) {
+        const double middle = 0.5 * (low + high);
+        st = myb_chain_flyby(body->gm, v_in, v_out, 1.0 / middle, NULL, &turn, NULL);
+        if (st != MYB_OK) {
+          return st;
+        }
+        if (turn > wanted) {
+          high = middle;
+        } else {
+          low = middle;
+        }
+      }
+      rp = 1.0 / high;
+      st = myb_chain_flyby(body->gm, v_in, v_out, rp, &dv, NULL, NULL);
+      if (st != MYB_OK) {
+        return st;
+      }
+    }
+    flybys[0] = rp;
+    flybys[1] = dv;
+    flybys += PER_FLYBY;
+  }
   return MYB_OK;
 }
 
 /* ---- The program ----------------------------------------------------------------------------- */
 
 /* The unknowns of the solver: the departure, the flights, the excess velocities (all in its
- * units), then the throttles tau (3 per segment) and their sizes u; its constraints those of
- * the chain, then |tau|^2 - u^2 <= 0 for each segment. */
+ * units), then the throttles tau (3 per segment) and their sizes u, then the unknowns of the
+ * powered flybys; its constraints those of the chain, then |tau|^2 - u^2 <= 0 for each
+ * segment. */
 static myb_status program_function(void* context, const double* z, double* f, double* c,
                                    double* gradient, double* jacobian) {
   state* s = context;
@@ -647,9 +931,10 @@ static myb_status program_function(void* context, const double* z, double* f, do
   const size_t n = s->solver;
   const double* tau = z + base;
   const double* u = z + base + 3 * total;
+  const double* flyby = z + base + 4 * total;
   memcpy(s->throttles, tau, 3 * total * sizeof *tau);
   memcpy(s->sizes, u, total * sizeof *u);
-  const myb_status st = core(s, z, z + 1 + s->legs, f, c, jacobian != NULL);
+  const myb_status st = core(s, z, z + 1 + s->legs, flyby, f, c, jacobian != NULL);
   if (st != MYB_OK) {
     return st;
   }
@@ -671,6 +956,10 @@ static myb_status program_function(void* context, const double* z, double* f, do
       }
       to[base + 3 * total + i] = segment[0];
     }
+    if (s->powered > 0) {
+      memcpy(to + base + 4 * total, from + column_flyby(s, 0),
+             PER_FLYBY * s->powered * sizeof *to);
+    }
   }
   for (size_t i = 0; i < total; ++i) {
     double* row = jacobian + (s->m + i) * n;
@@ -684,7 +973,8 @@ static myb_status program_function(void* context, const double* z, double* f, do
 }
 
 /* The second pass: the departure, the flights, the excess velocities, then the sizes, the
- * azimuths and the elevations of the throttles; its constraints those of the chain. */
+ * azimuths and the elevations of the throttles, then the unknowns of the powered flybys; its
+ * constraints those of the chain. */
 static myb_status program_angles(void* context, const double* z, double* f, double* c,
                                  double* gradient, double* jacobian) {
   state* s = context;
@@ -712,7 +1002,7 @@ static myb_status program_angles(void* context, const double* z, double* f, doub
       s->throttles[3 * i + j] = u * turn[j];
     }
   }
-  const myb_status st = core(s, z, z + 1 + s->legs, f, c, jacobian != NULL);
+  const myb_status st = core(s, z, z + 1 + s->legs, z + base + 3 * total, f, c, jacobian != NULL);
   if (st != MYB_OK || jacobian == NULL) {
     return st;
   }
@@ -731,6 +1021,10 @@ static myb_status program_angles(void* context, const double* z, double* f, doub
           u * (segment[1] * turn[3] + segment[2] * turn[4] + segment[3] * turn[5]);
       to[base + 2 * total + i] =
           u * (segment[1] * turn[6] + segment[2] * turn[7] + segment[3] * turn[8]);
+    }
+    if (s->powered > 0) {
+      memcpy(to + base + 3 * total, from + column_flyby(s, 0),
+             PER_FLYBY * s->powered * sizeof *to);
     }
   }
   return MYB_OK;
@@ -819,14 +1113,32 @@ myb_status myb_chain_solve(const myb_chain* chain, const myb_nlp_options* option
   if (st == MYB_OK && !given) {
     st = myb_chain_guess(chain, x);
   }
+  /* the unknowns of the powered flybys: in x after the throttles, in the first pass after the
+   * sizes, in the second after the elevations; r_p no less than the least distance, dv no
+   * less than 0. The first pass holds every dv at 0: from a guess far from meeting the
+   * bodies, the weight of the constraints against the propellant (1e4) let it spend the
+   * impulse until no mass was left — the engine's acceleration grows without bound as the
+   * mass goes, and that met the constraints cheaply. (The chain kept 10^6 km from Venus with
+   * an impulse of 3000 m/s ended so at the departure of 100 days, the constraints 4e-2 off,
+   * the multipliers 1e10.) The second pass starts from an unpowered chain, from which an
+   * impulse is taken only where it pays */
+  const size_t first_flybys = base + 4 * total;
+  const size_t second_flybys = base + 3 * total;
   if (st == MYB_OK) {
     scale_in(&s, x, s.z);
     bounds_of_times(&s, s.lower, s.upper);
+    scale_flybys(&s, x + second_flybys, s.z + first_flybys, 1);
+    for (size_t p = 0; p < s.powered; ++p) {
+      s.z[first_flybys + PER_FLYBY * p + 1] = 0.0;
+      s.lower[first_flybys + PER_FLYBY * p] = 1.0;
+      s.upper[first_flybys + PER_FLYBY * p] = HUGE_VAL;
+      s.lower[first_flybys + PER_FLYBY * p + 1] = s.upper[first_flybys + PER_FLYBY * p + 1] = 0.0;
+    }
   }
   /* the throttles: those given, each its own size; none given, half thrust along the motion,
    * as Sims and Flanagan alone start */
   int throttled = 0;
-  for (size_t i = base; i < s.n; ++i) {
+  for (size_t i = base; i < base + 3 * total; ++i) {
     throttled = throttled || x[i] != 0.0;
   }
   for (size_t k = 0; k < legs && st == MYB_OK; ++k) {
@@ -860,7 +1172,7 @@ myb_status myb_chain_solve(const myb_chain* chain, const myb_nlp_options* option
   if (st == MYB_OK) {
     const myb_nlp_problem first = {.n = s.solver,
                                    .equalities = 7 * legs - 1,
-                                   .inequalities = legs + 1 + total,
+                                   .inequalities = legs + 1 + s.powered + total,
                                    .lower = s.lower,
                                    .upper = s.upper,
                                    .function = program_function,
@@ -892,9 +1204,17 @@ myb_status myb_chain_solve(const myb_chain* chain, const myb_nlp_options* option
       s.low[base + total + i] = s.low[base + 2 * total + i] = -HUGE_VAL;
       s.high[base + total + i] = s.high[base + 2 * total + i] = HUGE_VAL;
     }
+    for (size_t p = 0; p < s.powered; ++p) {
+      s.y[second_flybys + PER_FLYBY * p] = s.z[first_flybys + PER_FLYBY * p];
+      s.y[second_flybys + PER_FLYBY * p + 1] = s.z[first_flybys + PER_FLYBY * p + 1];
+      s.low[second_flybys + PER_FLYBY * p] = 1.0;
+      s.low[second_flybys + PER_FLYBY * p + 1] = 0.0;
+      s.high[second_flybys + PER_FLYBY * p] = s.high[second_flybys + PER_FLYBY * p + 1] =
+          HUGE_VAL;
+    }
     const myb_nlp_problem second = {.n = s.n,
                                     .equalities = 7 * legs - 1,
-                                    .inequalities = legs + 1,
+                                    .inequalities = legs + 1 + s.powered,
                                     .lower = s.low,
                                     .upper = s.high,
                                     .function = program_angles,
@@ -922,10 +1242,11 @@ myb_status myb_chain_solve(const myb_chain* chain, const myb_nlp_options* option
         x[i] = y[i] * s.speed;
       }
       memcpy(x + base, s.throttles, 3 * total * sizeof *x);
+      scale_flybys(&s, y + second_flybys, x + second_flybys, 0);
       again = take_throttles(&s, x + base);
     }
     if (again == MYB_OK) {
-      again = core(&s, y, y + 1 + legs, &f, c, 0);
+      again = core(&s, y, y + 1 + legs, y + second_flybys, &f, c, 0);
     }
     if (again == MYB_OK) {
       for (size_t b = 0; b <= legs; ++b) {
@@ -943,6 +1264,10 @@ myb_status myb_chain_solve(const myb_chain* chain, const myb_nlp_options* option
           result->turn[b] = turn;
           result->periapsis[b] =
               half > 0.0 && v2 > 0.0 ? chain->bodies[b].gm / v2 * (1.0 / half - 1.0) : HUGE_VAL;
+          if (s.flyby[b] != UNPOWERED) {
+            result->periapsis[b] = x[second_flybys + PER_FLYBY * s.flyby[b]];
+            result->impulse[b] = x[second_flybys + PER_FLYBY * s.flyby[b] + 1];
+          }
         }
       }
       for (size_t k = 0; k < legs; ++k) {

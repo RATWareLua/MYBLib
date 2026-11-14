@@ -169,6 +169,12 @@ data Myb_cr3bp_torus_spectrum = Myb_cr3bp_torus_spectrum
   , myb_cr3bp_torus_spectrum'stable_direction :: [CDouble]
   , myb_cr3bp_torus_spectrum'residual :: CDouble
   , myb_cr3bp_torus_spectrum'tail :: CDouble
+  , myb_cr3bp_torus_spectrum'normal_rotation :: CDouble
+  , myb_cr3bp_torus_spectrum'normal_eigenvalue :: [CDouble]
+  , myb_cr3bp_torus_spectrum'normal_frequency :: CDouble
+  , myb_cr3bp_torus_spectrum'normal_residual :: CDouble
+  , myb_cr3bp_torus_spectrum'normal_re :: [CDouble]
+  , myb_cr3bp_torus_spectrum'normal_im :: [CDouble]
   }
   deriving (Eq, Show)
 
@@ -190,7 +196,13 @@ instance Storable Myb_cr3bp_torus_spectrum where
     v12 <- peekArray (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) (#{ptr myb_cr3bp_torus_spectrum, stable_direction} p)
     v13 <- #{peek myb_cr3bp_torus_spectrum, residual} p
     v14 <- #{peek myb_cr3bp_torus_spectrum, tail} p
-    pure (Myb_cr3bp_torus_spectrum v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13 v14)
+    v15 <- #{peek myb_cr3bp_torus_spectrum, normal_rotation} p
+    v16 <- peekArray (#{const (2)}) (#{ptr myb_cr3bp_torus_spectrum, normal_eigenvalue} p)
+    v17 <- #{peek myb_cr3bp_torus_spectrum, normal_frequency} p
+    v18 <- #{peek myb_cr3bp_torus_spectrum, normal_residual} p
+    v19 <- peekArray (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) (#{ptr myb_cr3bp_torus_spectrum, normal_re} p)
+    v20 <- peekArray (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) (#{ptr myb_cr3bp_torus_spectrum, normal_im} p)
+    pure (Myb_cr3bp_torus_spectrum v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20)
   poke p v = do
     fillBytes p 0 #{size myb_cr3bp_torus_spectrum}
     #{poke myb_cr3bp_torus_spectrum, count} p (myb_cr3bp_torus_spectrum'count v)
@@ -207,9 +219,15 @@ instance Storable Myb_cr3bp_torus_spectrum where
     pokeArray (#{ptr myb_cr3bp_torus_spectrum, stable_direction} p) (take (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) (myb_cr3bp_torus_spectrum'stable_direction v))
     #{poke myb_cr3bp_torus_spectrum, residual} p (myb_cr3bp_torus_spectrum'residual v)
     #{poke myb_cr3bp_torus_spectrum, tail} p (myb_cr3bp_torus_spectrum'tail v)
+    #{poke myb_cr3bp_torus_spectrum, normal_rotation} p (myb_cr3bp_torus_spectrum'normal_rotation v)
+    pokeArray (#{ptr myb_cr3bp_torus_spectrum, normal_eigenvalue} p) (take (#{const (2)}) (myb_cr3bp_torus_spectrum'normal_eigenvalue v))
+    #{poke myb_cr3bp_torus_spectrum, normal_frequency} p (myb_cr3bp_torus_spectrum'normal_frequency v)
+    #{poke myb_cr3bp_torus_spectrum, normal_residual} p (myb_cr3bp_torus_spectrum'normal_residual v)
+    pokeArray (#{ptr myb_cr3bp_torus_spectrum, normal_re} p) (take (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) (myb_cr3bp_torus_spectrum'normal_re v))
+    pokeArray (#{ptr myb_cr3bp_torus_spectrum, normal_im} p) (take (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) (myb_cr3bp_torus_spectrum'normal_im v))
 
 instance Zero Myb_cr3bp_torus_spectrum where
-  zero = Myb_cr3bp_torus_spectrum zero (replicate (#{const (MYB_CR3BP_MAX_SPECTRUM)}) zero) (replicate (#{const (MYB_CR3BP_MAX_SPECTRUM)}) zero) zero zero zero zero zero zero zero (replicate (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) zero) (replicate (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) zero) zero zero
+  zero = Myb_cr3bp_torus_spectrum zero (replicate (#{const (MYB_CR3BP_MAX_SPECTRUM)}) zero) (replicate (#{const (MYB_CR3BP_MAX_SPECTRUM)}) zero) zero zero zero zero zero zero zero (replicate (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) zero) (replicate (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) zero) zero zero zero (replicate (#{const (2)}) zero) zero zero (replicate (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) zero) (replicate (#{const (6 * MYB_CR3BP_MAX_CIRCLE)}) zero)
 
 -- | struct myb_cr3bp_section
 data Myb_cr3bp_section = Myb_cr3bp_section

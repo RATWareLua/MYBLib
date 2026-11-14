@@ -5247,6 +5247,12 @@ pub struct myb_cr3bp_torus_spectrum {
     pub stable_direction: [f64; 210usize],
     pub residual: f64,
     pub tail: f64,
+    pub normal_rotation: f64,
+    pub normal_eigenvalue: [f64; 2usize],
+    pub normal_frequency: f64,
+    pub normal_residual: f64,
+    pub normal_re: [f64; 210usize],
+    pub normal_im: [f64; 210usize],
 }
 impl Default for myb_cr3bp_torus_spectrum {
     fn default() -> Self {
@@ -7456,6 +7462,17 @@ unsafe extern "C" {
         result: *mut myb_sims_flanagan_result,
     ) -> myb_status;
 }
+unsafe extern "C" {
+    pub fn myb_chain_flyby(
+        gm: f64,
+        v_in: f64,
+        v_out: f64,
+        periapsis: f64,
+        dv: *mut f64,
+        turn: *mut f64,
+        partials: *mut f64,
+    ) -> myb_status;
+}
 pub const MYB_CHAIN_MAX_LEGS: _bindgen_ty_29 = 8;
 pub type _bindgen_ty_29 = ::std::os::raw::c_uint;
 #[repr(C)]
@@ -7491,6 +7508,7 @@ pub struct myb_chain {
     pub flight: [[f64; 2usize]; 8usize],
     pub launch: f64,
     pub arrival: f64,
+    pub impulse_exhaust: [f64; 9usize],
 }
 impl Default for myb_chain {
     fn default() -> Self {
@@ -7533,6 +7551,7 @@ pub struct myb_chain_result {
     pub mismatch: [[f64; 6usize]; 8usize],
     pub first: myb_nlp_result,
     pub nlp: myb_nlp_result,
+    pub impulse: [f64; 9usize],
 }
 unsafe extern "C" {
     pub fn myb_chain_solve(

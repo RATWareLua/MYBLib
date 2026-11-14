@@ -374,17 +374,48 @@ MYB_API MYB_NODISCARD myb_status myb_system_inertia(myb_system* system, size_t b
 
 /* ---- Derivatives -------------------------------------------------------------------------------
  * The derivatives of the state at t1 with respect to the state at t0 and to the gravitational
- * parameters of chosen bodies, for the system with every level it has: by central
- * differences of whole propagations — an IAS15 integrator of the system (options as
- * myb_system_integrator) from y0 changed by +-h in one coordinate (h = 1e-6 of the largest
- * coordinate of its kind — the positions of the bodies, then each rotation's and each pair's
- * values — or of their rates), or with one gm changed by +-1e-6 of itself. The error is that
- * of the difference, a part in 10^9 .. 10^11 of a derivative, as long as the motion does
- * not branch (no encounter between t0 and t1); every column costs two propagations. phi
- * (2 n x 2 n, row-major: d y1_i / d y0_j, n = myb_system_coordinates) and sensitivity
+ * parameters of chosen bodies, for the system with every level it has: the variational
+ * equations dx'' = A dx + B dv (+ d a / d gm_k), A and B the derivatives of
+ * myb_system_acceleration with respect to the coordinates and their rates, integrated together
+ * with the state by IAS15 (options as myb_system_integrator) — the 2 n columns of phi started
+ * from the unit matrix, one column per gm from zero. The columns ride along the steps of the
+ * state: y1 is that of a propagation without them, bit for bit.
+ *
+ * The Jacobian is assembled at every evaluation, level by level:
+ *   analytic        the Newtonian point masses (the edges of the graph; the exact direct sums,
+ *                   also where myb_nbody_set_approximation approximates them); the field of a
+ *                   body whose frame is given from outside, on a point and back on the body
+ *                   (the gradient of the harmonic field, myb_gravity_field_gradient); the frame
+ *                   dragging (myb_rel_lense_thirring_jacobian); the guided bodies;
+ *   by differences  the 1PN terms of the point masses, the fields of the bodies whose rotation
+ *                   is integrated, the figures, the tides, the pairs beyond 1PN and their spins,
+ *                   the actions, the contacts and the equations of rotation themselves: these
+ *                   levels alone are evaluated with one coordinate (or one gm) moved by +-h,
+ *                   inside the evaluation, h = 2^-17 of the size of that coordinate (the distance
+ *                   of a body to its nearest neighbour, or to the surface under it for a contact;
+ *                   the relative or circular speed; 1 for a quaternion; the rate of a rotation;
+ *                   a spin; the gm itself), made a power of two.
+ * The derivative with respect to the gm of a body whose mass changes
+ * (myb_system_set_mass_rate) is with respect to the gm given; that of a field with respect to
+ * the gm of the system takes only the ratio of the masses (the field keeps its own GM).
+ *
+ * Accuracy (tests/unit/test_system.c): two bodies over 4000 s, against the transition matrix
+ * of Kepler's motion in closed form, 2.3e-16 of its largest element (the differences of whole
+ * propagations that this function used before: 1.8e-11); the Jacobian of a system with every
+ * level against differences of the acceleration, 1.5e-8 at worst of the elements those resolve;
+ * the derivatives of that system over 2000 s against the differences of propagations to 5e-8
+ * where these resolve them; the symplectic form of a conservative system of five bodies with a
+ * field and a guided body kept to 4e-16. As long as the motion does not branch (no encounter
+ * between t0 and t1). Cost: one propagation of the state with 2 n + count columns, and per
+ * evaluation the analytic levels once and two evaluations of the differenced levels per
+ * coordinate they depend on — against two whole propagations per column: 2.6 .. 3.5 times
+ * cheaper for two bodies, 1.3 .. 2 times for the system with every level. A contact, which
+ * IAS15 does not integrate well (myb/contact.h), is not smooth where it starts.
+ *
+ * phi (2 n x 2 n, row-major: d y1_i / d y0_j, n = myb_system_coordinates) and sensitivity
  * (2 n x count: d y1_i / d gm_k) may be NULL; y1 (may be NULL) the state at t1. The system
  * is left as it was. Errors: MYB_E_DOMAIN (t1 == t0, an index or a gm of 0, non-finite
- * input), MYB_E_NOMEM, the errors of the integration. */
+ * input), MYB_E_NOMEM, MYB_E_OVERFLOW, the errors of the integration. */
 MYB_API MYB_NODISCARD myb_status myb_system_partials(myb_system* system,
                                                      const myb_ias15_options* options, double t0,
                                                      const double* y0, double t1,

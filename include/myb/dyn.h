@@ -206,10 +206,29 @@ MYB_API MYB_NODISCARD myb_status myb_nbody_pn_invariants_of(const myb_nbody* nbo
  * the time per body grows 1.6 to 1.7 times, the direct sum's 10 times; the pairs summed
  * directly per body stay within a factor 2.2 (they follow the filling of the leaves) and the
  * cell interactions below 5 per body. Below a few thousand bodies most pairs are cheaper
- * summed directly and the gain is 2 to 3 times. The evaluation is serial (the pool of
- * myb_nbody_set_pool is not used by it) and its order of operations is fixed: the same input
- * gives the same bits. myb_nbody_acceleration and myb_nbody_acceleration_xv then allocate
- * when the tree outgrows its memory (MYB_E_NOMEM). The Wisdom-Holman integrators refuse a
+ * summed directly and the gain is 2 to 3 times. Its order of operations is fixed: the same
+ * input gives the same bits.
+ *
+ * Threads: from 2048 bodies on, the evaluation runs on the pool of myb_nbody_set_pool, with the
+ * bits of the evaluation without a pool whatever the number of threads (dyn/fmm.c: the passes
+ * up and down level by level, the walk recorded on one thread, M2L cut by target cell, the near
+ * field — 72 .. 79 % of the work — cut by ranges of points, each pair across a cut computed by
+ * both sides). Measured (tests/unit/test_fmm_threads.c, p 8, theta 0.5, the same i5-9300H of 4
+ * cores shared with six other jobs: three runs, the spread given), in us per body:
+ *                     serial        2 threads     4 threads     direct sum, 4 threads
+ *   cube    10^4    10.6 .. 15.3   7.5 .. 9.9    5.4 .. 6.7     20 .. 28
+ *   cube    10^5    21 .. 24      12 .. 17       9.4 .. 11      200 .. 280 (scaled as N^2)
+ *   Plummer 10^4    18 .. 22      16 .. 18       9.5 .. 14      21 .. 24
+ *   Plummer 10^5    30 .. 46      21 .. 35       15 .. 21       210 .. 240 (scaled)
+ * — 0.9 .. 1.8 times faster with 2 threads, 1.3 .. 2.5 times with 4 (about 2 at the median),
+ * and for 5000 bodies still 1.5 and 2 times; on an idle machine the share computed twice
+ * bounds the gain of 4 threads near 2.6 for 10^4 bodies (half the near field lies across a cut)
+ * and 3.2 for 10^5 (a quarter). The threads pay, and the FMM on 4 threads stays 1.7 to 4 times
+ * cheaper than the direct sum on 4 threads at 10^4 bodies, 10 to 25 times at 10^5.
+ *
+ * myb_nbody_acceleration and myb_nbody_acceleration_xv allocate when the tree outgrows its
+ * memory, and with the threads for the lists of the walk and the scratch of each thread (once,
+ * kept) (MYB_E_NOMEM). The Wisdom-Holman integrators refuse a
  * system with an approximation (myb_wh_start: MYB_E_DOMAIN): there the error would be relative
  * to the full force, the central body's included, which the splitting subtracts.
  *

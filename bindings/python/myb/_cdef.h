@@ -2008,6 +2008,12 @@ typedef struct myb_cr3bp_torus_spectrum {
   double stable_direction[6 * MYB_CR3BP_MAX_CIRCLE];
   double residual;
   double tail;
+  double normal_rotation;
+  double normal_eigenvalue[2];
+  double normal_frequency;
+  double normal_residual;
+  double normal_re[6 * MYB_CR3BP_MAX_CIRCLE];
+  double normal_im[6 * MYB_CR3BP_MAX_CIRCLE];
 } myb_cr3bp_torus_spectrum;
                       myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus,
                                                            double tolerance,
@@ -2930,6 +2936,9 @@ typedef struct myb_sims_flanagan_result {
                                                          double* throttles,
                                                          const myb_allocator* allocator,
                                                          myb_sims_flanagan_result* result);
+                      myb_status myb_chain_flyby(double gm, double v_in, double v_out,
+                                                 double periapsis, double* dv, double* turn,
+                                                 double partials[6]);
 enum { MYB_CHAIN_MAX_LEGS = 8 };
 typedef struct myb_chain_body {
   myb_state_function state;
@@ -2951,6 +2960,7 @@ typedef struct myb_chain {
   double flight[MYB_CHAIN_MAX_LEGS][2];
   double launch;
   double arrival;
+  double impulse_exhaust[MYB_CHAIN_MAX_LEGS + 1];
 } myb_chain;
                       myb_status myb_chain_size(const myb_chain* chain, size_t* unknowns,
                                                 size_t* equalities, size_t* inequalities);
@@ -2967,6 +2977,7 @@ typedef struct myb_chain_result {
   double mismatch[MYB_CHAIN_MAX_LEGS][6];
   myb_nlp_result first;
   myb_nlp_result nlp;
+  double impulse[MYB_CHAIN_MAX_LEGS + 1];
 } myb_chain_result;
                       myb_status myb_chain_solve(const myb_chain* chain,
                                                  const myb_nlp_options* options, double* x,

@@ -432,6 +432,7 @@ MYB_1.2 {
     myb_budget_linear;
     myb_calendar_to_time_many;
     myb_chain_evaluate;
+    myb_chain_flyby;
     myb_chain_guess;
     myb_chain_size;
     myb_chain_solve;

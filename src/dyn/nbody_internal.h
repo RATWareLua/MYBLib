@@ -31,6 +31,15 @@ myb_internal_fmm* myb_internal_nbody_fmm(myb_nbody* nbody);
                                                                  const double* v, double* a,
                                                                  myb_internal_nbody_path path);
 
+/* myb_nbody_acceleration_xv (the same bits in a) and, apart, the 1PN terms alone (pn, 3 per
+ * body; zeros without myb_nbody_set_relativity): the part of the point masses whose derivatives
+ * the variational equations of dyn/system.c take by differences. */
+[[nodiscard]] myb_status myb_internal_nbody_acceleration_pn(myb_nbody* nbody, const double* x,
+                                                            const double* v, double* a, double* pn);
+
+/* 1 if `source` acts on `receiver` at all (a massive body, not the receiver, not excluded). */
+int myb_internal_nbody_acts(myb_nbody* nbody, size_t receiver, size_t source);
+
 /* 1 if the accelerations depend on the velocities (1PN terms). */
 int myb_internal_nbody_velocity_dependent(const myb_nbody* nbody);
 

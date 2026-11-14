@@ -83,9 +83,12 @@ struct myb_ias15 {
   double hint_h;  /* the length of the step withdrawn (signed) */
   double hint_s0; /* where the next step starts in it, as a fraction */
   double* b_hint; /* 7n */
-  /* the groups of the options: where each ends (one group ending at n without them) */
+  /* the groups of the options: where each ends (one group ending at `lead` without them) */
   size_t group_count;
   size_t* group_end;
+  /* the coordinates that set the step and end the iteration: all n, or the first n - followers
+   * (myb_internal_ias15_create_followed) */
+  size_t lead;
 };
 
 static int finite(double x) {
@@ -96,35 +99,36 @@ static double larger_of(double a, double b) {
   return a > b ? a : b;
 }
 
-myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
-                            const myb_allocator* allocator, myb_ias15** integrator) {
-  MYB_CHECK(options != NULL && integrator != NULL);
+static myb_status create(size_t n, size_t followers, const myb_ias15_options* options,
+                         const myb_allocator* allocator, myb_ias15** integrator) {
+  MYB_CHECK(options != NULL && integrator != NULL && followers < n);
+  const size_t lead = n - followers;
   myb_ias15_options o = *options;
   if (o.epsilon == 0.0) {
     o.epsilon = default_epsilon;
   }
   if (n == 0 || !(o.epsilon > 0.0) || !finite(o.epsilon) || !(o.h_initial >= 0.0) ||
       !finite(o.h_initial) || !(o.h_max >= 0.0) || !(o.h_min >= 0.0) || o.max_steps < 0 ||
-      (o.block != 0 && n % o.block != 0)) {
+      (o.block != 0 && (n % o.block != 0 || lead % o.block != 0))) {
     return MYB_E_DOMAIN;
   }
   if (o.max_steps == 0) {
     o.max_steps = DEFAULT_MAX_STEPS;
   }
   if (o.block == 0) {
-    o.block = n;
+    o.block = lead;
   }
   if ((o.group_count == 0) != (o.groups == NULL)) {
     return MYB_E_DOMAIN;
   }
   size_t covered = 0;
   for (size_t k = 0; k < o.group_count; ++k) {
-    if (o.groups[k] == 0 || o.groups[k] % o.block != 0 || o.groups[k] > n - covered) {
+    if (o.groups[k] == 0 || o.groups[k] % o.block != 0 || o.groups[k] > lead - covered) {
       return MYB_E_DOMAIN;
     }
     covered += o.groups[k];
   }
-  if (o.group_count != 0 && covered != n) {
+  if (o.group_count != 0 && covered != lead) {
     return MYB_E_DOMAIN;
   }
   const myb_allocator a = myb_internal_allocator(allocator);
@@ -134,7 +138,7 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
     return status;
   }
   myb_ias15* s = block;
-  *s = (myb_ias15){.allocator = a, .n = n, .options = o};
+  *s = (myb_ias15){.allocator = a, .n = n, .options = o, .lead = lead};
   s->options.groups = NULL; /* the caller's array is not kept */
   s->eta = myb_exp(myb_log(5040.0 * o.epsilon) / 7.0);
   s->group_count = o.group_count != 0 ? o.group_count : 1;
@@ -143,7 +147,7 @@ myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
     goto fail;
   }
   s->group_end = block;
-  s->group_end[0] = n;
+  s->group_end[0] = lead;
   covered = 0;
   for (size_t k = 0; k < o.group_count; ++k) {
     covered += o.groups[k];
@@ -186,6 +190,26 @@ fail:
   return status;
 }
 
+myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
+                            const myb_allocator* allocator, myb_ias15** integrator) {
+  MYB_CHECK(options != NULL && integrator != NULL);
+  if (n == 0) {
+    return MYB_E_DOMAIN;
+  }
+  return create(n, 0, options, allocator, integrator);
+}
+
+myb_status myb_internal_ias15_create_followed(size_t n, size_t followers,
+                                              const myb_ias15_options* options,
+                                              const myb_allocator* allocator,
+                                              myb_ias15** integrator) {
+  MYB_CHECK(options != NULL && integrator != NULL);
+  if (n == 0 || followers >= n) {
+    return MYB_E_DOMAIN;
+  }
+  return create(n, followers, options, allocator, integrator);
+}
+
 void myb_ias15_destroy(myb_ias15* integrator) {
   if (integrator == NULL) {
     return;
@@ -214,7 +238,7 @@ static double automatic_step(const myb_ias15* s) {
   const size_t n = s->n;
   const size_t m = s->options.block;
   double tau = (double)INFINITY;
-  for (size_t first = 0; first < n; first += m) {
+  for (size_t first = 0; first < s->lead; first += m) {
     const double x = block_norm(s->y + first, m);
     const double v = block_norm(s->y + n + first, m);
     const double a = block_norm(s->a0 + first, m);
@@ -350,7 +374,7 @@ static myb_status sweeps(myb_ias15* s, double dt) {
         for (int k = 0; k <= j; ++k) {
           b[k] += myb_ias15_c[k][j] * delta;
         }
-        if (node == ORDER) {
+        if (node == ORDER && i < s->lead) {
           change = larger_of(change, fabs(delta));
           scale = larger_of(scale, fabs(s->a_sub[i]));
           if (i + 1 == s->group_end[group]) {

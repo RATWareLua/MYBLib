@@ -159,8 +159,13 @@ MYB_API MYB_NODISCARD myb_status myb_indirect_sample(const myb_indirect_problem*
  * iteration with the damped BFGS matrix of M. J. D. Powell (1978): Newton's step for the
  * variables that are free, those that the gradient pushes against a bound stay on it, and
  * the step is halved along its projection into the box until the function falls enough
- * (D. P. Bertsekas, SIAM J. Control Optim. 20, 221, 1982). The unknowns and the functions
- * should be of the order of one. */
+ * (D. P. Bertsekas, SIAM J. Control Optim. 20, 221, 1982) — or, where the fall is below the
+ * resolution of the values (1e-12 of them; near a solution with a large weight), until the
+ * slope along the step has risen enough and not overshot (the approximate Wolfe conditions of
+ * W. W. Hager, H. Zhang, SIAM J. Optim. 16, 170, 2005). Without the latter the criticality
+ * stopped at 2e-6 .. 2e-4 on the chains of test_chain kept far from Venus, the multipliers
+ * drifting; with it they converge. The unknowns and the functions should be of the order of
+ * one. */
 
 enum { MYB_NLP_MAX_UNKNOWNS = 256, MYB_NLP_MAX_CONSTRAINTS = 256 };
 
@@ -314,13 +319,18 @@ MYB_API MYB_NODISCARD myb_status myb_sims_flanagan_solve(const myb_sims_flanagan
  *   the time of the departure t_0 (s), the time of flight of each leg T_k (s),
  *   the excess velocity at the departure (m/s), then at each body flown by the excess velocity
  *   coming in and going out, then the excess velocity at the arrival — 2 legs vectors of 3,
- *   the throttles of the segments of each leg in turn, 3 per segment (as Sims and Flanagan).
+ *   the throttles of the segments of each leg in turn, 3 per segment (as Sims and Flanagan),
+ *   then for each powered flyby (below) in the order of the bodies its r_p (m) and dv (m/s).
  * The times lie between bounds (equal bounds hold one fixed). The constraints: the mismatch of
- * each leg (6: m, m/s), the excess speed of each flyby (m/s), then the inequalities: the turn
- * of each flyby, the excess speed at the departure and at the arrival less its limit (m/s).
- * What is minimised is the propellant (kg). Inside, the units are those of Sims and Flanagan:
- * the distance of the first body from the centre at the earliest departure, the time
- * sqrt(length^3 / mu), the first mass. The derivatives are analytic but for the acceleration
+ * each leg (6: m, m/s), for each flyby the excess speed kept (m/s; powered: the turn, rad),
+ * then the inequalities: for each flyby the turn (powered: + the difference of the speeds at
+ * the periapsis less dv, m/s), the excess speed at the departure and at the arrival less its
+ * limit (m/s), then for each powered flyby - the difference less dv (m/s). A chain without a
+ * powered flyby is what it was before they came, bit for bit. What is minimised is the
+ * propellant (kg), that of the impulses with it. Inside, the units are those of Sims and
+ * Flanagan: the distance of the first body from the centre at the earliest departure, the time
+ * sqrt(length^3 / mu), the first mass; r_p in units of the least distance allowed, dv in the
+ * speed of the solver. The derivatives are analytic but for the acceleration
  * of a body, taken from its provider's velocity by central differences (a ten-thousandth of
  * the unit of time), and they go through the time of every impulse: a segment that grows
  * longer moves its impulses, its end and the bodies, the impulses grow with it, and in a field
@@ -336,7 +346,10 @@ MYB_API MYB_NODISCARD myb_status myb_sims_flanagan_solve(const myb_sims_flanagan
  * crawls; so the first pass stops at 1e-6 after 10 updates of 300 steps, and the second takes
  * a size and two angles from where it left, with the directions right. Both start with the
  * weight 1e4 (myb_nlp_options.weight): with the weight chosen from the first point (10) the
- * propellant pulled the first steps far from the constraints.
+ * propellant pulled the first steps far from the constraints. The first pass holds the
+ * impulses of the powered flybys at 0 (whatever x gives), the second frees them: from a guess
+ * far from the bodies an impulse free in the first pass was spent until no mass was left, the
+ * acceleration of the engine growing as the mass went.
  *
  * Measured (test_chain): the Earth, Venus and Mars on circles, Mars in a plane 1.85 degrees
  * off, 1 N on 1000 kg at 30 km/s, 2.5 km/s from the launcher, a rendezvous with Mars, 10
@@ -347,11 +360,51 @@ MYB_API MYB_NODISCARD myb_status myb_sims_flanagan_solve(const myb_sims_flanagan
  * the excess speeds at Venus 3e-6 m/s apart, turned by 1.2112 rad of the 1.2863 allowed (7201
  * km from the centre), the launcher's 2500 m/s used to 7e-8 m/s; 10 + 5 updates of the
  * multipliers, 14 000 evaluations. The same chain kept 10^6 km from Venus (a turn of 0.018 rad
- * at most) leaves 731.350 kg (9386 m/s) from the guess and from the chain by Venus alike: the
- * flyby saves 103 kg. Found on the way: the direct transfer in these windows — Mars 59 degrees
+ * at most) leaves 731.350 kg (9386 m/s) from the guess and from the chain by Venus alike (to
+ * 1.3e-7 kg, both converged in 10 updates): the flyby saves 103 kg. Powered flybys: the
+ * impulse and the turn against the closed form at 50 digits 2.2e-16, their derivatives too
+ * (and against differences 3e-10), at excess speeds 3e-6 m/s apart as well; the derivatives
+ * of the chain by r_p and dv against differences 1.4e-8. By Venus with an impulse of 3000
+ * m/s the electric engine does better everywhere: dv is driven to 0 and the chain is the
+ * unpowered one (to 4e-7 kg). With 0.25 N in place of 1 N the unpowered chain does not meet
+ * Mars (the flights at their longest, 190 and 240 days, the constraints 0.025 au off); powered,
+ * it does with an impulse of 380.797 m/s at 26 530 km from Venus and 587.501 kg left, from the
+ * guess and from where the unpowered chain stopped alike (6e-7 kg); at 0.2 N 469.385 kg with
+ * 1146.879 m/s. Down to 0.28 N the unpowered chain converges, and there the impulse of 3000
+ * m/s does not pay; one of 30 000 m/s, the electric engine's own, pays at 0.3 N by 0.03 ..
+ * 0.05 kg (600 m/s, two local optima from two starts), one of 300 000 m/s at 1 N by 0.100 kg
+ * (41.7 m/s). Found on the way, too: the direct transfer in these windows — Mars 59 degrees
  * ahead after 390 days — is hard for the solver: coplanar it gave 712.8 kg at the middle of
  * the windows and 763.7 kg with the dates free (2.7 km/s more than by Venus), with Mars off
  * the plane it ended in a local optimum that spends four fifths of the mass. */
+
+/* A powered flyby (myb_chain.impulse_exhaust of its body > 0): the hyperbola that comes in with
+ * the excess speed |w^-| and the one that goes out with |w^+| share their periapsis r_p, where an
+ * impulse along the motion takes the speed of the one to that of the other (the Oberth effect
+ * makes it smaller there than anywhere else on the way):
+ *   dv = | sqrt(|w^+|^2 + 2 gm / r_p) - sqrt(|w^-|^2 + 2 gm / r_p) |,
+ * and each hyperbola turns the excess velocity by its half, so that the turn is
+ *   delta = asin(1 / e^-) + asin(1 / e^+),   e = 1 + r_p |w|^2 / gm
+ * (the unpowered flyby is the case |w^-| = |w^+|: sin(delta / 2) = 1 / e). The impulse is
+ * given by an engine of its own effective exhaust velocity, and the mass falls by the rocket
+ * equation, m -> m exp(-dv / c). Each powered flyby brings two unknowns, r_p (m), no smaller
+ * than the least distance allowed, and dv (m/s), no smaller than 0, and the excess speeds
+ * coming in and going out are free to differ; its conditions are the turn — the angle between
+ * w^- and w^+ (rad) is delta, an equality in place of the unpowered one on the speeds — and,
+ * since the solver needs no corner where dv = 0,
+ *   +-(sqrt(|w^+|^2 + 2 gm / r_p) - sqrt(|w^-|^2 + 2 gm / r_p)) - dv <= 0   (m/s),
+ * which the least propellant holds with equality on one side: dv is the impulse, and where an
+ * impulse does not pay the solver drives it to 0, onto its bound.
+ *
+ * myb_chain_flyby gives dv and delta for given excess speeds and r_p (any consistent units),
+ * with their derivatives (partials: d dv / d(v_in, v_out, periapsis), then d delta / d(v_in,
+ * v_out, periapsis); the derivative of dv at v_in = v_out is that of the side v_out > v_in).
+ * The difference of the speeds is taken as (v_out^2 - v_in^2) / (sum of the speeds at the
+ * periapsis), which keeps its relative accuracy as v_out tends to v_in. Errors: MYB_E_DOMAIN
+ * (a value not positive or not finite). Any output may be NULL. */
+MYB_API MYB_NODISCARD myb_status myb_chain_flyby(double gm, double v_in, double v_out,
+                                                 double periapsis, double* dv, double* turn,
+                                                 double partials[6]);
 
 enum { MYB_CHAIN_MAX_LEGS = 8 };
 
@@ -380,46 +433,58 @@ typedef struct myb_chain {
   double flight[MYB_CHAIN_MAX_LEGS][2]; /* the shortest and the longest flight of each leg (s) */
   double launch;          /* the largest excess speed at the departure (m/s), >= 0 */
   double arrival;         /* the largest excess speed at the arrival (m/s); 0: a rendezvous */
+  double impulse_exhaust[MYB_CHAIN_MAX_LEGS + 1]; /* m/s, of each body: > 0 makes its flyby
+                             powered, with an impulse at the periapsis by an engine of this
+                             effective exhaust velocity; 0 (the default): unpowered. Only the
+                             bodies flown by, 1 .. legs - 1, may have one */
 } myb_chain;
 
-/* The number of the unknowns (7 legs + 1 + 3 segments in all) and of the constraints (6 legs +
- * legs - 1 equalities, legs + 1 inequalities). Errors: MYB_E_DOMAIN (sizes, bounds, values that
- * are not finite or negative, a body without a provider, a body flown by without gm or least
- * distance, more than MYB_NLP_MAX_UNKNOWNS unknowns or MYB_NLP_MAX_CONSTRAINTS constraints in
- * the first pass of the solver: 7 legs + 1 + 4 segments and 8 legs + segments). Any output may
- * be NULL. */
+/* The number of the unknowns (7 legs + 1 + 3 segments in all + 2 powered flybys) and of the
+ * constraints (6 legs + legs - 1 equalities, legs + 1 + powered flybys inequalities). Errors:
+ * MYB_E_DOMAIN (sizes, bounds, values that are not finite or negative, a body without a
+ * provider, a body flown by without gm or least distance, an impulse at the departure or the
+ * arrival, more than MYB_NLP_MAX_UNKNOWNS unknowns or MYB_NLP_MAX_CONSTRAINTS constraints in
+ * the first pass of the solver: 7 legs + 1 + 4 segments + 2 powered and 8 legs + segments +
+ * powered). Any output may be NULL. */
 MYB_API MYB_NODISCARD myb_status myb_chain_size(const myb_chain* chain, size_t* unknowns,
                                                 size_t* equalities, size_t* inequalities);
 
 /* The first guess built in: the times in the middle of their bounds, the excess velocities
  * those of the conics of Lambert (zero revolutions, in the sense of the motion of the first
  * body) between the bodies at those times, cut down to `launch` and `arrival` at the ends, the
- * engine off. x: myb_chain_size unknowns. Errors: those of myb_chain_size, of the providers
- * and of the problem of Lambert. */
+ * engine off; at a powered flyby the r_p whose two hyperbolas turn the excess velocities of the
+ * conics into each other (the least allowed when they cannot) and the dv there. x:
+ * myb_chain_size unknowns. Errors: those of myb_chain_size, of the providers and of the problem
+ * of Lambert. */
 MYB_API MYB_NODISCARD myb_status myb_chain_guess(const myb_chain* chain, double* x);
 
 /* The propellant spent (kg; may be NULL) and the constraints (may be NULL) at x, with, when
  * not NULL, the gradient of the propellant (unknowns values) and the Jacobian of the
  * constraints (constraints x unknowns, row-major), by the unknowns in their units. Where a
- * throttle is zero the derivative of its size is taken as zero. allocator may be NULL.
+ * throttle is zero the derivative of its size is taken as zero (and of the turn of a powered
+ * flyby by the excess velocities where they are parallel). allocator may be NULL.
  * Errors: those of myb_chain_size, MYB_E_DOMAIN (a throttle longer than 1 + 1e-9, times out of
- * the order of the legs, more propellant than mass, a flyby without excess speed), MYB_E_NOMEM,
- * those of the providers, the propagation and the model. */
+ * the order of the legs, more propellant than mass, a flyby without excess speed, a powered
+ * flyby with r_p not positive or dv negative), MYB_E_NOMEM, those of the providers, the
+ * propagation and the model. */
 MYB_API MYB_NODISCARD myb_status myb_chain_evaluate(const myb_chain* chain, const double* x,
                                                     double* propellant, double* constraints,
                                                     double* gradient, double* jacobian,
                                                     const myb_allocator* allocator);
 
 typedef struct myb_chain_result {
-  double mass[MYB_CHAIN_MAX_LEGS + 1];      /* kg at each body, mass0 at the departure */
+  double mass[MYB_CHAIN_MAX_LEGS + 1];      /* kg at each body (after the impulse of a powered
+                                               flyby), mass0 at the departure */
   double excess[MYB_CHAIN_MAX_LEGS + 1][2]; /* m/s: the excess speed at each body coming in and
                                                going out (zero where there is none) */
   double turn[MYB_CHAIN_MAX_LEGS + 1];      /* rad: of the excess velocity at each flyby */
   double periapsis[MYB_CHAIN_MAX_LEGS + 1]; /* m: the distance of the hyperbola of that turn
-                                               (zero at the ends, HUGE_VAL for no turn) */
+                                               (zero at the ends, HUGE_VAL for no turn); of a
+                                               powered flyby its unknown r_p */
   double mismatch[MYB_CHAIN_MAX_LEGS][6];   /* left at the meeting point of each leg (m, m/s) */
   myb_nlp_result first; /* the first pass, the throttles as vectors */
   myb_nlp_result nlp;   /* the second, a size and two angles each */
+  double impulse[MYB_CHAIN_MAX_LEGS + 1];   /* m/s: dv of each powered flyby (zero elsewhere) */
 } myb_chain_result;
 
 /* The chain with the least propellant. x: the first guess on entry — all zeros ask for that of

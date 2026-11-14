@@ -589,7 +589,12 @@ void myb_cr3bp_torus_state(const myb_cr3bp_torus* torus, double angle, double y[
  * inverse iteration on A and taken to the Fourier coefficients of its six components, has
  * the lowest mean frequency |k|, weighted by the energy of the harmonics). A resolved circle
  * off the unit circle with no real member on its side is no spectrum of a torus of the
- * problem (MYB_E_NOCONV). */
+ * problem (MYB_E_NOCONV).
+ *
+ * The normal pair of an elliptic torus (normal_pair below) comes after all of that and
+ * changes none of it: the candidates are the resolved elliptic eigenvalues in the upper half
+ * plane, each eigenvector found by complex inverse iteration on A (num/linalg_internal.h), the
+ * smoothest kept. */
 
 static const double default_tolerance = 1e-4; /* on the unit circle */
 
@@ -600,6 +605,8 @@ typedef struct spectrum_work {
   double* work;        /* 6 n x 6 n: the copy the eigenvalues destroy, then inverse iteration */
   double* trial;       /* 6 n: a candidate eigenvector (and the reflectors of the QR iteration) */
   double* image;       /* 6 n: A v */
+  double* complex_lu;  /* 2 (6 n)^2 + 6 n: complex inverse iteration */
+  double* candidate;   /* 2 x 6 n: a complex eigenvector, real and imaginary parts */
   unsigned char* kind; /* 6 n: the classes of the eigenvalues */
   size_t* parent;      /* 6 n: their sets */
   size_t* size;        /* 6 n */
@@ -757,6 +764,130 @@ static void classify(myb_cr3bp_torus_spectrum* s, size_t points, double rho, dou
   }
 }
 
+/* The root mean square frequency |k| of a complex function of the angle given at the n points
+ * (six components each, re + i im): its Fourier coefficients c_k for k = -(n - 1) / 2 ..
+ * (n - 1) / 2, weighted by their energy |c_k|^2. */
+static double complex_frequency(size_t n, const double* re, const double* im) {
+  double c[MAX_POINTS];
+  double s[MAX_POINTS];
+  for (size_t j = 0; j < n; ++j) {
+    c[j] = myb_cos(two_pi * (double)j / (double)n);
+    s[j] = myb_sin(two_pi * (double)j / (double)n);
+  }
+  const size_t top = (n - 1) / 2;
+  double total = 0.0;
+  double weighted = 0.0;
+  for (size_t q = 0; q <= 2 * top; ++q) {
+    const size_t wrapped = q >= top ? q - top : n - (top - q); /* k mod n */
+    const double k = (double)q - (double)top;
+    double energy = 0.0;
+    for (size_t a = 0; a < 6; ++a) {
+      double sum_re = 0.0;
+      double sum_im = 0.0;
+      for (size_t j = 0; j < n; ++j) {
+        const size_t at = (wrapped * j) % n; /* exp(-i k theta_j) */
+        sum_re += re[6 * j + a] * c[at] + im[6 * j + a] * s[at];
+        sum_im += im[6 * j + a] * c[at] - re[6 * j + a] * s[at];
+      }
+      energy += sum_re * sum_re + sum_im * sum_im;
+    }
+    total += energy;
+    weighted += k * k * energy;
+  }
+  return total > 0.0 ? sqrt(weighted / total) : 0.0;
+}
+
+/* The normal pair of an elliptic torus (myb/cr3bp.h): of the resolved elliptic eigenvalues in
+ * the upper half plane — the members of the two circles exp(i (+-sigma - k rho)) — the one
+ * whose eigenvector, by complex inverse iteration on A, has the least root mean square
+ * frequency; its residual, and the eigenvector made unit in the mean square over the points
+ * and turned so that the largest component of its mean over the points is real and
+ * positive. Nothing when no eigenvalue is elliptic. */
+static void normal_pair(size_t n, const spectrum_work* w, myb_cr3bp_torus_spectrum* out) {
+  const size_t m = 6 * n;
+  out->normal_rotation = 0.0;
+  out->normal_eigenvalue[0] = out->normal_eigenvalue[1] = 0.0;
+  out->normal_frequency = 0.0;
+  out->normal_residual = 0.0;
+  memset(out->normal_re, 0, sizeof out->normal_re);
+  memset(out->normal_im, 0, sizeof out->normal_im);
+  double* vr = w->candidate;
+  double* vi = w->candidate + m;
+  double lowest = HUGE_VAL;
+  size_t pick = m;
+  for (size_t e = 0; e < m; ++e) {
+    if (w->kind[e] != KIND_ON || out->im[e] < 0.0) {
+      continue;
+    }
+    if (myb_internal_eigenvector_complex(m, w->map, out->re[e], out->im[e], vr, vi,
+                                         w->complex_lu) != MYB_OK) {
+      continue; /* not an eigenvalue inverse iteration can resolve */
+    }
+    const double frequency = complex_frequency(n, vr, vi);
+    if (frequency < lowest) {
+      lowest = frequency;
+      pick = e;
+      memcpy(out->normal_re, vr, m * sizeof *vr);
+      memcpy(out->normal_im, vi, m * sizeof *vi);
+    }
+  }
+  if (pick == m) {
+    return;
+  }
+  double* pr = out->normal_re;
+  double* pi = out->normal_im;
+  const double lr = out->re[pick];
+  const double li = out->im[pick];
+  /* unit in the mean square over the points, the largest component of the mean real */
+  double sum = 0.0;
+  for (size_t k = 0; k < m; ++k) {
+    sum += pr[k] * pr[k] + pi[k] * pi[k];
+  }
+  double mean_re[6] = {0.0};
+  double mean_im[6] = {0.0};
+  for (size_t j = 0; j < n; ++j) {
+    for (size_t a = 0; a < 6; ++a) {
+      mean_re[a] += pr[6 * j + a];
+      mean_im[a] += pi[6 * j + a];
+    }
+  }
+  size_t big = 0;
+  for (size_t a = 1; a < 6; ++a) {
+    if (myb_hypot(mean_re[a], mean_im[a]) > myb_hypot(mean_re[big], mean_im[big])) {
+      big = a;
+    }
+  }
+  const double modulus = myb_hypot(mean_re[big], mean_im[big]);
+  const double scale = sqrt((double)n / sum);
+  const double cr = modulus > 0.0 ? scale * mean_re[big] / modulus : scale;
+  const double ci = modulus > 0.0 ? -scale * mean_im[big] / modulus : 0.0;
+  for (size_t k = 0; k < m; ++k) {
+    const double r = pr[k] * cr - pi[k] * ci;
+    pi[k] = pr[k] * ci + pi[k] * cr;
+    pr[k] = r;
+  }
+  /* |A psi - lambda psi| / (|lambda| |psi|) */
+  double miss = 0.0;
+  double size = 0.0;
+  for (size_t r = 0; r < m; ++r) {
+    double ar = 0.0;
+    double ai = 0.0;
+    for (size_t c = 0; c < m; ++c) {
+      ar += w->map[r * m + c] * pr[c];
+      ai += w->map[r * m + c] * pi[c];
+    }
+    const double dr = ar - (lr * pr[r] - li * pi[r]);
+    const double di = ai - (li * pr[r] + lr * pi[r]);
+    miss += dr * dr + di * di;
+    size += pr[r] * pr[r] + pi[r] * pi[r];
+  }
+  out->normal_rotation = myb_atan2(li, lr);
+  out->normal_eigenvalue[0] = lr;
+  out->normal_eigenvalue[1] = li;
+  out->normal_frequency = lowest;
+  out->normal_residual = sqrt(miss / size) / myb_hypot(lr, li);
+}
+
 static myb_status spectrum_compute(myb_variational* var, const myb_cr3bp_torus* torus, double near,
                                    const spectrum_work* w, myb_cr3bp_torus_spectrum* out) {
   const size_t n = torus->points;
@@ -864,6 +995,7 @@ static myb_status spectrum_compute(myb_variational* var, const myb_cr3bp_torus* 
   }
   const double big = fabs(out->unstable);
   out->index = big > 0.0 ? 0.5 * (big + 1.0 / big) : 1.0;
+  normal_pair(n, w, out);
   return MYB_OK;
 }
 
@@ -888,8 +1020,11 @@ myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus, do
   void* block = NULL;
   const myb_allocator a = myb_internal_allocator(NULL);
   myb_status st = flow_open(&context, &model, &var);
+  const size_t complex_lu = 2 * m * m + m;
   if (st == MYB_OK) {
-    st = myb_internal_alloc_array(&a, n * n + 36 * n + 2 * m * m + 2 * m + indices + (m + 7) / 8,
+    st = myb_internal_alloc_array(&a,
+                                  n * n + 36 * n + 2 * m * m + 2 * m + complex_lu + 2 * m +
+                                      indices + (m + 7) / 8,
                                   sizeof(double), &block);
   }
   if (st == MYB_OK) {
@@ -900,9 +1035,11 @@ myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus, do
     w.work = w.map + m * m;
     w.trial = w.work + m * m;
     w.image = w.trial + m;
-    w.parent = (size_t*)(void*)(w.image + m);
+    w.complex_lu = w.image + m;
+    w.candidate = w.complex_lu + complex_lu;
+    w.parent = (size_t*)(void*)(w.candidate + 2 * m);
     w.size = w.parent + m;
-    w.kind = (unsigned char*)(w.image + m + indices);
+    w.kind = (unsigned char*)(w.candidate + 2 * m + indices);
     st = spectrum_compute(var, torus, near, &w, spectrum);
   }
   myb_internal_release(&a, block);
