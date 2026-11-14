@@ -68,7 +68,10 @@ Header [`myb/ck.h`](../../include/myb/ck.h):
   tie half-way across a gap: types 1–3 take the later record, 4 and 5 the earlier, 6 the earlier
   unless the gap is within the tolerance of the next mini-segment.
 - SCLK type 1: fields with moduli and offsets, partitions, a table of (ticks, time, rate);
-  ticks ↔ time on the clock's scale (1 = TDB, 2 = TT); strings ↔ ticks.
+  ticks ↔ time on the clock's scale (1 = TDB, 2 = TT); strings ↔ ticks. `myb_sclk_decode`
+  prints every field as an integer at the width of its largest value (a field of more than 18
+  digits is `MYB_E_RANGE`; the `%.0f` of msvcrt, used before phase 21, gives 17 significant
+  digits); a NULL text of size 0 asks for the length alone (`MYB_E_OVERFLOW`).
 - `myb_orientation_ck`: the argument is the instant on the clock's scale (register the provider
   with that scale in a graph of frames).
 - CK writer: types 1 and 3 from quaternions (made unit) and optional rates; type 2 intervals of

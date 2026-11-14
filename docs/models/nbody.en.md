@@ -64,7 +64,8 @@ Header [`myb/pool.h`](../../include/myb/pool.h): `myb_pool_create`, `myb_pool_de
 - Threads (`myb_nbody_set_pool`; NULL — the calling thread only): every output element is
   computed by one thread with the same operations in the same order, so the bits are identical
   for any number of threads; the per-receiver path takes four receivers per vector block,
-  without FMA. No memory is allocated by an evaluation of exact sums.
+  without FMA. No memory is allocated by an evaluation of exact sums. The FMM runs on the same
+  pool from 2048 bodies on, with the bits of its evaluation without a pool.
 - The approximation: order p (0 — exact sums, or 1 … `MYB_NBODY_FMM_MAX_ORDER` = 20) and the
   opening angle θ of the criterion r_A + r_B < θ |z_A − z_B|.
 
@@ -134,6 +135,8 @@ bodies is 10 to 50 times more):
 - Order 0 gives back the exact bits; the same input gives the same bits; receivers with an
   excluded source keep their exact sums to the bit; test bodies, the 1PN terms and a
   `myb_system` of 2000 bodies on top of p 8, θ 0.5 stay within the test bound 4·10⁻⁵.
+- Over threads (`test_fmm_threads`, from 2048 bodies): the same bits as without a pool for any
+  number of threads.
 
 ## Cost
 
@@ -145,6 +148,19 @@ bodies is 10 to 50 times more):
   body for 10⁴ bodies (cube, Plummer) against 55–65 µs for the vectorised direct sum; 17 and
   25 µs for 10⁵ against about 600 µs. From 10⁴ to 10⁵ bodies the time per body grows 1.6–1.7
   times (the direct sum's 10 times); below a few thousand bodies the gain is 2 to 3 times.
+- FMM over threads (`test_fmm_threads`, p 8, θ 0.5, the same i5-9300H of four cores shared with
+  six other jobs, three runs), µs per body:
+
+  | | serial | 2 threads | 4 threads | direct sum, 4 threads |
+  |---|---|---|---|---|
+  | cube, 10⁴ | 10.6–15.3 | 7.5–9.9 | 5.4–6.7 | 20–28 |
+  | cube, 10⁵ | 21–24 | 12–17 | 9.4–11 | 200–280 (scaled as N²) |
+  | Plummer, 10⁴ | 18–22 | 16–18 | 9.5–14 | 21–24 |
+  | Plummer, 10⁵ | 30–46 | 21–35 | 15–21 | 210–240 (scaled) |
+
+  0.9–1.8 times faster on two threads, 1.3–2.5 on four (about 2 at the median), for 5000 bodies
+  still 1.5 and 2; the FMM on four threads is 1.7–4 times cheaper than the direct sum on four
+  threads at 10⁴ bodies, 10–25 times at 10⁵.
 
 ## Limitations
 
@@ -158,12 +174,14 @@ bodies is 10 to 50 times more):
 - A system is used by one thread at a time; a pool runs one job at a time, and objects sharing a
   pool must not be used from several threads concurrently (a violation terminates the process).
 - The FMM is approximate: the force is not the gradient of one potential and jumps where the
-  walk changes, so energy is not conserved exactly. Its evaluation is serial (the pool is not
-  used) and allocates when the tree outgrows its memory. With the 1PN terms the potentials U_i
-  and the 1PN terms stay direct O(N²) sums; only the Newtonian a_j of the sources come from the
-  FMM. The Wisdom–Holman integrators refuse a system with an approximation.
+  walk changes, so energy is not conserved exactly. Below 2048 bodies its evaluation is serial;
+  from 2048 on it runs on the pool, each pair across a cut of the near field computed by both
+  sides — on an idle machine that bounds the gain of four threads near 2.6 for 10⁴ bodies and
+  3.2 for 10⁵. It allocates when the tree outgrows its memory, and with threads for the lists of
+  the walk and the scratch of each thread (once, kept). With the 1PN terms the potentials U_i and
+  the 1PN terms stay direct O(N²) sums; only the Newtonian a_j of the sources come from the FMM.
+  The Wisdom–Holman integrators refuse a system with an approximation.
 - No Barnes–Hut tree (its 10⁻³ … 10⁻⁴ force error kept it out of the library).
-- Phase 21 adds: the FMM over threads.
 
 ## Data
 

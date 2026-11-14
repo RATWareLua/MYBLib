@@ -12,8 +12,9 @@ stays below round-off, so the energy error of a conservative system grows like a
 (Brouwer's law). It is the default integrator of `myb_orbit`, of the estimators and of the
 [system of bodies](system-of-bodies.en.md). Around the published method the library adds a
 dense output from the polynomial of the step, events, blocks and groups of coordinates judged
-each by itself, withdrawing and retaking a step at a break of the force (the edge of a shadow),
-and a restart after an impulse that inherits the step.
+each by itself, withdrawing and retaking a step at a break of the force (the edge of a shadow)
+or aiming the step at the break predicted, a restart after an impulse that inherits the step,
+and a second timescale, one derivative up, for accelerations that pass through zero (contact).
 
 ## Source
 
@@ -26,6 +27,10 @@ and a restart after an impulse that inherits the step.
   minimum of τ over blocks; the figure-eight stalled on it and the paper's norm was restored.
 - The prediction of the next step: the polynomial of the step re-expanded, plus the last
   correction scaled by q^(k+1).
+- `MYB_IAS15_TIMESCALE_JERK`: the larger of τ and τ₁² = 2|a′|² / (|a″|² + |a′||a‴|) — the same
+  expression one derivative up, the period / 2π of a sinusoid at every phase as τ is, which does
+  not vanish where a does; with it the floor of the step at the rounding of a balance and the
+  rejection of sweeps that stall are the library's own (header `myb/integ.h`).
 - The Gauss–Radau nodes and the C, D, R tables are computed by the library in MPFR at 512 bits;
   no third-party code or data.
 
@@ -37,14 +42,17 @@ Header [`myb/integ.h`](../../include/myb/integ.h):
   `myb_ias15_integrate`, `myb_ias15_time`, `myb_ias15_state`, `myb_ias15_statistics`,
   `myb_ias15_dense`, `myb_ias15_locate`;
 - structures `myb_ias15_options` (`epsilon`, `h_initial`, `h_max`, `h_min`, `max_steps`,
-  `block`, `groups`, `group_count`), `myb_ias15_stats` (`accepted`, `rejected`, `evaluations`,
-  `iterations`, `unconverged`);
+  `block`, `groups`, `group_count`, `timescale`), `myb_ias15_stats` (`accepted`, `rejected`,
+  `evaluations`, `iterations`, `unconverged`);
+- the enumeration `myb_ias15_timescale` (`MYB_IAS15_TIMESCALE_ACCELERATION`, the default;
+  `MYB_IAS15_TIMESCALE_JERK`);
 - callbacks `myb_accel_function`, `myb_event_function`.
 
 Withdrawing a step at a break and the restart after an impulse are reached through
-`myb_orbit` ([`myb/orbit.h`](../../include/myb/orbit.h): `myb_orbit_kick`, `myb_orbit_breaks`)
-and the breaks of the force model (`myb_force_model_add_break` of
-[`myb/model.h`](../../include/myb/model.h)); `myb_system_integrator` of
+`myb_orbit` ([`myb/orbit.h`](../../include/myb/orbit.h): `myb_orbit_kick`, `myb_orbit_breaks`,
+`myb_orbit_options.timescale`) and the breaks of the force model (`myb_force_model_add_break`
+of [`myb/model.h`](../../include/myb/model.h), the scheme `myb_force_model_set_break_scheme`:
+`MYB_BREAKS_RETAKE` or `MYB_BREAKS_PREDICT`); `myb_system_integrator` of
 [`myb/system.h`](../../include/myb/system.h) creates an IAS15 with the groups of a system.
 
 ## Inputs and outputs
@@ -79,7 +87,18 @@ and the breaks of the force model (`myb_force_model_add_break` of
   root, with the polynomial of the withdrawn step on the part kept as the prediction (the second
   attempt converges in a sweep or two); the step after the edge starts from the same polynomial
   continued past it. The integrator is not restarted: the state, Φ and S continue. The sign of
-  every function is remembered, so an edge is not found twice.
+  every function is remembered, so an edge is not found twice. With `MYB_BREAKS_PREDICT` the
+  breaks are examined before the step on the polynomial of the last step carried over it (on the
+  Taylor polynomial after a start); a predicted sign change becomes the end of the step, which,
+  once taken, is reshaped warm until the root of its own polynomial is at its end to 2⁻³⁰ of the
+  step; the step after a break is planned at most a quarter of the one before it, and the step
+  after any aimed one at most 4 times it.
+- Timescale: `MYB_IAS15_TIMESCALE_JERK` takes the larger of τ and τ₁; with it the step is not
+  shortened below the time over which a moves a block by less than 4 ulp of its place,
+  √(2⁻⁴⁹ |x| / |a|) (a ball resting on the Moon: 10 ms), and a step whose sweeps stop correcting
+  far above round-off (a relative change of b6 above 10⁻¹²) is rejected. Under every timescale a
+  step whose sweeps diverge (a state at a node not finite) is rejected and tried four times
+  shorter, without calling the acceleration with that state.
 - Restart after an impulse (`myb_orbit_kick`): the velocity jumps at the time reached, the
   integrator starts again with the step inherited from the interrupted integration (one that
   is too long is rejected as usual); the variational equations continue from the same values.
@@ -90,12 +109,16 @@ and the breaks of the force model (`myb_force_model_add_break` of
 
 - Second-order systems whose acceleration does not vanish over a whole group at once. τ is
   relative to the norm of a and shrinks to zero where the acceleration of the whole state (of a
-  whole group) vanishes: a one-dimensional oscillator stalls with `MYB_E_STEP_MIN` — use
-  [DOP853](classical-integrators.en.md) there. A system of gravitating bodies does not get
-  there.
-- Contact: a contact that holds a body against gravity passes the acceleration through zero at
-  every touch, and a ball dropped on a plane stops IAS15 with `MYB_E_STEP_MIN` within its first
-  contact; contact problems go with DOP853 ([contact and landing](contact-landing.en.md)).
+  whole group) vanishes: a one-dimensional oscillator stalls with `MYB_E_STEP_MIN` under the
+  default timescale — use `MYB_IAS15_TIMESCALE_JERK` or [DOP853](classical-integrators.en.md)
+  there. A system of gravitating bodies does not get there. Where a and a′ vanish together (an
+  acceleration that leaves zero as a power of the time) the steps still shrink towards that
+  instant: end them there with a break.
+- Contact: a contact that holds a body against gravity passes the acceleration through zero
+  twice in every bounce, and under the default timescale a ball dropped on a plane stops IAS15
+  with `MYB_E_STEP_MIN` within its first contact. It goes through in `myb_orbit` with
+  `MYB_IAS15_TIMESCALE_JERK`, the breaks at the touches and some other force during the contact
+  ([contact and landing](contact-landing.en.md)); a system with contacts goes with DOP853.
 - Close approaches of point masses are integrated through (the Pythagorean problem, closest
   approach 4.1·10⁻⁴); the contact of two spheres in the system is made the end of a step
   ([encounters in the system](system-encounters.en.md)).
@@ -144,8 +167,19 @@ Breaks and impulses — [`test_events`](../../tests/unit/test_events.c),
 | 12 000 km orbit, 0.2 m²/kg, two days, 54 edges of the shadow | spread of the final position over ε = 10⁻⁹ … 10⁻¹² | 6.4 m without breaks, 8·10⁻⁷ m with them |
 | Φ across the edges of 1.5 revolutions; ∂x/∂c_r | central differences of whole propagations | 7·10⁻⁸ with a largest element of 25; 2·10⁻⁷ m of 49 m |
 | LAGEOS, residual of the first guess over a week | the same at ε = 10⁻¹⁰, 10⁻¹¹, 10⁻¹² | 25.8887 m at all three with breaks (25.8821 m at 10⁻¹⁰ and 25.8882 m at 10⁻¹² without) |
+| The 54 edges by prediction (`MYB_BREAKS_PREDICT`) | the spread over ε = 10⁻⁹ … 10⁻¹² | 8.4·10⁻⁷ m (withdrawing 8.2·10⁻⁷ m) |
+| LAGEOS, both schemes | each other | the first-guess residual within 3·10⁻⁶ m at 10⁻¹², the fit 1.5685 cm either way |
 | Hohmann transfer by two impulses (`myb_orbit_kick`) | the computed final orbit | 1.5·10⁻⁸ m, e = 6·10⁻¹⁶ |
 | Φ across both impulses | differences of the whole manoeuvre | 2·10⁻⁹ of the largest element |
+
+Contact — [`test_contact`](../../tests/unit/test_contact.c), `MYB_IAS15_TIMESCALE_JERK`, the
+touches predicted, ε = 10⁻⁹, 10⁻¹⁰, 10⁻¹², against DOP853 at rtol 10⁻¹²:
+
+| What | Reference | Result |
+|---|---|---|
+| A ball dropped 0.2 m on the Moon | the 24 touches of DOP853 | at 7.0·10⁻⁸, 1.4·10⁻⁸, 7.6·10⁻⁹ s of them (withdrawn: 5.0·10⁻⁸, 2.6·10⁻⁸, 3.3·10⁻⁹ s); at rest at its height to 1.5·10⁻¹⁶ m |
+| A sliding block | its three speeds by DOP853 | 7.9·10⁻¹¹, 1.0·10⁻¹¹, 9.1·10⁻¹⁴ s |
+| The ball under the default timescale | — | `MYB_E_STEP_MIN` at the first contact |
 
 ## Cost
 
@@ -153,13 +187,18 @@ Breaks and impulses — [`test_events`](../../tests/unit/test_events.c),
   costs none.
 - Withdrawing the step at breaks costs +26 % of the time of the LAGEOS fit (a cold restart of
   the integrator at every edge cost +70 %, with 352 restarts per propagation); the week of
-  LAGEOS with 176 edges takes 2290 steps instead of 2177.
+  LAGEOS with 176 edges takes 2290 steps instead of 2177. Aiming the steps at the predicted edges
+  evaluates the model 5.4, 4.5, 1.4 and 1.1 % less often at ε = 10⁻⁹ … 10⁻¹² and gains no time
+  that shows (header `myb/orbit.h`): most of the 26 % is the shorter steps around the edges.
+- Contact under IAS15: the dropped ball takes 13 789, 18 778, 34 922 steps at ε = 10⁻⁹, 10⁻¹⁰,
+  10⁻¹² (DOP853 at 10⁻¹²: 6729), the sliding block about 2300 (DOP853: 489).
 
 ## Limitations
 
 - The published criterion is relative to the norm of a: it stalls where the acceleration of a
   whole group vanishes (a one-dimensional oscillator, contact at every touch); such problems go
-  with DOP853.
+  with `MYB_IAS15_TIMESCALE_JERK` or with DOP853. Contact under IAS15 takes more steps than
+  DOP853 in the test (the ball 13 789 … 34 922 against 6729) and needs the breaks at the touches.
 - On an exactly circular orbit with a constant step the rounding errors of neighbouring steps
   are identical and do not average out: the energy drifts ~10⁻¹⁷ per revolution (3·10⁻¹⁴ over
   3000 revolutions), independently of ε — rounding, not truncation. Asymmetric systems follow
@@ -174,11 +213,12 @@ Breaks and impulses — [`test_events`](../../tests/unit/test_events.c),
   `myb_orbit_event` looks at four parts of each step, so roots closer together than a quarter
   of a step may be missed.
 - The bare integrator knows nothing about breaks; withdrawing the step is done by `myb_orbit`,
-  the estimators and the system. Ending a step at the edge predicted from the polynomial,
-  without withdrawing, was tried and lost: 7·10⁻⁴ m at ε = 10⁻⁹ and 5·10⁻⁶ m at 10⁻¹² against
-  8·10⁻⁷ m for withdrawing, since the predicted root is not the true one and the kink stays
-  inside the next step.
-- Phase 21 adds: the edge of the shadow without withdrawing the step, and contact under IAS15.
+  the estimators and the system, aiming it by `myb_orbit`. Ending a step short of the edge
+  predicted from the polynomial (phase 16) lost: 7·10⁻⁴ m at ε = 10⁻⁹ and 5·10⁻⁶ m at 10⁻¹²
+  against 8·10⁻⁷ m for withdrawing, since the predicted root is not the true one and the kink
+  stays inside the next step; reshaping the step to the edge its own polynomial finds
+  (`MYB_BREAKS_PREDICT`) is as accurate as withdrawing but saves no time that shows, so
+  withdrawing stays the default.
 
 ## Data
 

@@ -108,7 +108,10 @@ All in `test_conjunction` ([tests/unit/test_conjunction.c](../../tests/unit/test
 
 ## Cost
 
-Not measured.
+The rate of a long encounter (`myb_collision_rate`) is costly when the covariance of the
+relative velocity is narrow: up to about a second a rate, and the integral of a long encounter
+(`myb_collision_probability_long`, `myb_conjunction_long`) up to minutes. Otherwise not
+measured.
 
 ## Limitations
 
@@ -120,6 +123,8 @@ Not measured.
   multiplied by one unknown factor.
 - In `myb_conjunction_long` the panels are not refined: the step must be well below the time it
   takes to cross the uncertainty, and `error` says where it is not.
+- A narrow covariance of the relative velocity makes the rate and the long encounter slow (see
+  Cost): a known limit of the release, left as it is.
 
 ## Data
 

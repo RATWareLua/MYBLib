@@ -67,7 +67,10 @@ Header [`myb/estim.h`](../../include/myb/estim.h):
   velocity turns with it), in a straight line when gm = 0.
 - `myb_fit_orbit`: observations in time order away from t0, all on one side of it (an arc
   forward or backward). It stops when the weighted RMS changes by less than `tolerance`
-  (10⁻⁶) of itself or after `max_iterations` (10) corrections; IAS15 precision 10⁻¹⁰; unknowns
+  (10⁻⁶) of itself or falls below `tolerance` (exact observations: the RMS falls to the
+  rounding of the propagation, where its relative change stays large; before phase 21 such a fit
+  never reported convergence), or after `max_iterations` (10) corrections; IAS15 precision
+  10⁻¹⁰; unknowns
   may be held fixed or given a priori sigmas. Out: the estimate (y0 and the parameters in
   place), the covariance (the inverse of the normal matrix; zero rows for fixed unknowns), the
   residuals, the weighted RMS before and after (1 when the errors match the sigmas).

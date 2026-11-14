@@ -22,7 +22,7 @@
 | Двоичные PCK, CK и SCLK (чтение и запись) | [pck-ck-sclk](pck-ck-sclk.ru.md) | [frames.h](../../include/myb/frames.h), [ck.h](../../include/myb/ck.h) | CK против CSPICE: те же ответы, матрица 7·10⁻¹⁶ (типы 1–3), 4,4·10⁻¹⁶ (типы 4–6) (`test_ck`) |
 | Повороты, WGCCRE, системы TK, граф систем отсчёта, геодезия, орбитальные системы | [frames-geodesy](frames-geodesy.ru.md) | [frames.h](../../include/myb/frames.h) | граф систем против CSPICE `sxform` 2·10⁻¹⁶; геодезические углы 3,3·10⁻¹⁶ рад (`test_frame_graph`, `test_erfa_frames`) |
 | Численные основы и текстовые форматы (корректно округлённые функции, double-double, эллиптические функции, линейная алгебра, числа, CSV, CCSDS) | [numerics-formats](numerics-formats.ru.md) | [cmath.h](../../include/myb/cmath.h), [num.h](../../include/myb/num.h), [io.h](../../include/myb/io.h), [ccsds.h](../../include/myb/ccsds.h) | печать чисел против CPython — ни одного расхождения на 6124 значениях; эллиптические функции против mpmath ≤ 5,6 ulp (`test_format`, `test_elliptic`) |
-| События и геометрия: затмения и края тени, пересечение луча с формой | [events-geometry](events-geometry.ru.md) | [events.h](../../include/myb/events.h), [geometry.h](../../include/myb/geometry.h) | контакты затмений против CSPICE `gfoclt` 4,4·10⁻¹⁰ с; луч и эллипсоид против `surfpt` 5·10⁻¹⁶ (`test_events`, `test_geometry`) |
+| События и геометрия: затмения и края тени (с отзывом шага или по предсказанию), пересечение луча с формой | [events-geometry](events-geometry.ru.md) | [events.h](../../include/myb/events.h), [geometry.h](../../include/myb/geometry.h) | контакты затмений против CSPICE `gfoclt` 4,4·10⁻¹⁰ с; луч и эллипсоид против `surfpt` 5·10⁻¹⁶ (`test_events`, `test_geometry`) |
 
 ## Два тела и интеграторы
 
@@ -31,15 +31,15 @@
 | Уравнение Кеплера, элементы, универсальный пропагатор, матрица перехода двух тел, средние элементы, KS и Зундман | [kepler-regularization](kepler-regularization.ru.md) | [kepler.h](../../include/myb/kepler.h), [regular.h](../../include/myb/regular.h) | пропагатор против MPFR (400 бит) ≤ 4,7·10⁻¹⁵; KS при e = 0,999 — 1,2·10⁻¹² (`test_mpfr_kepler`, `test_regular`) |
 | Ламберт, B-плоскость, пристрелка, относительное движение | [transfers-relative-motion](transfers-relative-motion.ru.md) | [lambert.h](../../include/myb/lambert.h), [transfer.h](../../include/myb/transfer.h), [relative.h](../../include/myb/relative.h) | Ламберт пристрелкой 4·10⁻¹² м/с; Клохесси–Уилтшир 3·10⁻¹⁴ (`test_transfer`, `test_relative`) |
 | DOP853, RKN12(10) с интерполянтом, Гаусс–Джексон | [classical-integrators](classical-integrators.ru.md) | [integ.h](../../include/myb/integ.h) | RKN12(10): 10 оборотов при e = 0,9 — 4,8·10⁻¹⁵ периода (`test_rkn12`) |
-| IAS15 | [ias15](ias15.ru.md) | [integ.h](../../include/myb/integ.h) | 10⁴ оборотов при e = 0,3 — 2,8·10⁻¹¹ периода; закон Брауэра (`test_ias15`) |
+| IAS15 (с масштабом рывка для контакта) | [ias15](ias15.ru.md) | [integ.h](../../include/myb/integ.h) | 10⁴ оборотов при e = 0,3 — 2,8·10⁻¹¹ периода; закон Брауэра (`test_ias15`) |
 | Симплектические композиции (в том числе 7 и 15 стадий), WH/WHFast с корректорами | [symplectic-integrators](symplectic-integrators.ru.md) | [integ.h](../../include/myb/integ.h), [dyn.h](../../include/myb/dyn.h) | коэффициенты бит в бит с MPFR; наблюдаемые порядки 2 … 8 (`test_mpfr_compositions`, `test_whfast`) |
 
 ## N тел
 
 | Модель | Паспорт | Заголовок | Проверка |
 |---|---|---|---|
-| Прямые суммы N тел, граф взаимодействий, потоки; FMM как приближённый уровень | [nbody](nbody.ru.md) | [dyn.h](../../include/myb/dyn.h) | Sum2 ≤ 3,5·10⁻¹⁶ от Σ\|членов\|, биты не зависят от потоков; FMM до округления прямой суммы при p = 16 (`test_nbody`, `test_fmm`) |
-| Система тел: уровни, интегрируемое вращение, приливы по полосам, PN-пары, производные | [system-of-bodies](system-of-bodies.ru.md) | [system.h](../../include/myb/system.h) | повторное интегрирование DE440 за 5 лет: Луна 4,9 см, Меркурий 2,1 см (`test_de440_system`) |
+| Прямые суммы N тел, граф взаимодействий, потоки; FMM как приближённый уровень, в потоках начиная с 2048 тел | [nbody](nbody.ru.md) | [dyn.h](../../include/myb/dyn.h) | Sum2 ≤ 3,5·10⁻¹⁶ от Σ\|членов\|, биты не зависят от потоков; FMM до округления прямой суммы при p = 16, его биты тоже не зависят от потоков (`test_nbody`, `test_fmm`, `test_fmm_threads`) |
+| Система тел: уровни, интегрируемое вращение, приливы по полосам, PN-пары, производные из вариационных уравнений | [system-of-bodies](system-of-bodies.ru.md) | [system.h](../../include/myb/system.h) | повторное интегрирование DE440 за 5 лет: Луна 4,9 см, Меркурий 2,1 см; производные двух тел против замкнутой формы 2,3·10⁻¹⁶ (`test_de440_system`, `test_system`) |
 | Сближения, столкновения, слияния, поиск соседей | [system-encounters](system-encounters.ru.md) | [system.h](../../include/myb/system.h) | касание двух шаров 10⁻¹² от замкнутой формы; 300 шаров — бильярд до 5,6·10⁻¹³ с (`test_system`) |
 
 ## Гравитация и приливы
@@ -57,7 +57,7 @@
 | Модель | Паспорт | Заголовок | Проверка |
 |---|---|---|---|
 | 1PN: Шварцшильд, Лензе–Тирринг, де Ситтер, EIH с β, γ, локальные системы, собственное время | [relativity-1pn](relativity-1pn.ru.md) | [rel.h](../../include/myb/rel.h), [dyn.h](../../include/myb/dyn.h) | Меркурий 42,9804″ за столетие (5·10⁻⁹ от формулы); EIH против независимого лагранжиана 2,7·10⁻¹⁰ (`test_rel`) |
-| PN-двойная: 1PN–3,5PN, 4PN с хвостом, спиновые члены, реакция излучения | [pn-binary](pn-binary.ru.md) | [rel.h](../../include/myb/rel.h) | коэффициенты против Blanchet 4·10⁻¹⁶; PSR B1913+16 — Ṗ до 3·10⁻⁵ (`test_pn_higher`, `test_pn_binary`) |
+| PN-двойная: 1PN–3,5PN, 4PN с хвостом (на любой конике), спиновые члены до следующего порядка, реакция излучения | [pn-binary](pn-binary.ru.md) | [rel.h](../../include/myb/rel.h) | коэффициенты против Blanchet 4·10⁻¹⁶; PSR B1913+16 — Ṗ до 3·10⁻⁵ (`test_pn_higher`, `test_pn_binary`) |
 
 ## Негравитационные силы
 
@@ -69,7 +69,7 @@
 | Кометы и газовыделение | [comets-outgassing](comets-outgassing.ru.md) | [force.h](../../include/myb/force.h) | дрейф от A2 5·10⁻⁷ от формулы; комета 5·10⁻⁶ от усреднённого уравнения Гаусса (`test_nongrav`) |
 | Сопротивление, взаимодействие газа с поверхностью, сплошная среда, нагрев при входе и абляция | [aerodynamics](aerodynamics.ru.md) | [force.h](../../include/myb/force.h), [surface.h](../../include/myb/surface.h) | пластины Сентмана по сфере — замкнутая форма до 5·10⁻¹⁵; абляция против замкнутого решения 1,9·10⁻¹⁴ (`test_surface`, `test_entry`) |
 | Магнитные поля (IGRF), сила Лоренца, зарядка | [magnetic-field-charging](magnetic-field-charging.ru.md) | [force.h](../../include/myb/force.h) | IGRF-14 против ppigrf 1,4·10⁻¹⁵; OML против mpmath 6·10⁻¹⁶ (`test_charge`, `test_charging`) |
-| Контакт и посадка | [contact-landing](contact-landing.ru.md) | [contact.h](../../include/myb/contact.h) | восстановление против замкнутой формы 3,5·10⁻¹³ (`test_contact`) |
+| Контакт и посадка: гладкое трение или трение с залипанием, под DOP853 или IAS15 | [contact-landing](contact-landing.ru.md) | [contact.h](../../include/myb/contact.h) | восстановление против замкнутой формы 3,5·10⁻¹³; аппарат с трением с залипанием стоит на склоне 15° до 9,3·10⁻¹⁴ м/с (`test_contact`) |
 | Удары микрометеороидов | [micrometeoroids](micrometeoroids.ru.md) | [meteoroid.h](../../include/myb/meteoroid.h) | число ударов 0,4σ от λT; массы — Колмогоров–Смирнов 1,17 (`test_meteoroid`) |
 
 ## Окружение Земли
@@ -97,9 +97,9 @@
 | Оценивание орбиты: наименьшие квадраты, фильтр, сглаживатель | [estimation](estimation.ru.md) | [estim.h](../../include/myb/estim.h) | LAGEOS против ILRS 1,57 см за неделю; Roadster 306 м за 7 лет, OSIRIS-REx 12,6 м (`test_lageos`, `test_spacecraft`) |
 | Сближения и вероятность столкновения (короткие и долгие встречи) | [conjunctions](conjunctions.ru.md) | [conjunction.h](../../include/myb/conjunction.h) | круглая гауссиана 2·10⁻¹⁶; долгая встреча против Монте-Карло 1,3σ (`test_conjunction`) |
 | Ограниченная задача трёх тел: точки Лагранжа, периодические орбиты, семейства, многообразия | [cr3bp-periodic](cr3bp-periodic.ru.md) | [cr3bp.h](../../include/myb/cr3bp.h) | каталог JPL (56 орбит): постоянная Якоби 3,6·10⁻¹⁵, неподвижная точка 9·10⁻¹² (`test_cr3bp`) |
-| Торы в задаче трёх тел: квазипериодические орбиты, их устойчивость и многообразия | [cr3bp-tori](cr3bp-tori.ru.md) | [cr3bp.h](../../include/myb/cr3bp.h) | окружность возвращается на себя за 20 оборотов до 3,7·10⁻¹¹ (`test_cr3bp`, `test_torus_stability`) |
+| Торы в задаче трёх тел: квазипериодические орбиты, их устойчивость, нормальное вращение и многообразия | [cr3bp-tori](cr3bp-tori.ru.md) | [cr3bp.h](../../include/myb/cr3bp.h) | окружность возвращается на себя за 20 оборотов до 3,7·10⁻¹¹ (`test_cr3bp`, `test_torus_stability`) |
 | Малая тяга: дуги тяги, уравнения Гаусса, Эдельбаум, Q-закон | [low-thrust-qlaw](low-thrust-qlaw.ru.md) | [thrust.h](../../include/myb/thrust.h) | Q-закон 1234,3 м/с против 1232,6 Эдельбаума (`test_thrust`) |
-| Оптимальное управление: непрямой метод, НЛП, Sims–Flanagan, цепочки с пролётами | [optimal-control](optimal-control.ru.md) | [optimal.h](../../include/myb/optimal.h) | 486,84 м/с против 486,82 Гомана; Sims–Flanagan +0,11 % от непрямого метода (`test_optimal`, `test_chain`) |
+| Оптимальное управление: непрямой метод, НЛП, Sims–Flanagan, цепочки с пролётами (и с импульсом) | [optimal-control](optimal-control.ru.md) | [optimal.h](../../include/myb/optimal.h) | 486,84 м/с против 486,82 Гомана; Sims–Flanagan +0,11 % от непрямого метода (`test_optimal`, `test_chain`) |
 
 ## Пропагация и неопределённость
 

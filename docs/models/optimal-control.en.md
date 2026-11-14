@@ -11,7 +11,8 @@ insertion into an orbit with the phase free. The direct method of Sims and Flana
 thrust of each segment by an impulse in its middle and solves for the throttles with the
 library's solver of nonlinear programs (an augmented Lagrangian with a damped BFGS matrix and
 bounds); its legs, in the field of the point mass or of a force model, can be joined into chains
-by unpowered flybys. What comes out is a local optimum: the one the first guess leads to.
+by flybys, unpowered or powered (an impulse at the periapsis). What comes out is a local
+optimum: the one the first guess leads to.
 
 ## Source
 
@@ -22,8 +23,12 @@ by unpowered flybys. What comes out is a local optimum: the one the first guess 
 - The solver: the method of multipliers (M. R. Hestenes, M. J. D. Powell, 1969;
   R. T. Rockafellar, 1973, for the inequalities) in the scheme of E. G. Birgin, J. M. Martínez,
   *Practical Augmented Lagrangian Methods* (2014); Powell's damped BFGS (1978); the projection
-  onto the bounds of D. P. Bertsekas, *SIAM J. Control Optim.* 20, 221 (1982).
-- J. A. Sims, S. N. Flanagan, AAS 99-338 (1999), for the legs and the flybys.
+  onto the bounds of D. P. Bertsekas, *SIAM J. Control Optim.* 20, 221 (1982); the approximate
+  Wolfe conditions of W. W. Hager, H. Zhang, *SIAM J. Optim.* 16, 170 (2005), where the fall of
+  the function is below the resolution of its values.
+- J. A. Sims, S. N. Flanagan, AAS 99-338 (1999), for the legs and the flybys. A powered flyby:
+  the impulse along the motion at the common periapsis of the two hyperbolas (where the Oberth
+  effect makes it least), each turning the excess velocity by its half.
 - Implemented from the publications; no third-party code, no data files.
 
 ## Interface
@@ -39,7 +44,8 @@ Header [`myb/optimal.h`](../../include/myb/optimal.h):
 - Sims–Flanagan: `myb_sims_flanagan_mismatch`, `myb_sims_flanagan_solve`; `myb_sims_flanagan`,
   `myb_sims_flanagan_result`; `MYB_SIMS_FLANAGAN_MAX_SEGMENTS` (64);
 - chains: `myb_chain_size`, `myb_chain_guess`, `myb_chain_evaluate`, `myb_chain_solve`;
-  `myb_chain`, `myb_chain_body`, `myb_chain_result`; `MYB_CHAIN_MAX_LEGS` (8).
+  `myb_chain` (with `impulse_exhaust`), `myb_chain_body`, `myb_chain_result` (with `impulse`);
+  `MYB_CHAIN_MAX_LEGS` (8); the powered flyby alone: `myb_chain_flyby`.
 
 ## Inputs and outputs
 
@@ -62,7 +68,10 @@ Header [`myb/optimal.h`](../../include/myb/optimal.h):
 - The solver: minimise f(x) with c_i = 0 (equalities first), c_i ≤ 0, lower ≤ x ≤ upper; the
   caller gives f, c and, on request, their gradients. Feasibility 10⁻⁸, optimality 10⁻⁶ (the
   largest component of x − P(x − ∇L)), at most 50 updates of the multipliers and 1000 steps
-  between them; the unknowns and the functions should be of the order of one.
+  between them; the unknowns and the functions should be of the order of one. A step is halved
+  along its projection into the box until the function falls enough — or, where the fall is
+  below 10⁻¹² of the values (near a solution with a large weight), until the slope along the
+  step has risen enough and not overshot.
 - Sims–Flanagan: 2 … 64 equal segments, a throttle vector |τ| ≤ 1 for each (3 numbers),
   Δv_i = τ_i T Δt / m_i with the mass in the middle of the segment; the first half flown forward,
   the second backward, the mismatch (6: m, m/s) at the meeting point with its Jacobian. The
@@ -77,6 +86,14 @@ Header [`myb/optimal.h`](../../include/myb/optimal.h):
   the arrival. The propellant (kg) is minimised; the derivatives are analytic but for the
   acceleration of a body, taken by central differences of its provider's velocity. Two passes:
   throttles as vectors with a size of their own, then a size and two angles; the weight 10⁴.
+- A powered flyby (`impulse_exhaust` of its body > 0, m/s: the exhaust velocity of the engine
+  of the impulse; only the bodies flown by): dv = |√(|w⁺|² + 2gm/r_p) − √(|w⁻|² + 2gm/r_p)|,
+  the turn δ = asin(1/e⁻) + asin(1/e⁺), e = 1 + r_p|w|²/gm, the mass m → m exp(−dv/c). Two more
+  unknowns, r_p (no smaller than the least distance) and dv ≥ 0; the turn is an equality in
+  place of the equal speeds, and ±(√(|w⁺|² + 2gm/r_p) − √(|w⁻|² + 2gm/r_p)) − dv ≤ 0, so that
+  the solver meets no corner at dv = 0 and drives an impulse that does not pay onto its bound.
+  The first pass holds the impulses at 0, the second frees them. `myb_chain_flyby` gives dv and
+  δ with their derivatives for given excess speeds and r_p.
 
 ## Domain of validity
 
@@ -121,6 +138,11 @@ launcher, a rendezvous with Mars, 10 segments a leg:
 | Derivatives of the program | central differences | 1.4·10⁻⁸ of their sizes (1.5·10⁻⁸ in a field that changes with time), the propellant 4.7·10⁻¹¹ |
 | The Sun as a force model | the conics | 3.5·10⁻¹⁴ |
 | Earth–Venus–Mars | the same chain kept 10⁶ km from Venus: 731.350 kg | 834.470 kg left: the flyby saves 103 kg; the legs meet to 30 m and 6·10⁻⁶ m/s; excess speeds at Venus 3·10⁻⁶ m/s apart; the turn 1.2112 of the 1.2863 rad allowed (7201 km); the launcher's 2500 m/s used to 7·10⁻⁸ m/s |
+| The chain kept 10⁶ km from Venus (a turn of 0.018 rad at most) | from the guess and from the chain by Venus | 731.350 kg (9386 m/s) from both, to 1.3·10⁻⁷ kg, each in 10 updates (before the slope decided, the criticality stopped at 2·10⁻⁶ … 2·10⁻⁴) |
+| A powered flyby | its closed form at 50 digits | the impulse and the turn 2.2·10⁻¹⁶, their derivatives too (and against differences 3·10⁻¹⁰), also at excess speeds 3·10⁻⁶ m/s apart |
+| The chain with a powered flyby | central differences | derivatives by r_p and dv 1.4·10⁻⁸ |
+| By Venus, 1 N, an impulse by an engine of 3000 m/s | the unpowered chain | dv driven to 0; the same chain to 4·10⁻⁷ kg |
+| 0.25 N | the unpowered chain does not meet Mars (the flights at their longest, the constraints 0.025 au off) | powered: 380.797 m/s at 26 530 km from Venus, 587.501 kg left, from the guess and from where the unpowered chain stopped alike (6·10⁻⁷ kg); at 0.2 N 469.385 kg with 1146.879 m/s |
 
 ## Cost
 
@@ -138,9 +160,10 @@ evaluations. No timings.
 - The Jacobian of the indirect conditions is taken by central differences.
 - Sims–Flanagan replaces the thrust by impulses: about 0.1 % of the propellant at 30 segments.
 - The solver is dense, with at most 256 unknowns and constraints.
-- The flybys of the chains are unpowered and instantaneous, in the field of the body alone.
-- Phase 21 adds: powered flybys in the chains, and the floor of stationarity of the solver on
-  its bounds.
+- The flybys of the chains are instantaneous, in the field of the body alone; a powered one has
+  a single impulse along the motion at the periapsis. Where an impulse pays little the solver
+  finds local optima: one of 30 000 m/s pays at 0.3 N by 0.03 … 0.05 kg (two local optima from
+  two starts), one of 300 000 m/s at 1 N by 0.100 kg.
 
 ## Data
 

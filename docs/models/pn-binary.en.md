@@ -8,10 +8,11 @@ The relative motion of two compact bodies in harmonic coordinates of the centre-
 beyond the first post-Newtonian order: the conservative 1PN, 2PN, 3PN and 4PN terms (4PN with
 the conservative part of the gravitational-wave tail), the radiation reaction at 2.5PN, 3.5PN
 and 4PN (the dissipative tail), the spin-orbit coupling at the leading order (1.5PN for maximal
-spins) and at the next two orders, the spin-spin coupling, the quadrupoles induced by rotation,
-the precession of the spins and the spin-orbit radiation reaction; with the Peters–Mathews
-change of the period. Each term is a bit of a mask; a pair of bodies in a system of N bodies can
-carry the same terms.
+spins) and at the next two orders, the spin-spin coupling at the leading and the next order, the
+quadrupoles induced by rotation, the precession of the spins, the spin-orbit radiation reaction
+at the leading and the next order and the dissipative spin-orbit part of the tail; the tails on
+any osculating conic, bound or not; with the Peters–Mathews change of the period. Each term is a
+bit of a mask; a pair of bodies in a system of N bodies can carry the same terms.
 
 ## Source
 
@@ -28,6 +29,17 @@ carry the same terms.
   075017 (2013), eqs. 3.5, 3.8–3.10, for spin variables of conserved norm; the spin-orbit
   radiation reaction of C. M. Will, *Phys. Rev. D* 71, 084027 (2005), eq. B3b; the geodetic
   precession of Barker & O'Connell (1975).
+- The spin-spin terms at next-to-leading order: A. Bohé, G. Faye, S. Marsat, E. K. Porter,
+  *Class. Quantum Grav.* 32, 195010 (2015), App. A. The spin-orbit radiation reaction at
+  next-to-leading order is not published in harmonic coordinates (the papers of Zeng and Will
+  2007 and of Maia, Galley, Leibovich and Porto 2017 are the leading order): the library builds
+  it by energy and angular-momentum balance, exactly, against the fluxes of the radiative
+  moments of the published source moments (A. Bohé, S. Marsat, L. Blanchet, *Class. Quantum
+  Grav.* 30, 135009, 2013), the free gauge parameters set to zero. The dissipative spin-orbit
+  tail: by balance with the tail-induced spin-orbit flux of L. Blanchet, A. Buonanno, G. Faye,
+  *Class. Quantum Grav.* 28, 135005 (2011). The tails on any conic: the hereditary integrals of
+  the 4PN paper (eqs. acctailCM, acctaildiss) in the time domain; the hyperbolic check against
+  D. Bini, T. Damour, arXiv:1706.06877.
 - P. C. Peters, J. Mathews, *Phys. Rev.* 131, 435 (1963).
 - The 1PN … 3.5PN coefficients were checked against a machine parse of the LaTeX source of
   Blanchet's review (arXiv:1310.1528). The 4PN, higher spin-orbit and radiation-reaction blocks
@@ -43,7 +55,11 @@ Header [`myb/rel.h`](../../include/myb/rel.h):
   `myb_peters_period_derivative`;
 - the flags `MYB_PN_1`, `MYB_PN_2`, `MYB_PN_25`, `MYB_PN_3`, `MYB_PN_35`, `MYB_PN_SO`,
   `MYB_PN_SS`, `MYB_PN_ALL` (the seven above), and, asked for by name, `MYB_PN_4`,
-  `MYB_PN_4RR`, `MYB_PN_SO25`, `MYB_PN_SO35`, `MYB_PN_SORR`.
+  `MYB_PN_4RR`, `MYB_PN_SO25`, `MYB_PN_SO35`, `MYB_PN_SORR`, `MYB_PN_SS3` (spin-spin at
+  next-to-leading order, 1/c⁶, with its precession), `MYB_PN_SORR5` (spin-orbit radiation
+  reaction at next-to-leading order, 1/c¹⁰), `MYB_PN_SOTAIL` (the dissipative spin-orbit tail,
+  quasi-circular orbits), `MYB_PN_TAILX` (the tails of `MYB_PN_4` and `MYB_PN_4RR` on any
+  osculating conic).
 
 A pair among N bodies (`myb_system_add_pn_pair`, `myb_system_pn_pair`, `myb_system_pack_spins`,
 `myb_system_unpack_spins`): [system of bodies](system-of-bodies.en.md). The 1PN part is the
@@ -63,7 +79,12 @@ two-body limit of the EIH equations: [relativity at 1PN](relativity-1pn.en.md).
 - r0 changes the coordinates, not the physics: gauge-invariant quantities such as Ω_φ/Ω_r do
   not depend on it.
 - The tail is evaluated on the osculating Newtonian orbit through the current state, as a
-  Fourier series in the mean anomaly with up to 1024 harmonics.
+  Fourier series in the mean anomaly with up to 1024 harmonics; with `MYB_PN_TAILX`, where the
+  series stops (unbound, parabolic, and bound with e above about 0.83), by a quadrature in the
+  time domain over the whole conic — the same tail, continuous in e through the switch and
+  through e = 1.
+- `MYB_PN_SORR5` and `MYB_PN_SOTAIL` leave the spins alone; `MYB_PN_SS3` adds to the precession
+  Ω₁ += (G/(c³r³)) [w₅,₀ + (Gm/r) w₅,₁].
 - `myb_pn_binary_acceleration`: the same without spins, 3PN and 4PN (r0 unset).
 - `myb_peters_period_derivative`: dP/dt = −(192π/5)(2π G m_c/(P c³))^{5/3} f(e) (s/s), NaN for
   invalid input.
@@ -72,17 +93,22 @@ two-body limit of the EIH equations: [relativity at 1PN](relativity-1pn.en.md).
 ## Domain of validity
 
 - `MYB_E_DOMAIN`: r = 0, gm1 or gm2 ≤ 0, c ≤ 0, input that is not finite, unknown bits,
-  `MYB_PN_3` or `MYB_PN_4` without r0 > 0, `MYB_PN_SS` with a negative κ, `MYB_PN_4` or
-  `MYB_PN_4RR` when the osculating Newtonian orbit is unbound or has e above about 0.83 (more
-  than 1024 harmonics: e = 0.8 at periapsis is accepted, 0.9 refused); `MYB_PN_4` in
-  `myb_pn_binary_acceleration`.
-- In a system the tails need the pair's osculating orbit to stay bound; the integration fails
-  otherwise.
+  `MYB_PN_3` or `MYB_PN_4` without r0 > 0, `MYB_PN_SS` or `MYB_PN_SS3` with a negative κ,
+  `MYB_PN_4` or `MYB_PN_4RR` when the osculating Newtonian orbit is unbound or has e above about
+  0.83 (more than 1024 harmonics: e = 0.8 at periapsis is accepted, 0.9 refused) and
+  `MYB_PN_TAILX` is not set, or, with `MYB_PN_TAILX`, when the conic is rectilinear; `MYB_PN_4`
+  in `myb_pn_binary_acceleration`. `MYB_E_NOCONV`: the quadrature budget of `MYB_PN_TAILX`
+  exhausted (not expected).
+- In a system the tails need the pair's osculating orbit to stay bound unless `MYB_PN_TAILX` is
+  set; the integration fails otherwise.
+- `MYB_PN_SOTAIL` is exact on quasi-circular orbits; on an eccentric orbit it is a model.
 
 ## Accuracy
 
 Tests: [`test_pn_binary`](../../tests/unit/test_pn_binary.c),
 [`test_pn_higher`](../../tests/unit/test_pn_higher.c), [`test_pn4`](../../tests/unit/test_pn4.c),
+[`test_pn_ss`](../../tests/unit/test_pn_ss.c), [`test_pn_sorr`](../../tests/unit/test_pn_sorr.c),
+[`test_pn_tail_open`](../../tests/unit/test_pn_tail_open.c),
 [`test_system`](../../tests/unit/test_system.c); references in `tests/data/pn/`.
 
 | What | Reference | Result |
@@ -107,6 +133,15 @@ Tests: [`test_pn_binary`](../../tests/unit/test_pn_binary.c),
 | Energy lost to the tail in a period, e = 0.5 | the tail flux from an independent Fourier analysis (`test_pn4`) | 2.4·10⁻⁶ |
 | Spin-orbit coefficients of E(x) at 1.5, 2.5, 3.5PN | arXiv:1212.5520, eq. Eofx (`test_pn4`) | 1.38111456 (exact), 2.967553 (2.967556), 5.0703 (5.0671) |
 | Spin-orbit radiation reaction on circular orbits | Kidder's factor −0.2610081306 (`test_pn4`) | 2·10⁻⁹ |
+| `MYB_PN_SS3`: the acceleration and the precession | a machine transcription of the LaTeX of Bohé et al. 2015 (`test_pn_ss`) | checked against it, and the leading order of the library against the same transcription |
+| `MYB_PN_SS3`: circular orbits with aligned spins | the S² coefficients of E(x) at x² and x³ of the paper (`test_pn_ss`) | the energy of circular orbits to 3·10⁻⁹ |
+| `MYB_PN_SS3`: integrated eccentric orbits, oblique spins | the order of the remainder (`test_pn_ss`) | the change of the energy quadratic in the spins falls by 32 when the orbit is doubled with the NLO terms, by 16 without |
+| `MYB_PN_SORR5` | the exact rational solution of its balance (`test_pn_sorr`, `tests/data/pn/sorr5_terms.txt`) | reproduced within the test's bound |
+| `MYB_PN_SORR5`: circular orbits with aligned spins | the published spin-orbit flux (gr-qc/0605140, eq. FxK) (`test_pn_sorr`) | 0.25422 against 0.25441 |
+| `MYB_PN_SOTAIL`: spin-orbit circular orbits | the published tail-induced spin-orbit flux, −16π S_l − 31/6 π dm Σ_l (`test_pn_sorr`) | within the test's bound |
+| `MYB_PN_TAILX`: very eccentric ellipses, near-parabolic conics, hyperbolas | an independent evaluation in mpmath (tanh-sinh quadrature, `tests/data/pn/tail_open.txt`) (`test_pn_tail_open`) | 2.9·10⁻¹⁵ |
+| `MYB_PN_TAILX`: on ellipses with e up to 0.8; through e = 1 | the Fourier series of `MYB_PN_4`; conics of e = 1 ∓ δ (`test_pn_tail_open`) | the same tail, continuous through the switch; differs by O(δ) |
+| `MYB_PN_TAILX`: hyperbolic encounters | Bini and Damour, arXiv:1706.06877 (`test_pn_tail_open`) | to 4·10⁻⁶ |
 | A pair among three bodies, with and without spins | the binary itself (`test_system`) | 9·10⁻¹⁷ |
 
 ## Cost
@@ -121,25 +156,32 @@ on one core of the Windows host (header `myb/rel.h`):
 | 0.7 | 360 | 3 ms |
 | 0.82 | 900 | 18 ms |
 
-The other terms: not measured.
+`MYB_PN_TAILX` in the time domain: 0.2 to 2 ms per evaluation (header). The other terms: not
+measured.
 
 ## Limitations
 
 - General relativity only (β = γ = 1).
-- The tail is taken on the osculating Newtonian orbit (an error of 5PN), on bound orbits with e
-  below about 0.83.
+- The tail is taken on the osculating Newtonian orbit (an error of 5PN): as a Fourier series on
+  bound orbits with e below about 0.83, beyond that only with `MYB_PN_TAILX`.
 - The 3.5PN radiation reaction is at its first relative order (harmonic gauge); at 4PN the
   radiation reaction is the dissipative tail.
 - Spins: covariant supplementary condition, spin variables of conserved norm; the spin-orbit
-  radiation reaction is at the leading order and leaves the spins alone (Will, eq. 1.6).
+  radiation reaction is at the leading order (Will) and, with `MYB_PN_SORR5`, at the next — a
+  construction by balance with the free gauge parameters set to zero, since that order is not
+  published in harmonic coordinates; neither moves the spins (Will, eq. 1.6).
+- The conservative spin-orbit part of the tail (1/c¹¹) is not computed: it is meaningful only
+  with the local spin-orbit terms of that order, which are not published in harmonic
+  coordinates. `MYB_PN_SOTAIL` is the dissipative part on quasi-circular orbits, net of what
+  `MYB_PN_4RR` already radiates there; on an eccentric orbit it is a model (an error of O(e) of a
+  1/c¹¹ term).
 - In a system the relative acceleration is shared by the masses (the Newtonian momentum is
   kept); `MYB_PN_1` only if the point masses do not already carry the 1PN terms of the pair.
-- Phase 21 adds: the spin-orbit terms of the tail, the spin-orbit radiation reaction beyond the
-  leading order, spin-spin terms beyond the leading order, and the tail on unbound orbits.
 
 ## Data
 
 None for the library. The tests read `tests/data/pn/blanchet_coefficients.txt`,
-`pn4_coefficients.txt`, `so_terms.txt` and `tail_terms.txt`, computed by the authors of myb from
+`pn4_coefficients.txt`, `so_terms.txt`, `tail_terms.txt`, `ss_terms.txt`, `sorr5_terms.txt` and
+`tail_open.txt`, computed by the authors of myb from
 machine transcriptions of the papers' LaTeX sources (sympy, mpmath); only the evaluated numbers
 are stored.

@@ -10,7 +10,7 @@ general relativity in the post-Newtonian approximation wherever the effect is me
 the results are reproducible to the bit on Windows and Linux. The core knows no particular
 body: the Sun, the planets and spacecraft are given as data.
 
-Status: **version 1.2.0.0, phases 0–17, bindings for C++, Python and Rust** — numerical foundation, correctly rounded functions,
+Status: **version 1.2.0.0, phases 0–22 (the whole roadmap), bindings for C++, Python, Rust, Go and Haskell** — numerical foundation, correctly rounded functions,
 data reading, time scales, the body model, the two-body problem, Lambert's problem, integrators
 (DOP853, RKN12(10), IAS15, Gauss–Jackson, symplectic compositions), the N-body problem (direct
 summation, interaction graph, threads, WH/WHFast, SABA, SBAB), SPK ephemerides and reference
@@ -29,9 +29,12 @@ propagation of an object, orbit estimation (with biases of the measurements and 
 output (exact printing of numbers, SPK and binary PCK, CCSDS messages in the KVN and XML
 notations, SP3, TLE), events along an orbit, the geometry of surfaces, and the small forces:
 the Poynting–Robertson drag, comets and the Yarkovsky effect, the lagging tide, thermal
-recoil, plates and meshes with attitude, self-shadowing and free-molecular flow, impulses.
-Detailed plan, sources and roadmap:
+recoil, plates and meshes with attitude, self-shadowing and free-molecular flow, impulses; and
+the systems of bodies, applications, files, ground stations and atmospheres of phases 18–22
+(the table below). Detailed plan, sources and roadmap:
 [`docs/PLAN.en.md`](docs/PLAN.en.md); provenance of the data: [`data/README.md`](data/README.md).
+Model passports — what each model computes, its source, domain, accuracy and how that was
+measured: [`docs/models/index.en.md`](docs/models/index.en.md).
 
 ## What is there
 
@@ -89,12 +92,21 @@ Detailed plan, sources and roadmap:
 | `myb/iod.h` (Laplace, double-r, Gooding), `myb/conjunction.h` (long encounters) | orbit determination by the methods of Laplace and Gooding and by the double-r iteration (arcs of several turns); the probability of a long encounter as the flux of the relative state through the sphere | long arcs 10⁻¹⁶…3·10⁻¹⁵, Gooding over 3.3 turns 2·10⁻¹⁵; a short encounter 3.7·10⁻¹⁵, a slow one against Monte Carlo 1.3σ |
 | `myb/integ.h` (compositions, RKN12), `myb/orbit.h` (RKN12) | compositions of 7 and 15 stages of orders 6 and 8; an interpolant of the steps of RKN12(10); RKN12 in `myb_orbit` for position-only forces | coefficients refined at 512 bits; the triple jump 1.75 and 196 times worse for the same work; the interpolant as accurate as the steps |
 | `myb/force.h` (secondary emission, entry), `myb/surface.h` (continuum, thermal inertia) | secondary emission and the thin sheath in charging; Newtonian continuum flow on plates and meshes, the heating of Sutton–Graves, ablation; the light of the moment with the heat conducted into the surface | the floating potential of a thin sheath −3.338775 kT/e (Bohm); a sphere of plates C_D = Cp_max/2 to 4.4·10⁻¹⁶; the mean torque of the lagged light = YORP to 3.5·10⁻¹⁶ |
-| `myb/system.h` (mergers, derivatives, neighbours) | mergers of rotating bodies and of bodies of PN pairs; derivatives with respect to the state and the gravitational parameters; a search for neighbours among many bodies | angular momentum kept to 1.4·10⁻¹⁶; the derivatives of two bodies against the closed form 1.8·10⁻¹¹; 300 spheres — the contacts of the billiard |
+| `myb/system.h` (mergers, derivatives, neighbours) | mergers of rotating bodies and of bodies of PN pairs; derivatives with respect to the state and the gravitational parameters; a search for neighbours among many bodies | angular momentum kept to 1.4·10⁻¹⁶; the derivatives of two bodies against the closed form 1.8·10⁻¹¹ by differences (2.3·10⁻¹⁶ by the variational equations of phase 21); 300 spheres — the contacts of the billiard |
 | `myb/contact.h`, `myb/meteoroid.h` | contact and landing: the law of Hunt and Crossley with smooth Coulomb friction on a plane, an ellipsoid or a mesh, as a term and as a level of the system; random impacts of micrometeoroids (Grün et al. 1985) as kicks to an orbit | the restitution against the closed form 3.5·10⁻¹³; a lander on a slope creeps at the closed speed to 6·10⁻¹³; the counts and masses of the impacts within 1.2σ |
 | `myb/cr3bp.h` (stability of tori) | the stability of quasi-periodic tori (the linearised map of the invariant circle, its eigenvalues sorted into trivial, elliptic, hyperbolic and spurious), their stable and unstable manifolds, propagation to a surface of section | the multiplier of a torus tends to that of its orbit as the square of the size (3.997); the manifolds cross the section where those of the orbit do; the Jacobi constant 4·10⁻¹⁵ |
 | `myb/dyn.h` (FMM, approximate) | the fast multipole method as an explicitly approximate level of the graph, off by default: solid harmonics to the order p, the dual tree walk of Dehnen, mutual interactions of cells, deterministic | the force error falls like θᵖ (p = 12, θ = 0.5: 10⁻⁷; p = 16, θ = 0.3: the rounding of the direct sum); momentum to 10⁻¹⁶; 10⁵ bodies 24–35 times faster than the direct sum (extrapolated) |
 | `myb/rel.h` (4PN, spins) | 4PN with the hereditary tail (conservative and dissipative), spin-orbit terms at 2.5PN and 3.5PN with the matching precession, the spin-orbit radiation reaction; transcribed by machine from the LaTeX of the papers | the 4PN energy of circular orbits to 0.035 of −54.92; the tail against mpmath 2·10⁻¹³; the spin-orbit flux factor of Kidder to 2·10⁻⁹ |
 | `myb/optimal.h` (free phase, fields, chains) | optimal low thrust beyond the rendezvous: insertion into an orbit with a free phase in the indirect method, the field of a force model in Sims–Flanagan, chains of legs joined by flybys with free dates | the free phase beats every fixed rendezvous (783.920 kg against at most 780.076 kg); a flyby of Venus saves 103 kg of an Earth–Mars chain; derivatives against differences 1.4·10⁻⁸ |
+| `myb/time.h`, `myb/kin.h`, `myb/frames.h`, `myb/kepler.h` (array forms) | the array forms of the calls (`*_many`, 26 functions): time scales and the calendar, SPK states, rotations and orientations, EOP, Kepler and its transition matrix, the conversions of elements — one call for a series | the bytes of the single call in a loop; a failing element named by its index (`test_arrays`) |
+| `myb/system.h` (variational equations) | the derivatives of a system with every level from variational equations integrated with the state; analytic Jacobians of the point masses, the fields turned from outside, frame dragging and guided bodies, differences inside the right-hand side for the rest | two bodies against the closed transition matrix 2.3·10⁻¹⁶ (differences of propagations: 1.8·10⁻¹¹); symplectic to 4.1·10⁻¹⁶; 1.3–3.5 times cheaper |
+| `myb/dyn.h` (FMM over threads) | the FMM on the pool of the n-body from 2048 bodies, the same bits for any number of threads | four threads 1.3–2.5 times faster than one; 1.7–4 times cheaper than the direct sum on four threads at 10⁴ bodies, 10–25 times at 10⁵ |
+| `myb/cr3bp.h` (normal rotation, vertical tori) | the normal rotation and the normal bundle of elliptic tori; tori about vertical Lyapunov orbits | the normal rotation tends to the angle of the orbit as the square of the size (3.997); the bundle carried into itself to 7.5·10⁻¹³; vertical tori return after a turn to 1.3·10⁻¹¹ |
+| `myb/optimal.h` (powered flybys) | powered flybys in the chains (an impulse at the periapsis); the solver lets the slope decide where the fall is below the rounding | the impulse and the turn against 50 digits 2.2·10⁻¹⁶; at 0.25 N only the powered chain meets Mars (380.797 m/s, 587.501 kg left); the chain kept off Venus converges |
+| `myb/rel.h` (spins at the next order, tails) | spin-spin terms and the spin-orbit radiation reaction at next-to-leading order, the dissipative spin-orbit tail, the 4PN tails on any osculating conic | the energy of circular orbits to 3·10⁻⁹; the flux on circles 0.25422 against 0.25441; the tails against mpmath 2.9·10⁻¹⁵, hyperbolic encounters against Bini–Damour 4·10⁻⁶ |
+| `myb/contact.h`, `myb/integ.h`, `myb/model.h` (sticking, IAS15, breaks) | friction that sticks (a spring with a slip limit, its deflection in the state); contact under IAS15 with the timescale of the jerk; the edges of breaks aimed at by prediction | a lander on 15° stands (9.3·10⁻¹⁴ m/s; the smooth law creeps at 5·10⁻⁴ m/s); the touches under IAS15 within 7·10⁻⁸ s of DOP853; prediction: 1–5 % fewer evaluations of the LAGEOS fit, no time gained |
+| `bindings/` (Go, Haskell, upper layers) | bindings for Go (cgo, the coarse layer) and Haskell (two layers); the upper layers of C++, Python, Rust and Haskell over the rest of the interface; consumers built with MSVC | the low orbit of the example bit for bit with the C calls in every binding; C++ 551 checks (541 built by `cl`), Python 53 tests, Rust 36 on each toolchain, Haskell 309 checks, Go 26 tests |
+| `tests/fuzz`, `bench/`, `docs/models` | fuzzing of the readers (27 harnesses), benchmarks, coverage, 45 model passports | eight faults of the readers found and fixed, every input kept as a regression case |
 | `ext/nrlmsise00` | NRLMSISE-00 (separate target `myb::nrlmsise00`): thread-safe, reproducible port | 17 reference cases — to the 7 printed digits |
 | `ext/troposphere` | tropospheric delay per IERS 2010 ch. 9 (target `myb::troposphere`): Saastamoinen, Mendes–Pavlis, FCULa, VMF1, GMF, GPT, gradients | test cases of the IERS routines — 10⁻¹⁶…10⁻¹⁵ |
 | `ext/ionosphere` | IONEX maps and the single-layer model (target `myb::ionosphere`) | independent implementation of the IONEX interpolation 2·10⁻¹¹; pierce point 9·10⁻¹⁶ |
@@ -116,8 +128,8 @@ Requires Clang ≥ 19 and CMake ≥ 3.28. Clang only.
 
 **Windows.** Clang (LLVM for Windows) and MSYS2 with the MINGW64 environment
 (`C:\msys64\mingw64`: headers, runtime, `mingw32-make`; for the accuracy tests the packages
-`mpfr`, `gmp`). Visual Studio is not needed. Another MSYS2 location: the environment variable
-`MYB_MINGW_ROOT`.
+`mpfr`, `gmp`). Visual Studio is not needed (when it is there, the tests of the consumers built
+with MSVC use it). Another MSYS2 location: the environment variable `MYB_MINGW_ROOT`.
 
 ```
 cmake --preset windows-dev
@@ -133,21 +145,52 @@ cmake --build --preset linux-dev --parallel
 ctest --preset linux-dev
 ```
 
-Presets: `*-dev` (Debug, `-Werror`), `*-release` (`-O2`, contract checks kept), `windows-ubsan`
-(UBSan in trap mode); on Linux, sanitizers that stop at the first error: `linux-asan` (ASan +
-UBSan + LeakSanitizer, `-O2`), `linux-asan-debug` (the same at `-O0` plus the pointer-pair checks
+**macOS.** The Clang of Homebrew's LLVM (`brew install llvm ninja`, and `mpfr` for the accuracy
+tests; `MYB_LLVM_ROOT` names another LLVM) with the SDK and the linker of macOS
+(`cmake/toolchains/clang-macos.cmake`). macOS is built and tested by CI only so far.
+
+```
+cmake --preset macos-dev
+cmake --build --preset macos-dev --parallel
+ctest --preset macos-dev
+```
+
+Presets: `*-dev` (Debug, `-Werror`), `*-release` (`-O2`, contract checks kept; the static and
+the shared library), `windows-ubsan` (UBSan in trap mode); on Linux, sanitizers that stop at the
+first error: `linux-asan` (ASan + UBSan + LeakSanitizer, `-O2`; also the Python and Rust bindings
+under ASan), `linux-asan-debug` (the same at `-O0` plus the pointer-pair checks
 `pointer-compare`/`pointer-subtract`), `linux-ubsan` (UBSan with report and stack), `linux-lsan`
 (standalone LeakSanitizer), `linux-tsan` (ThreadSanitizer: data races and lock order of the
-thread pool). Results of the Gentoo checks: `docs/PLAN.en.md`, §12.
+thread pool); `macos-asan` (ASan + UBSan; there is no LeakSanitizer on macOS). Results of the
+Gentoo checks: `docs/PLAN.en.md`, §12.
+
+Engineering options and their presets:
+
+- `MYB_FUZZ` — the harnesses of `tests/fuzz` (27 readers) linked with libFuzzer under ASan and
+  UBSan, preset `linux-fuzz`; `cmake -DBUILD_DIR=build/linux-fuzz -P tests/fuzz/run_fuzzers.cmake`
+  runs them for a time budget each and keeps what fails. Without libFuzzer every build replays
+  the seeds and their damaged variants as ctest tests (label `fuzz`).
+- `MYB_BENCH` — the benchmarks of `bench/`: `myb_bench` prints a table of median times of the
+  hot paths (Kepler, SPK, frames, fields, N bodies, the integrators, an orbit with the edges of
+  shadows, a fit); the test `bench_smoke` runs its short form.
+- `MYB_COVERAGE` — source-based coverage, presets `linux-coverage` and `windows-coverage`;
+  `cmake -DBUILD_DIR=build/linux-coverage -P tests/tools/coverage.cmake` runs the tests and
+  reports the coverage of `src/` by llvm-cov (text, HTML, JSON). On Windows it needs the profile
+  runtime of the mingw-w64 target, which the Clang of the development machine lacks.
 
 The test `test_repro` compares a hash of the results with its golden value: it must match on
 every platform, at every optimization level and ISA (x86-64-v2/v3).
 
-**CI** (`.github/workflows/ci.yml`, GitHub Actions): the same presets — Linux (Ubuntu 24.04,
-Clang 20): `linux-dev`, `linux-release`, `linux-asan`, `linux-asan-debug`, `linux-ubsan`,
-`linux-lsan`, `linux-tsan`; Windows (Clang + MSYS2 MINGW64): `windows-dev`, `windows-release`,
-`windows-ubsan`. Data are downloaded by `FetchData.cmake` and cached; the live EOP series are
-refreshed on every run. It runs only when a tag is pushed (a release) and on request
+**CI** (`.github/workflows/ci.yml`, GitHub Actions): the same presets — Linux x86-64 (Ubuntu
+24.04, Clang 20): `linux-dev`, `linux-release`, `linux-asan`, `linux-asan-debug`, `linux-ubsan`,
+`linux-lsan`, `linux-tsan`; Linux ARM64 (ubuntu-24.04-arm): `linux-release`, `linux-asan`,
+`linux-ubsan`; macOS on Apple silicon (macos-15, Homebrew's LLVM): `macos-dev`, `macos-release`,
+`macos-asan`; Windows (Clang + MSYS2 MINGW64): `windows-dev`, `windows-release`,
+`windows-ubsan`, with the consumers built by MSVC; fuzzing (`linux-fuzz`: the corpora replayed,
+then 60 s of libFuzzer a harness, the crashes kept) and coverage (`linux-coverage`, the report
+kept). The jobs install what the tests of the bindings need (cffi, Rust, Go, GHC and cabal) and
+check that they are registered. Data are downloaded by `FetchData.cmake` and cached; the live EOP
+series are refreshed on every run. It runs only when a tag is pushed (a release) and on request
 (`workflow_dispatch`), not on every push.
 
 ## Installation and use
@@ -169,7 +212,8 @@ target_compile_definitions(app PRIVATE "DATA_DIR=\"${myb_DATA_DIR}\"")
 ```
 
 Without CMake: `pkg-config --cflags --libs myb` (the libraries of `ext/`: `myb_sgp4`,
-`myb_nrlmsise00`, `myb_troposphere`, `myb_ionosphere`, `myb_jb2008`). On ELF the shared
+`myb_nrlmsise00`, `myb_troposphere`, `myb_ionosphere`, `myb_jb2008`; `myb-static` and
+`myb_sgp4-static` name the static archives by their paths, for cgo). On ELF the shared
 library carries symbol versions (`MYB_1.0`, `MYB_1.1`, `MYB_1.2`). Examples are in
 [`examples/`](examples): a low
 orbit about an oblate planet with an atmosphere (ready-made terms of a force model, events, the
@@ -180,17 +224,24 @@ drift of the node) and the time scales from the data kernels; they build in the 
 
 ## Bindings
 
-The library is available from C++, Python and Rust (`bindings/`). Each binding has two layers:
-the whole C interface under the names of the headers, and over it classes for the usual path
-(kernels and time, ephemerides, the environment, the force model, propagation, events, OEM
-messages) with ownership, errors and callables in the manner of the language. The bindings do
-no arithmetic: a result agrees with the C calls to the bit.
+The library is available from C++, Python, Rust, Go and Haskell (`bindings/`). The bindings of
+C++, Python, Rust and Haskell have two layers: the whole C interface under the names of the
+headers, and over it the interface in the manner of the language — over the whole library:
+kernels and time, ephemerides, the environment, the force model, propagation, events, N bodies
+and systems of bodies, estimation, the CR3BP, targeting and optimal transfers, attitude,
+observables, files, the array forms — with ownership, errors and callables in the manner of the
+language. Go has the coarse layer only: one call is one task (a model assembled from data, a
+propagation, a fit, a file, a series over a slice). The bindings do no arithmetic: a result
+agrees with the C calls to the bit, which the test of each binding checks on the orbit of
+`examples/low_orbit.c` and, area by area, on the rest.
 
 | Language | Where | How to use | Errors |
 |---|---|---|---|
 | C++17 | `bindings/cpp/include/myb/myb.hpp` (installed into `include/myb/`) | `target_link_libraries(app PRIVATE myb::cpp)`, `#include "myb/myb.hpp"` | `myb::result<T>`: a status and a value, no exceptions |
-| Python ≥ 3.9 | `bindings/python` (the package `myb`, cffi) | `pip install ./bindings/python`; the shared library is named by `MYB_LIBRARY` | the exception `myb.Error` with the status |
+| Python ≥ 3.9 | `bindings/python` (the package `myb`, cffi; [README](bindings/python/README.md)) | `pip install ./bindings/python`; the shared library is named by `MYB_LIBRARY` | the exception `myb.Error` with the status (and, for an array form, the element that failed) |
 | Rust ≥ 1.82 | `bindings/rust` (the crates `myb-sys`, `myb`) | a path dependency; the library is found by `MYB_LIB_DIR` or pkg-config | `Result<T, myb::Error>` |
+| Go ≥ 1.24 | `bindings/go` (the module `github.com/RATWareLua/MYBLib/bindings/go`, cgo; [README](bindings/go/README.md)) | `require` and `replace` to the checkout in `go.mod`; the static library through pkg-config (`myb-static`), `CC` the Clang the library is built with; after installing another library, `go clean -cache` | `*myb.Error` values: the status, the element of a slice that failed, the line of a parser |
+| Haskell (GHC; checked with 9.10.3) | `bindings/haskell` (the cabal package `myb`; [README](bindings/haskell/README.md)) | `packages: path/to/bindings/haskell` in `cabal.project`, `build-depends: myb`; `cabal build --extra-lib-dirs=…`; on Windows the shared library | `Result a` = `Either Error a` with the status; nothing is thrown |
 
 ```cpp
 auto model = myb::share(myb::force_model::create());
@@ -216,8 +267,17 @@ orbit.start(0.0, &[7.0e6, 0.0, 0.0, 0.0, 7.5e3, 0.0], 6000.0)?;
 let node = orbit.next_event(|_, y| y[2], 6000.0, myb::Direction::Rising)?;
 ```
 
-What the classes do not have is called through the lower layer: in C++ the C functions on
-`get()`, in Python `myb.lib.myb_…`, in Rust `myb::sys::myb_…`.
+What the upper layer does not have is called through the lower one: in C++ the C functions on
+`get()`, in Python `myb.lib.myb_…`, in Rust `myb::sys::myb_…`, in Haskell `Myb.C`. Go has no
+lower layer (the types of cgo do not leave their package).
+
+Programs built with Microsoft's toolchain use the shared library built by Clang: the headers
+compile as C17, C++17 and C++20 under `cl /W4 /WX`, the C++ face builds with `cl` without
+exceptions, and the Rust crates link `libmyb.dll` with the MSVC toolchain (Microsoft's linker
+reads the import library `libmyb.dll.a` under the name `myb.lib`). The tests
+`test_msvc_consumer` and `test_rust_binding_msvc` are registered when Visual Studio
+(`MYB_MSVC_VCVARS` names its `vcvars64.bat`) and the toolchain `stable-x86_64-pc-windows-msvc`
+are found.
 
 ## Numerical contract
 

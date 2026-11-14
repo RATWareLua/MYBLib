@@ -21,7 +21,7 @@ The column *Validation* gives one headline check; the passport has the rest.
 | Binary PCK, CK and SCLK (read and written) | [pck-ck-sclk](pck-ck-sclk.en.md) | [frames.h](../../include/myb/frames.h), [ck.h](../../include/myb/ck.h) | CK against CSPICE: the same answers, the matrix 7·10⁻¹⁶ (types 1–3), 4.4·10⁻¹⁶ (types 4–6) (`test_ck`) |
 | Rotations, WGCCRE, TK frames, the frame graph, geodesy, orbital frames | [frames-geodesy](frames-geodesy.en.md) | [frames.h](../../include/myb/frames.h) | frame graph against CSPICE `sxform` 2·10⁻¹⁶; geodetic angles 3.3·10⁻¹⁶ rad (`test_frame_graph`, `test_erfa_frames`) |
 | Numerical foundations and text formats (correctly rounded functions, double-double, elliptic functions, linear algebra, numbers, CSV, CCSDS) | [numerics-formats](numerics-formats.en.md) | [cmath.h](../../include/myb/cmath.h), [num.h](../../include/myb/num.h), [io.h](../../include/myb/io.h), [ccsds.h](../../include/myb/ccsds.h) | printing of numbers against CPython — no difference in 6124 values; elliptic functions against mpmath ≤ 5.6 ulp (`test_format`, `test_elliptic`) |
-| Events and geometry: eclipses and the edges of the shadow, ray–shape intersection | [events-geometry](events-geometry.en.md) | [events.h](../../include/myb/events.h), [geometry.h](../../include/myb/geometry.h) | eclipse contacts against CSPICE `gfoclt` 4.4·10⁻¹⁰ s; ray and ellipsoid against `surfpt` 5·10⁻¹⁶ (`test_events`, `test_geometry`) |
+| Events and geometry: eclipses and the edges of the shadow (withdrawn or predicted), ray–shape intersection | [events-geometry](events-geometry.en.md) | [events.h](../../include/myb/events.h), [geometry.h](../../include/myb/geometry.h) | eclipse contacts against CSPICE `gfoclt` 4.4·10⁻¹⁰ s; ray and ellipsoid against `surfpt` 5·10⁻¹⁶ (`test_events`, `test_geometry`) |
 
 ## Two bodies and integrators
 
@@ -30,15 +30,15 @@ The column *Validation* gives one headline check; the passport has the rest.
 | Kepler's equation, elements, universal propagator, two-body STM, mean elements, KS and Sundman | [kepler-regularization](kepler-regularization.en.md) | [kepler.h](../../include/myb/kepler.h), [regular.h](../../include/myb/regular.h) | propagator against MPFR (400 bits) ≤ 4.7·10⁻¹⁵; KS at e = 0.999 — 1.2·10⁻¹² (`test_mpfr_kepler`, `test_regular`) |
 | Lambert, B-plane, shooting, relative motion | [transfers-relative-motion](transfers-relative-motion.en.md) | [lambert.h](../../include/myb/lambert.h), [transfer.h](../../include/myb/transfer.h), [relative.h](../../include/myb/relative.h) | Lambert by shooting 4·10⁻¹² m/s; Clohessy–Wiltshire 3·10⁻¹⁴ (`test_transfer`, `test_relative`) |
 | DOP853, RKN12(10) with its interpolant, Gauss–Jackson | [classical-integrators](classical-integrators.en.md) | [integ.h](../../include/myb/integ.h) | RKN12(10): 10 revolutions at e = 0.9 — 4.8·10⁻¹⁵ of the period (`test_rkn12`) |
-| IAS15 | [ias15](ias15.en.md) | [integ.h](../../include/myb/integ.h) | 10⁴ revolutions at e = 0.3 — 2.8·10⁻¹¹ of the period; Brouwer's law (`test_ias15`) |
+| IAS15 (with the timescale of the jerk for contact) | [ias15](ias15.en.md) | [integ.h](../../include/myb/integ.h) | 10⁴ revolutions at e = 0.3 — 2.8·10⁻¹¹ of the period; Brouwer's law (`test_ias15`) |
 | Symplectic compositions (incl. 7 and 15 stages), WH/WHFast with correctors | [symplectic-integrators](symplectic-integrators.en.md) | [integ.h](../../include/myb/integ.h), [dyn.h](../../include/myb/dyn.h) | coefficients bit for bit with MPFR; observed orders 2 … 8 (`test_mpfr_compositions`, `test_whfast`) |
 
 ## N bodies
 
 | Model | Passport | Header | Validation |
 |---|---|---|---|
-| Direct N-body sums, the interaction graph, threads; the FMM as an approximate level | [nbody](nbody.en.md) | [dyn.h](../../include/myb/dyn.h) | Sum2 ≤ 3.5·10⁻¹⁶ of Σ\|terms\|, bits independent of threads; FMM to the rounding of the direct sum at p = 16 (`test_nbody`, `test_fmm`) |
-| The system of bodies: levels, integrated rotation, tides by band, PN pairs, derivatives | [system-of-bodies](system-of-bodies.en.md) | [system.h](../../include/myb/system.h) | re-integration of DE440 over 5 years: the Moon 4.9 cm, Mercury 2.1 cm (`test_de440_system`) |
+| Direct N-body sums, the interaction graph, threads; the FMM as an approximate level, over threads from 2048 bodies | [nbody](nbody.en.md) | [dyn.h](../../include/myb/dyn.h) | Sum2 ≤ 3.5·10⁻¹⁶ of Σ\|terms\|, bits independent of threads; FMM to the rounding of the direct sum at p = 16, its bits independent of threads too (`test_nbody`, `test_fmm`, `test_fmm_threads`) |
+| The system of bodies: levels, integrated rotation, tides by band, PN pairs, derivatives by variational equations | [system-of-bodies](system-of-bodies.en.md) | [system.h](../../include/myb/system.h) | re-integration of DE440 over 5 years: the Moon 4.9 cm, Mercury 2.1 cm; derivatives of two bodies against the closed form 2.3·10⁻¹⁶ (`test_de440_system`, `test_system`) |
 | Encounters, collisions, mergers, neighbour search | [system-encounters](system-encounters.en.md) | [system.h](../../include/myb/system.h) | contact of two spheres 10⁻¹² of the closed form; 300 spheres — the billiard to 5.6·10⁻¹³ s (`test_system`) |
 
 ## Gravity and tides
@@ -56,7 +56,7 @@ The column *Validation* gives one headline check; the passport has the rest.
 | Model | Passport | Header | Validation |
 |---|---|---|---|
 | 1PN: Schwarzschild, Lense–Thirring, de Sitter, EIH with β, γ, local frames, proper time | [relativity-1pn](relativity-1pn.en.md) | [rel.h](../../include/myb/rel.h), [dyn.h](../../include/myb/dyn.h) | Mercury 42.9804″ per century (5·10⁻⁹ of the formula); EIH against an independent Lagrangian 2.7·10⁻¹⁰ (`test_rel`) |
-| PN binary: 1PN–3.5PN, 4PN with the tail, spin terms, radiation reaction | [pn-binary](pn-binary.en.md) | [rel.h](../../include/myb/rel.h) | coefficients against Blanchet 4·10⁻¹⁶; PSR B1913+16 Ṗ to 3·10⁻⁵ (`test_pn_higher`, `test_pn_binary`) |
+| PN binary: 1PN–3.5PN, 4PN with the tail (on any conic), spin terms to the next order, radiation reaction | [pn-binary](pn-binary.en.md) | [rel.h](../../include/myb/rel.h) | coefficients against Blanchet 4·10⁻¹⁶; PSR B1913+16 Ṗ to 3·10⁻⁵ (`test_pn_higher`, `test_pn_binary`) |
 
 ## Non-gravitational forces
 
@@ -68,7 +68,7 @@ The column *Validation* gives one headline check; the passport has the rest.
 | Comets and outgassing | [comets-outgassing](comets-outgassing.en.md) | [force.h](../../include/myb/force.h) | A2 drift 5·10⁻⁷ from the formula; a comet 5·10⁻⁶ from Gauss's equation averaged (`test_nongrav`) |
 | Drag, gas–surface interaction, continuum, entry heating and ablation | [aerodynamics](aerodynamics.en.md) | [force.h](../../include/myb/force.h), [surface.h](../../include/myb/surface.h) | Sentman's plates over a sphere — the closed form to 5·10⁻¹⁵; ablation against the closed solution 1.9·10⁻¹⁴ (`test_surface`, `test_entry`) |
 | Magnetic fields (IGRF), Lorentz force, charging | [magnetic-field-charging](magnetic-field-charging.en.md) | [force.h](../../include/myb/force.h) | IGRF-14 against ppigrf 1.4·10⁻¹⁵; OML against mpmath 6·10⁻¹⁶ (`test_charge`, `test_charging`) |
-| Contact and landing | [contact-landing](contact-landing.en.md) | [contact.h](../../include/myb/contact.h) | restitution against the closed form 3.5·10⁻¹³ (`test_contact`) |
+| Contact and landing: smooth friction or friction that sticks, under DOP853 or IAS15 | [contact-landing](contact-landing.en.md) | [contact.h](../../include/myb/contact.h) | restitution against the closed form 3.5·10⁻¹³; a lander with the friction that sticks stands on 15° to 9.3·10⁻¹⁴ m/s (`test_contact`) |
 | Micrometeoroid impacts | [micrometeoroids](micrometeoroids.en.md) | [meteoroid.h](../../include/myb/meteoroid.h) | number of impacts 0.4σ from λT; masses — Kolmogorov–Smirnov 1.17 (`test_meteoroid`) |
 
 ## The environment of the Earth
@@ -96,9 +96,9 @@ The column *Validation* gives one headline check; the passport has the rest.
 | Orbit estimation: least squares, filter, smoother | [estimation](estimation.en.md) | [estim.h](../../include/myb/estim.h) | LAGEOS against ILRS 1.57 cm over a week; Roadster 306 m over 7 years, OSIRIS-REx 12.6 m (`test_lageos`, `test_spacecraft`) |
 | Conjunctions and the probability of collision (short and long encounters) | [conjunctions](conjunctions.en.md) | [conjunction.h](../../include/myb/conjunction.h) | round Gaussian 2·10⁻¹⁶; long encounter against Monte Carlo 1.3σ (`test_conjunction`) |
 | CR3BP: Lagrange points, periodic orbits, families, manifolds | [cr3bp-periodic](cr3bp-periodic.en.md) | [cr3bp.h](../../include/myb/cr3bp.h) | JPL catalogue (56 orbits): Jacobi 3.6·10⁻¹⁵, fixed point 9·10⁻¹² (`test_cr3bp`) |
-| CR3BP tori: quasi-periodic orbits, their stability and manifolds | [cr3bp-tori](cr3bp-tori.en.md) | [cr3bp.h](../../include/myb/cr3bp.h) | a circle returns onto itself over 20 turns to 3.7·10⁻¹¹ (`test_cr3bp`, `test_torus_stability`) |
+| CR3BP tori: quasi-periodic orbits, their stability, normal rotation and manifolds | [cr3bp-tori](cr3bp-tori.en.md) | [cr3bp.h](../../include/myb/cr3bp.h) | a circle returns onto itself over 20 turns to 3.7·10⁻¹¹ (`test_cr3bp`, `test_torus_stability`) |
 | Low thrust: thrust arcs, Gauss equations, Edelbaum, Q-law | [low-thrust-qlaw](low-thrust-qlaw.en.md) | [thrust.h](../../include/myb/thrust.h) | Q-law 1234.3 m/s against Edelbaum's 1232.6 (`test_thrust`) |
-| Optimal control: indirect method, NLP, Sims–Flanagan, chains with flybys | [optimal-control](optimal-control.en.md) | [optimal.h](../../include/myb/optimal.h) | 486.84 m/s against Hohmann's 486.82; Sims–Flanagan +0.11 % of the indirect method (`test_optimal`, `test_chain`) |
+| Optimal control: indirect method, NLP, Sims–Flanagan, chains with flybys (powered too) | [optimal-control](optimal-control.en.md) | [optimal.h](../../include/myb/optimal.h) | 486.84 m/s against Hohmann's 486.82; Sims–Flanagan +0.11 % of the indirect method (`test_optimal`, `test_chain`) |
 
 ## Propagation and uncertainty
 

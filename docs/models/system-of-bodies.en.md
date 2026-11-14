@@ -11,9 +11,10 @@ the tide by band with lags, the distortion of a body by a tide and by its own sp
 beyond 1PN of a pair, actions given as functions (light on a mesh among them), the dragging of
 the frame by a spin, a mass that changes, bodies whose motion an ephemeris gives. The rotation of
 chosen bodies (a mantle that may hold a fluid core) is integrated together with the motion, by
-one IAS15 integrator. The criterion of the model is DE440 integrated again from its initial
-state, the Moon with its librations. Encounters, collisions, mergers and contact are in
-[encounters in the system](system-encounters.en.md).
+one IAS15 integrator, and its derivatives with respect to the state and the gravitational
+parameters come from variational equations integrated with it. The criterion of the model is
+DE440 integrated again from its initial state, the Moon with its librations. Encounters,
+collisions, mergers and contact are in [encounters in the system](system-encounters.en.md).
 
 ## Source
 
@@ -46,7 +47,8 @@ Header [`myb/system.h`](../../include/myb/system.h):
 - the state and the integration: `myb_system_coordinates`, `myb_system_pack_rotation`,
   `myb_system_unpack_rotation`, `myb_system_pack_spins`, `myb_system_unpack_spins`,
   `myb_system_integrator`, `myb_system_acceleration`, `myb_system_inertia`;
-- the derivatives: `myb_system_partials`;
+- the derivatives: `myb_system_partials` (variational equations; a system with contacts by
+  differences of propagations);
 - structures `myb_system_rotation`, `myb_system_tide`, `myb_system_pn_pair`,
   `myb_system_view`, `myb_system_light`; the callback `myb_system_action`; the limits
   `MYB_SYSTEM_MAX_*`.
@@ -78,7 +80,22 @@ Header [`myb/system.h`](../../include/myb/system.h):
 - The mass rate is relative, in 1/s: gm(t) = gm (1 + rate (t − epoch)). The spin of frame
   dragging is the angular momentum per unit mass (m²/s) in the axes of the system, copied.
 - `myb_system_partials`: phi is 2n × 2n, row-major, ∂y₁ᵢ/∂y₀ⱼ; the sensitivity 2n × count,
-  ∂y₁ᵢ/∂gm_k; steps of 10⁻⁶ of the largest coordinate of each kind (or rate), or of the gm.
+  ∂y₁ᵢ/∂gm_k (any of them, and y₁, may be NULL). The variational equations
+  dx″ = A dx + B dv (+ ∂a/∂gm_k), A and B the derivatives of `myb_system_acceleration`, are
+  integrated with the state by IAS15 (options as `myb_system_integrator`): the 2n columns of Φ
+  from the unit matrix, one column per gm from zero, riding along the steps of the state, so
+  that y₁ is that of a propagation without them, bit for bit. The Jacobian is assembled at every
+  evaluation level by level: analytic for the Newtonian point masses (also where the FMM
+  approximates them), the field of a body turned from outside, on a point and back on the body
+  (the gradient of the harmonic field), frame dragging and the guided bodies; the other levels —
+  1PN, the fields of integrated rotations, figures, tides, pairs beyond 1PN and their spins,
+  actions, contacts, the equations of rotation — are evaluated inside the evaluation with one
+  coordinate (or gm) moved by ±h, h = 2⁻¹⁷ of its size (the distance to the nearest neighbour or
+  to the surface under it, the relative or circular speed, 1 for a quaternion, the rate of a
+  rotation, a spin, the gm), made a power of two. The derivative with respect to the gm of a body
+  whose mass changes is with respect to the gm given; that of a field with respect to the gm of
+  the system takes only the ratio of the masses. A system with contacts is taken by central
+  differences of whole propagations. The system is left as it was.
 
 ## Domain of validity
 
@@ -105,7 +122,7 @@ Header [`myb/system.h`](../../include/myb/system.h):
 ## Accuracy
 
 Levels, in `test_system` ([tests/unit/test_system.c](../../tests/unit/test_system.c)); the
-figures are those of the plan (phases 18 and 22), the test bounds are looser:
+figures are those of the plan (phases 18, 21 and 22) and of the header, the test bounds are looser:
 
 | What | Reference | Result |
 |---|---|---|
@@ -118,7 +135,11 @@ figures are those of the plan (phases 18 and 22), the test bounds are looser:
 | PN pair among three bodies, with spins | `myb_pn_binary_evaluate` | 9·10⁻¹⁷ |
 | Light on a mesh: the torque through the equations of rotation | the mesh itself | 8·10⁻¹⁵ |
 | Light with thermal inertia (`test_surface`) | θ = 0: the mesh of the moment; mean over a turn: `myb_force_yorp` | 1.5·10⁻¹⁵; 3.5·10⁻¹⁶ (θ = 0, 0.7, 3) |
-| Derivatives, two bodies over 4000 s | closed transition matrix (`myb_kepler_stm`) | 1.8·10⁻¹¹ of the largest element; ∂/∂gm 6·10⁻¹¹ |
+| Derivatives, two bodies over 4000 s | closed transition matrix (`myb_kepler_stm`) | 2.3·10⁻¹⁶ of the largest element (the differences of whole propagations, before phase 21: 1.8·10⁻¹¹, ∂/∂gm 6·10⁻¹¹) |
+| The Jacobian of a system with every level | differences of the acceleration | 1.5·10⁻⁸ at worst of the elements those resolve |
+| The derivatives of that system over 2000 s | differences of propagations | 5·10⁻⁸ where these resolve them |
+| A conservative system of five bodies with a field and a guided body | the symplectic form | kept to 4.1·10⁻¹⁶ |
+| A block resting on a plane (contact) | differences of propagations (2·10⁻⁸) | the variations drift: 10⁻⁴ of the largest element with the friction that sticks, all of it with the smooth one — hence differences for contacts; the Jacobian with the columns of the springs exact against differences of the acceleration |
 
 Bounds checked by the test without a figure in the plan: a massless body about a guided centre
 returns after a period to 10⁻¹¹ of the radius; a guided planet pulls as the same planet
@@ -161,7 +182,11 @@ Mercury, Venus and Mars by 2 cm after a year and 10 cm after 5 years.
   (1828 steps, 77 498 evaluations; plan, phase 18).
 - A guided body: its provider is called once per instant of a step, 8 times a step in place of
   20–40 (plan, phase 20).
-- `myb_system_partials`: two propagations per column (header).
+- `myb_system_partials`: one propagation of the state with 2n + count columns; per evaluation
+  the analytic levels once and two evaluations of the differenced levels per coordinate they
+  depend on — 2.6–3.5 times cheaper than two whole propagations per column for two bodies,
+  1.3–2 times for the system with every level (header). A system with contacts: two
+  propagations per column.
 
 ## Limitations
 
@@ -179,10 +204,13 @@ Mercury, Venus and Mars by 2 cm after a year and 10 cm after 5 years.
   not modelled (the Earth 21 cm); the phase of the points of the Kuiper-belt ring is not
   published (the outer planets 0.46–6.1 m); the pole of the Earth is the CIP of IAU 2006/2000A,
   where DE440 has a simpler model.
-- The derivatives are central differences of whole propagations: a part in 10⁹…10¹¹ of a
-  derivative, two propagations per column, wrong across an encounter.
-- Phase 21 adds: the variational equations of the whole system (in place of differences of
-  propagations).
+- In the variational equations the levels other than the point masses, the fields turned from
+  outside, frame dragging and the guided bodies enter the Jacobian by central differences inside
+  the right-hand side (1.5·10⁻⁸ against differences of the acceleration). The derivatives are
+  wrong across an encounter (the motion branches).
+- A system with contacts keeps central differences of whole propagations (2·10⁻⁸ of the largest
+  element for a block resting on a plane; two propagations per column): a contact is stiff where
+  the state is quiet, and variations that ride on the steps of the state drift there.
 
 ## Data
 

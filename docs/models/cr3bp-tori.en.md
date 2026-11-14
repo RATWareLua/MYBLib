@@ -5,13 +5,14 @@
 ## What it is
 
 Quasi-periodic orbits of the circular restricted three-body problem — Lissajous orbits about
-planar Lyapunov orbits, quasi-halo orbits, quasi-periodic distant retrograde orbits (the
-families measured) — as two-dimensional invariant tori about a periodic orbit whose monodromy
-matrix has a pair of eigenvalues exp(±iρ) on the unit circle. A torus is found as an invariant
-circle of the flow over a time T: the curve that the flow carries onto itself turned by the
-angle ρ. Tori are followed along one-parameter families; their linear stability is the spectrum
-of the linearised map of the circle, and the stable and unstable manifolds of a hyperbolic torus
-can be started from it and carried to a surface of section. The periodic orbits themselves are
+planar and vertical Lyapunov orbits, quasi-halo orbits, quasi-periodic distant retrograde orbits
+(the families measured) — as two-dimensional invariant tori about a periodic orbit whose
+monodromy matrix has a pair of eigenvalues exp(±iρ) on the unit circle. A torus is found as an
+invariant circle of the flow over a time T: the curve that the flow carries onto itself turned
+by the angle ρ. Tori are followed along one-parameter families; their linear stability is the
+spectrum of the linearised map of the circle, and the stable and unstable manifolds of a
+hyperbolic torus can be started from it and carried to a surface of section; an elliptic torus
+has a normal rotation σ and a normal bundle that the map turns by it. The periodic orbits themselves are
 in [their passport](cr3bp-periodic.en.md).
 
 ## Source
@@ -22,8 +23,10 @@ in [their passport](cr3bp-periodic.en.md).
   (2001).
 - The handling of the two conditions the invariance equation holds too few (the flow keeps the
   Jacobi integral and the action ∮p·dq, so two multipliers at their gradients take their
-  place; the matrix of the symplectic form in x, v is derived from the equations of motion) and
-  the grouping of the eigenvalues into circles are the library's own.
+  place; the matrix of the symplectic form in x, v is derived from the equations of motion), the
+  grouping of the eigenvalues into circles and the rule that picks the normal rotation (the
+  member of the circle whose eigenfunction has the least root-mean-square frequency) are the
+  library's own.
 - Implemented from the publications; no third-party code, no data files.
 
 ## Interface
@@ -34,7 +37,8 @@ Header [`myb/cr3bp.h`](../../include/myb/cr3bp.h):
   structure `myb_cr3bp_torus`, enum `myb_cr3bp_torus_family` (`MYB_CR3BP_TORUS_JACOBI`,
   `MYB_CR3BP_TORUS_PERIOD`, `MYB_CR3BP_TORUS_ROTATION`);
 - `myb_cr3bp_torus_stability`, `myb_cr3bp_torus_manifold`; structure
-  `myb_cr3bp_torus_spectrum`;
+  `myb_cr3bp_torus_spectrum`, with the normal pair of an elliptic torus in `normal_rotation`,
+  `normal_eigenvalue`, `normal_frequency`, `normal_residual`, `normal_re`, `normal_im`;
 - `myb_cr3bp_propagate` with a `myb_cr3bp_section`;
 - constants `MYB_CR3BP_MAX_CIRCLE` (35), `MYB_CR3BP_MAX_SPECTRUM`.
 
@@ -67,6 +71,17 @@ Header [`myb/cr3bp.h`](../../include/myb/cr3bp.h):
   |Av − λv|/(|λ||v|) and the share of their energy above half the highest frequency.
   `tolerance` (10⁻⁴) is the distance within which an eigenvalue counts as on the unit circle, at
   1, or a turn of another.
+- The normal pair of an elliptic torus: two circles exp(i(σ − kρ)) and their conjugates, so σ is
+  defined modulo ρ. Of the resolved elliptic eigenvalues in the upper half plane the one whose
+  complex eigenvector (by inverse iteration on A in complex arithmetic, its Fourier coefficients
+  c_k over k = −(n − 1)/2 … (n − 1)/2) has the least root-mean-square frequency
+  (Σ k²|c_k|² / Σ |c_k|²)^(1/2) is taken: its eigenfunction tends to the constant eigenvector of
+  the orbit as the torus shrinks, and σ to the angle of the orbit's elliptic pair. Out: σ in
+  (0, π] (0: no elliptic pair), the eigenvalue, that frequency, the residual |Aψ − λψ|/(|λ||ψ|)
+  and ψ at the points (unit root mean square, the largest component of its mean real and
+  positive); with its conjugate ψ spans the normal bundle, Φ(θ) ψ(θ) = exp(iσ) ψ(θ + ρ).
+- `myb_cr3bp_torus_from_orbit` takes the centre pair of a vertical Lyapunov orbit as of any
+  other.
 - `myb_cr3bp_torus_manifold`: the point of the circle at an angle displaced by ε (length units)
   along the position part of the eigenfunction there; the side +1 is that of growing x on the
   mean (towards the Moon from a torus about L1). The unstable manifold leaves forward in time,
@@ -114,10 +129,18 @@ another integrator (DOP853) than the solver's:
 | A torus about a distant retrograde orbit, 21 points | — | all elliptic (42 of 126 eigenvalues; the rest trivial or unresolved); at a size of 0.02 spurious eigenvalues 5.6 % off the unit circle reported unresolved, the torus still elliptic |
 | Manifolds, ε = 10⁻⁹ | growth by λ in a turn | to 3.4·10⁻⁶, forward on the unstable one, backward on the stable one |
 | Manifolds of a Lissajous torus carried to x = 1 − μ, ε 10⁻⁶ … 10⁻⁴ | the manifolds of its Lyapunov orbit | they cross where those do, off by the size out of the plane and by its square in it (4·10⁻⁴ in y, vy at size 10⁻³, ratio 3.994); Jacobi constant kept to 4·10⁻¹⁵; the stable manifold the mirror image of the unstable one |
+| The normal rotation: tori of 21 points on either pair of a distant retrograde orbit (pairs at 1.487246569 and 2.226143226 rad), sizes 10⁻³, 2·10⁻³, 4·10⁻³ | the angle of the other pair of the orbit | σ off by 6.86·10⁻⁶, 2.74·10⁻⁵, 1.09·10⁻⁴ — the size squared (ratios 3.997 and 3.987); on the other pair −6.4·10⁻⁷ (ratios 4.02 and 4.06) |
+| The normal eigenfunction | the eigenvector of the orbit | 2.6·10⁻³ at the worst point (as the size: ratios 2.000 and 2.001), its mean 2.0·10⁻⁵ (as the square: 4.000) |
+| The same | A ψ = λψ; \|λ\| = 1; between the points, by the transition matrices of interpolated points, Φ ψ = λ ψ(θ + ρ) | 2·10⁻¹⁵; 3·10⁻¹⁵; 7.5·10⁻¹³ of ψ |
+| 25 and 35 points against 21 | σ | 5·10⁻¹⁵ |
+| Tori of 25 points about the vertical Lyapunov orbits of L1 and L2 reaching 11 500 km out of the plane (λ 3231 and 1937, centre pairs 0.2078 and 0.2850 rad), sizes 10⁻³, 2·10⁻³, 4·10⁻³ | the circle after a turn (DOP853) | returns to 1.3·10⁻¹¹; the Jacobi constant one over the circle to 10⁻¹⁴ |
+| The same | the centre pair and the unstable eigenvalue of the orbit | ρ off by −6.0·10⁻⁶ at 10⁻³, ratios 4.000 and 4.000 at both points; the unstable eigenvalue −2.0·10⁻⁵ and −1.7·10⁻⁵, ratios 4.000; every hyperbolic member resolved, no normal rotation |
 
 ## Cost
 
-The spectrum costs as (6n)³: 35 points give a matrix of 210, 0.2 s (header).
+The spectrum costs as (6n)³: 35 points give a matrix of 210, 0.2 s (header). The normal rotation
+of an elliptic torus adds one complex LU of A per candidate (about n of them): the spectrum takes
+0.1 s with 21 points, 0.35 s with 35.
 
 ## Limitations
 
@@ -127,7 +150,11 @@ The spectrum costs as (6n)³: 35 points give a matrix of 210, 0.2 s (header).
 - A manifold state is the linear displacement along the eigenfunction; the circle's error grows
   with it.
 - A continuation step that does not converge must be shortened by the caller.
-- Phase 21 adds: the normal rotation of elliptic tori and tori about vertical Lyapunov orbits.
+- The normal rotation is a choice among the members of a circle (σ is defined modulo ρ): the
+  rule of the smoothest eigenfunction continues the orbit's own angle as the torus shrinks, and
+  other rules would give σ − kρ. A hyperbolic torus has none.
+- The vertical Lyapunov orbits of the test come from the second-order guess of the figure eight
+  corrected by the symmetric corrector; the tori about them are hyperbolic.
 
 ## Data
 

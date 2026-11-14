@@ -38,7 +38,9 @@ for light time, and the angles of illumination.
   `myb_event_shape`. They are used with `myb_orbit_event` of
   [`myb/orbit.h`](../../include/myb/orbit.h).
 - [`myb/model.h`](../../include/myb/model.h): `myb_break_function`, `MYB_MODEL_MAX_BREAKS`,
-  `myb_force_model_add_break`, `myb_force_model_break_count`, `myb_force_model_break`.
+  `myb_force_model_add_break`, `myb_force_model_break_count`, `myb_force_model_break`; the
+  scheme of the breaks `myb_break_scheme` (`MYB_BREAKS_RETAKE`, `MYB_BREAKS_PREDICT`),
+  `myb_force_model_set_break_scheme`, `myb_force_model_break_scheme`.
 - [`myb/geometry.h`](../../include/myb/geometry.h): `myb_ray_ellipsoid`,
   `myb_ellipsoid_nearest`, `myb_ellipsoid_normal`, `myb_ellipsoid_limb`,
   `myb_ellipsoid_terminator`; `myb_polyhedron_face_count`, `myb_polyhedron_face_normal`,
@@ -61,7 +63,14 @@ for light time, and the angles of illumination.
   estimator and the filter all see them. After a step the breaks are examined on its dense
   output; a step that contains a sign change is withdrawn and retaken from its beginning up to
   the root, with the polynomial of the withdrawn step as the prediction; the integrator is not
-  restarted (the state, Φ and S continue). `myb_term_radiation_breaks` declares two breaks per
+  restarted (the state, Φ and S continue). That is `MYB_BREAKS_RETAKE`, the default. With
+  `MYB_BREAKS_PREDICT` (IAS15; from the next `myb_orbit_start`) the break functions are examined
+  before a step on the polynomial of the last step carried over the step to come, a predicted
+  sign change becomes the end of the step, and once taken the step is reshaped (warm, in a sweep
+  or two) until the root of its own polynomial is at its end to 2⁻³⁰ of the step — no step is
+  taken across a break and thrown away; the step after a break is planned at most a quarter of
+  the one before it, a break the prediction misses is met as by withdrawing. DOP853 and RKN12
+  restart at a break in either case. `myb_term_radiation_breaks` declares two breaks per
   occulter of a radiation term.
 - Geometry: everything in the body-fixed frame, centre at the origin, in m; the caller turns
   inertial vectors with the body's orientation. Ellipsoids by their semi-axes along x, y, z;
@@ -96,6 +105,8 @@ for light time, and the angles of illumination.
 | What | Reference | Result |
 |---|---|---|
 | Final position over ε = 10⁻⁹…10⁻¹², 12 000 km orbit, 0.2 m²/kg, two days, 54 edges | the same at ε = 10⁻¹³ | 6.4 m without breaks, 8·10⁻⁷ m with them |
+| The same, the breaks by prediction (`MYB_BREAKS_PREDICT`) | the same; withdrawing | within 8.4·10⁻⁷ m (withdrawing 8.2·10⁻⁷ m), the two 4·10⁻⁷ m apart at 10⁻¹³; without the quarter step after an edge 1.2·10⁻⁴ m at 10⁻⁹ (the predicted edges right to 3·10⁻⁷ s) |
+| LAGEOS week, both schemes, ε = 10⁻⁹ … 10⁻¹² | each other | the first-guess residual within 3·10⁻⁶ m of withdrawing at 10⁻¹², the fit 1.5685 cm either way |
 | Φ across eight edges; ∂x/∂c_r | differences of whole propagations | 7·10⁻⁸ (largest element 25); 2·10⁻⁷ m of 49 m |
 | LAGEOS week, residual of the first guess at ε = 10⁻¹⁰, 10⁻¹¹, 10⁻¹² | itself | 25.9587 m at all three in phase 16 (without breaks 25.9520 and 25.9582 m); 25.8887 m since the secondary ocean-tide waves of phase 20 |
 | Apsides; nodes and a sphere, ellipse e = 0.3 | Kepler's equation | 2·10⁻¹¹ s; 10⁻¹² s |
@@ -121,6 +132,13 @@ Moon in the week).
 
 - Breaks: withdrawing the step costs +26 % of the time of the LAGEOS fit (the first version,
   a cold restart at every edge, cost +70 %); LAGEOS takes 2290 steps a week instead of 2177.
+- Prediction against withdrawing: on the orbit of two days 557, 742, 993, 1362 steps against
+  517, 701, 953, 1308 at ε = 10⁻⁹ … 10⁻¹² (a step more an edge, the quarter step after it); on
+  the LAGEOS fit 160 570, 188 045, 240 809, 314 696 evaluations of the model against 169 778,
+  196 804, 244 341, 318 308 at ε = 10⁻⁹, 10⁻¹⁰, 10⁻¹¹, 10⁻¹² (5.4, 4.5, 1.4, 1.1 % fewer), and no
+  gain in time (the least of three rounds on a shared machine, withdrawing / predicting: 28.6 /
+  26.0, 31.9 / 35.7, 40.5 / 44.3, 53.3 / 50.9 s; one case spread over a factor of two). Most of
+  the 26 % is the shorter steps around the edges, which every scheme pays.
 - A ray on a mesh of 16 128 faces through the tree of boxes: 1.0 µs, against 640 µs over every
   face.
 
@@ -129,9 +147,11 @@ Moon in the week).
 - The event geometry is instantaneous: no light time; the elevation has no refraction.
 - `myb_event_shape` jumps at the surface: the crossing is bracketed and halved, some fifty
   evaluations, each a pass over the faces.
-- Each edge of a shadow costs one withdrawn step. Predicting the edge before the step from the
-  step's polynomial was tried and lost: 7·10⁻⁴ m at ε = 10⁻⁹ and 5·10⁻⁶ m at 10⁻¹² against
-  8·10⁻⁷ m for withdrawing, with the same number of steps.
+- By default each edge of a shadow costs one withdrawn step. Ending the step short of the edge
+  predicted from the polynomial (phase 16) lost: 7·10⁻⁴ m at ε = 10⁻⁹ and 5·10⁻⁶ m at 10⁻¹²
+  against 8·10⁻⁷ m for withdrawing. The scheme that reshapes the step to the edge its own
+  polynomial finds (`MYB_BREAKS_PREDICT`) is as accurate, but saves only 1–5 % of the
+  evaluations and no time that shows, so it is not the default.
 - With aberration `myb_view_body` differs from CSPICE's `CN+S` by 13 m at 1 au: CSPICE takes
   the classical formula, the library the exact Lorentz transformation (they differ by (v/c)²,
   25 m). Without the light-time correction a point on the Earth is 8 m off.
@@ -139,8 +159,6 @@ Moon in the week).
   equally near a point, `myb_polyhedron_nearest` gives the first.
 - In phase 22 `myb_ellipsoid_nearest` stopped refusing points just off a sphere (its Newton
   steps fell below the resolution); every value it returned before is the same.
-- Phase 21 adds: the edge of the shadow without withdrawing the step (a speed-up, to be judged
-  by measurement).
 
 ## Data
 

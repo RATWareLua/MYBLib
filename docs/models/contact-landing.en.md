@@ -8,9 +8,12 @@ The contact of a body with the surface of a shape: the landing, the rebound, sli
 to rest. The body touches the surface with contact spheres fixed in its frame (one about the
 centre for a ball, the pads of the legs of a lander); a sphere that presses in is pushed back by
 the normal force of Hunt and Crossley, whose restitution has a closed form, and rubbed by a
-Coulomb friction made smooth. The surface is a plane, a triaxial ellipsoid or a closed triangular
-mesh. Three ways in: the force on a body in a given state, a term of a force model with an event
-for the touch, and a level of a system of bodies with the torques on integrated rotations.
+Coulomb friction made smooth, or by a friction that sticks — a spring with a slip limit whose
+deflection is a state of its own. The surface is a plane, a triaxial ellipsoid or a closed
+triangular mesh. Three ways in: the force on a body in a given state, a term of a force model
+with an event for the touch, and a level of a system of bodies with the torques on integrated
+rotations. It is integrated with DOP853, or with IAS15 in `myb_orbit` given the timescale of the
+jerk and the breaks at the touches.
 
 ## Source
 
@@ -21,6 +24,14 @@ for the touch, and a level of a system of bodies with the torques on integrated 
 - Friction: f_t = −μ f_n u / √(|u|² + v_s²). A switch between sticking and sliding needs a state
   of its own (P. R. Dahl, 1968; C. Canudas de Wit et al., *IEEE Trans. Autom. Control* 40, 419,
   1995), which a term of a force model, a function of the state alone, cannot carry.
+- Friction that sticks: the elasto-plastic element of Prandtl, the "spring with a slip limit" of
+  the discrete element method (P. A. Cundall, O. D. L. Strack, *Géotechnique* 29, 47, 1979):
+  f_t = −P_L(k_t z + c_t u), L = μ f_n, P_L(F) = F min(1, L/|F|), and the deflection follows the
+  point, z′ = u − φ ẑ max(0, ẑ·u) − ẑ max(0, k_t|z| − 2L)/c_t, φ rising from 0 at 0.95 L to 1 at
+  L (the band, the drawing back beyond twice the limit and the energy statement are the
+  library's own, written in the header).
+- IAS15 through a contact: the timescale τ₁² = 2|a′|² / (|a″|² + |a′||a‴|), one derivative up
+  from that of D. Pham, H. Rein, D. S. Spiegel (2024) — see [IAS15](ias15.en.md).
 - Nearest point of a mesh: `myb_polyhedron_nearest`; of an ellipsoid: `myb_ellipsoid_nearest`
   (both of [`myb/geometry.h`](../../include/myb/geometry.h)).
 - Implemented from the papers; no third-party code, no data files.
@@ -31,14 +42,21 @@ Header [`myb/contact.h`](../../include/myb/contact.h):
 
 - the surface: `myb_contact_shape` (`MYB_CONTACT_PLANE`, `MYB_CONTACT_ELLIPSOID`,
   `MYB_CONTACT_MESH`), `myb_contact_surface`, `myb_contact_surface_nearest`;
-- the law: `myb_contact_law`, `myb_contact_point`, `myb_contact_result`, `myb_contact_force`,
+- the law: `myb_contact_law` (with `kind`, `tangential_stiffness`, `tangential_damping`),
+  `myb_contact_friction` (`MYB_CONTACT_FRICTION_SMOOTH`, `MYB_CONTACT_FRICTION_STICK`),
+  `myb_contact_point`, `myb_contact_result`, `myb_contact_force`, `myb_contact_force_stick`,
   `myb_contact_restitution`, `myb_contact_damping`;
 - the term: `myb_contact_term`, `myb_term_contact`, the event and break `myb_event_contact`.
 
 Header [`myb/system.h`](../../include/myb/system.h): `myb_system_contact`,
-`myb_system_add_contact` — see [encounters in a system](system-encounters.en.md). Contact
-problems are integrated with DOP853 (`myb_orbit` with `MYB_ORBIT_DOP853`, or `myb_dop853` of
-[`myb/integ.h`](../../include/myb/integ.h); [classical integrators](classical-integrators.en.md)).
+`myb_system_add_contact`, `myb_system_pack_contact`, `myb_system_unpack_contact` — see
+[encounters in a system](system-encounters.en.md). Contact problems are integrated with DOP853
+(`myb_orbit` with `MYB_ORBIT_DOP853`, or `myb_dop853` of
+[`myb/integ.h`](../../include/myb/integ.h); [classical integrators](classical-integrators.en.md)),
+or with IAS15 in `myb_orbit`: `myb_orbit_options.timescale = MYB_IAS15_TIMESCALE_JERK`
+(`myb_ias15_timescale` of `myb/integ.h`), `myb_event_contact` declared a break
+(`myb_force_model_add_break`; either scheme of `myb_force_model_set_break_scheme`,
+[`myb/model.h`](../../include/myb/model.h)).
 
 ## Inputs and outputs
 
@@ -69,8 +87,21 @@ problems are integrated with DOP853 (`myb_orbit` with `MYB_ORBIT_DOP853`, or `my
 - System: the ground is pushed back by the ratio of the masses at the same points, so momentum
   and angular momentum are kept (a ground of gm 0 is not pushed); the torques turn the bodies
   whose rotation is integrated.
+- Friction that sticks (`kind` = `MYB_CONTACT_FRICTION_STICK`): k_t > 0 in s⁻² and c_t ≥ 0 in
+  1/s per unit mass where μ > 0 (v_s is not used). The deflection z of each point — the point
+  less its anchor, m, in the axes of the surface — is carried with the state: in a system 3
+  coordinates a point after every other kind (`myb_system_pack_contact`; zero — the springs at
+  rest); with `myb_contact_force_stick` the caller's integrator gives `deflection` and gets
+  `deflection_rate`. Below 0.95 of the limit the anchor holds, and a body on a slope below the
+  angle of friction stays where it is, held by springs deflected by its weight (g sin α / k_t of
+  a single point); at the limit the anchor is dragged and the force is μ f_n along the spring —
+  Coulomb's law exactly; a spring left beyond twice the limit is drawn back at the rate
+  k_t / c_t; a point off the surface keeps its deflection and is released against the limit when
+  it touches again. The result's energy adds Σ k_t |z|²/2.
 - Energy: dE/dt = −Σ (k χ dⁿ ḋ² + μ f_n |u|² / √(|u|² + v_s²)) ≤ 0; a contact never adds
-  energy.
+  energy. With the friction that sticks, the energy of its springs counted, dE/dt ≤ 0 in every
+  case (exact on a plane: on a curved surface the tangent plane turns under a point that
+  slides).
 
 ## Domain of validity
 
@@ -79,13 +110,22 @@ problems are integrated with DOP853 (`myb_orbit` with `MYB_ORBIT_DOP853`, or `my
   finite) or point, no points, a state that is not finite; `MYB_E_NOCONV` from the ellipsoid.
 - `myb_contact_restitution`: `MYB_E_DOMAIN` for negative or non-finite values (χ = 0 or v = 0
   give 1). `myb_contact_damping`: `MYB_E_DOMAIN` for e outside (0, 1], v not positive.
-- Integrate with DOP853, not IAS15: the step of IAS15 follows the time scale of the acceleration,
-  which passes through zero at every touch; the header records that a ball dropped on a plane
-  stops IAS15 with `MYB_E_STEP_MIN` within its first contact.
+- The friction that sticks needs its state: `myb_contact_force` and `myb_term_contact` refuse it
+  (`MYB_E_DOMAIN`); `myb_contact_force_stick` refuses a deflection that is missing or not
+  finite. Keep c_t > 0: it damps the springs where the anchor holds and draws back a spring
+  overstretched.
+- IAS15 goes only in `myb_orbit` and only given three things. The timescale
+  `MYB_IAS15_TIMESCALE_JERK`: with the timescale of the acceleration, which passes through zero
+  twice in every bounce, a ball dropped on a plane stops IAS15 with `MYB_E_STEP_MIN` within its
+  first contact. The breaks at the touch and the parting (`myb_event_contact`), so that no step
+  holds the kink of a touch. Some other force on the body during the contact (gravity): where
+  nothing else acts the acceleration leaves zero as a power of the time at both ends of a
+  contact, and no timescale is defined there. A system of bodies with contacts goes with DOP853:
+  it does not end its steps at the touches.
 
 ## Accuracy
 
-All in [test_contact](../../tests/unit/test_contact.c), DOP853 at 10⁻¹³:
+All in [test_contact](../../tests/unit/test_contact.c), DOP853 at 10⁻¹³ unless said otherwise:
 
 | What | Reference | Result |
 |---|---|---|
@@ -102,15 +142,42 @@ All in [test_contact](../../tests/unit/test_contact.c), DOP853 at 10⁻¹³:
 | A spinning ball off a turning ellipsoid of its system | momentum; angular momentum of orbits and spins | 2·10⁻¹⁶; 1.2·10⁻¹³ |
 | Nearest point of a cube; of a star-shaped mesh of 528 faces | its closed form; a search of every face | exact; 4·10⁻¹⁶, inside and outside as the solid angle says at 3000 points |
 
+Friction that sticks (k_t = 10⁴ s⁻², c_t = 100 s⁻¹, μ = 0.6, g = 1.62 m/s²; a system under
+DOP853):
+
+| What | Reference | Result |
+|---|---|---|
+| A block let go on 25° | rest at the deflection of its weight, 6.8464·10⁻⁵ m | to 10⁻⁹ of it (its overshoot, 0.90 of the limit, stays below the band); 7.5·10⁻¹⁸ m moved in the last 30 s of a minute; the same place to 1.6·10⁻¹⁸ m at rtol 10⁻⁹ … 10⁻¹² |
+| The slope turned slowly to a part in a thousand below the angle of friction; a part above it | it holds; g (sin α − μ cos α) | 1.11 slip deflections down, 5.7·10⁻¹⁵ m in its last 40 s; slides to 2.5·10⁻¹³ |
+| The lander on 15° (k_t = 1000 s⁻², c_t = 16 s⁻¹ a leg) | at rest | 9.3·10⁻¹⁴ m/s after 20 s (the smooth law creeps at 5.0·10⁻⁴ m/s), 1.6·10⁻¹⁴ m in its last 10 s; the legs bear its weight to 10⁻¹¹; the same place to 1.1·10⁻⁹ m at rtol 10⁻⁹ … 10⁻¹¹ |
+| The same on 40° | g (sin α − μ cos α) | 8.3·10⁻⁸; the energy never grows by more than 4.4·10⁻¹⁶ m²/s² |
+
+Under IAS15 (ε = 10⁻⁹, 10⁻¹⁰, 10⁻¹², the timescale of a′, the touches predicted) against DOP853
+at rtol 10⁻¹²:
+
+| What | Reference | Result |
+|---|---|---|
+| The ball dropped 0.2 m on the Moon | the 24 touches of DOP853 | 24 touches, at 7.0·10⁻⁸, 1.4·10⁻⁸, 7.6·10⁻⁹ s of them (the touches withdrawn: 5.0·10⁻⁸, 2.6·10⁻⁸, 3.3·10⁻⁹ s); at rest at its height to 1.5·10⁻¹⁶ m; the energy never up by more than 1.1·10⁻¹⁶ m²/s² |
+| The sliding block | its three speeds by DOP853 (and the closed form) | at 7.9·10⁻¹¹, 1.0·10⁻¹¹, 9.1·10⁻¹⁴ s |
+| The same ball with the timescale of the acceleration alone | — | `MYB_E_STEP_MIN` at the first contact |
+
 ## Cost
 
-Not measured.
+Steps counted in `test_contact` (no timings): the lander on 15° takes 3402 steps of DOP853 with
+the friction that sticks against 7653 with the smooth law, on 40° 80 854 (the direction of a
+spring of 0.2 mm follows a velocity of metres a second); the dropped ball under IAS15 13 789,
+18 778 and 34 922 steps at ε = 10⁻⁹, 10⁻¹⁰, 10⁻¹² (the touches withdrawn: 14 039, 19 024,
+35 180; DOP853 6729); the sliding block about 2300 (DOP853 489).
 
 ## Limitations
 
-- Friction does not stick: on a slope below the angle of friction a body creeps at
-  v_s t / √(1 − t²). For |u| ≫ v_s the friction falls short of μ f_n by (v_s/u)²/2. Near rest it
-  is stiff, μ f_n / v_s per unit of speed, and that sets the step.
+- The smooth friction does not stick: on a slope below the angle of friction a body creeps at
+  v_s t / √(1 − t²). For |u| ≫ v_s it falls short of μ f_n by (v_s/u)²/2. Near rest it is
+  stiff, μ f_n / v_s per unit of speed, and that sets the step.
+- The friction that sticks has a state: no term of a force model can carry it, only a system
+  or the caller's integrator. Its rate has corners (the band, the projection at the limit):
+  continuous, not smooth, so DOP853 goes through measuring its error; a slide on 40° costs it
+  tens of thousands of steps.
 - No adhesion: a force that would be negative is held at zero.
 - The closed-form restitution leaves out the other forces during the contact (the impulse of
   gravity, of the order g τ / v).
@@ -118,8 +185,9 @@ Not measured.
   mesh feels the nearer wall alone. The surface is at rest in its own frame.
 - The term moves the object's centre only and does not push the body back; a body that turns
   needs the system level.
-- Contact runs under DOP853; IAS15 stops at a touch.
-- Phase 21 adds: friction that sticks (a law with a state of its own) and contact under IAS15.
+- IAS15 only in `myb_orbit`, with the timescale of the jerk, the breaks at the touches and some
+  other force during the contact; a system with contacts goes with DOP853 (the system does not
+  end its steps at the touches). Contact under RKN12(10) is not tested.
 
 ## Data
 

@@ -187,6 +187,57 @@
   Симса–Фланагана (`myb_sims_flanagan.field`); цепочки участков с пролётами — `myb_chain`,
   `myb_chain_size`, `myb_chain_guess`, `myb_chain_evaluate`, `myb_chain_solve`;
   `myb_nlp_options.weight`.
+- Фаза 21. Массовые формы вызовов (`*_many`, 26 функций: один вызов на ряд, биты одиночного
+  вызова в цикле, индекс отказавшего элемента): в `myb/time.h` — `myb_time_from_seconds_many`,
+  `myb_time_seconds_many`, `myb_calendar_to_time_many`, `myb_time_to_calendar_many`,
+  `myb_timesys_convert_many`, `myb_timesys_from_utc_many`, `myb_timesys_to_utc_many`; в
+  `myb/kin.h` — `myb_spk_state_many`, `myb_spk_state_in_many`; в `myb/frames.h` —
+  `myb_cip_terrestrial_many`, `myb_cip_xys_many`, `myb_eop_at_many`,
+  `myb_equinox_rotation_many`, `myb_equinox_teme_pef_many`, `myb_wgccre_rotation_many`,
+  `myb_pck_rotation_many`, `myb_orientation_many`, `myb_frame_graph_rotation_many`,
+  `myb_rotation_apply_position_many`, `myb_rotation_apply_state_many`; в `myb/kepler.h` —
+  `myb_kepler_propagate_many`, `myb_kepler_stm_many`, `myb_pv_from_elements_many`,
+  `myb_elements_from_pv_many`, `myb_pv_from_equinoctial_many`, `myb_equinoctial_from_pv_many`.
+- Привязки к Go (`bindings/go`: cgo над статической библиотекой, крупный слой — один вызов,
+  одна задача; пакет `myb/sgp4`) и Haskell (`bindings/haskell`: весь C-интерфейс `Myb.C`,
+  порождённый из заголовков, верхний слой `Myb` с `ForeignPtr` и `Either`; на Windows — над
+  разделяемой библиотекой). Модули pkg-config `myb-static` и `myb_sgp4-static` ставятся вместе с
+  библиотекой и называют архивы путями.
+- Верхние слои привязок C++, Python, Rust и Haskell для остального интерфейса — N тел и
+  системы, оценивание, CR3BP, наведение и оптимальные перелёты, ориентация, наблюдаемые,
+  файлы, массовые формы — и те же области в крупном слое Go; в Rust ещё системы отсчёта
+  `myb/frames.h` и `OemSegment.covariance_frame`, `covariances`.
+- `myb/contact.h`: трение с залипанием — `myb_contact_friction`
+  (`MYB_CONTACT_FRICTION_SMOOTH`, `MYB_CONTACT_FRICTION_STICK`), `myb_contact_force_stick`; в
+  `myb/system.h` — прогибы его пружин в состоянии: `myb_system_pack_contact`,
+  `myb_system_unpack_contact`.
+- `myb/integ.h`: масштаб времени шага IAS15 — `myb_ias15_timescale`
+  (`MYB_IAS15_TIMESCALE_ACCELERATION`, `MYB_IAS15_TIMESCALE_JERK`); с ним — контакт под IAS15 в
+  `myb_orbit`.
+- `myb/model.h`: схема разрывов шага — `myb_break_scheme` (`MYB_BREAKS_RETAKE` по умолчанию и
+  `MYB_BREAKS_PREDICT`), `myb_force_model_set_break_scheme`, `myb_force_model_break_scheme`.
+- `myb/rel.h`: `MYB_PN_SS3` (спин-спиновые члены следующего порядка), `MYB_PN_SORR5`
+  (спин-орбитальная радиационная реакция следующего порядка), `MYB_PN_SOTAIL` (диссипативный
+  спин-орбитальный хвост на почти круговых орбитах), `MYB_PN_TAILX` (хвосты 4PN на любой
+  соприкасающейся конике).
+- `myb/optimal.h`: пролёты с импульсом в цепочках — `myb_chain_flyby`,
+  `myb_chain.impulse_exhaust`, `myb_chain_result.impulse`.
+- `myb/cr3bp.h`: нормальное вращение эллиптических торов — поля `normal_rotation`,
+  `normal_eigenvalue`, `normal_frequency`, `normal_residual`, `normal_re`, `normal_im` в
+  `myb_cr3bp_torus_spectrum`; торы около вертикальных ляпуновских орбит.
+- Фаззинг: 27 обвязок читателей в `tests/fuzz` (`MYB_FUZZ`; libFuzzer с ASan и UBSan в
+  пресете `linux-fuzz`, `tests/fuzz/run_fuzzers.cmake`; в остальных сборках — повтор затравок
+  и повреждённых вариантов как тесты ctest, метка `fuzz`). Бенчмарки: `bench/` (`MYB_BENCH`,
+  программа `myb_bench`, тест `bench_smoke`). Покрытие: `MYB_COVERAGE`, пресеты
+  `linux-coverage` и `windows-coverage`, `tests/tools/coverage.cmake`.
+- macOS: набор `cmake/toolchains/clang-macos.cmake` (LLVM из Homebrew), пресеты `macos-dev`,
+  `macos-release`, `macos-asan`. CI: Linux на ARM64, macOS, фаззинг, покрытие, Go и GHC,
+  потребители, собранные MSVC.
+- Тесты: `test_msvc_consumer` (заголовки как C17, C++17 и C++20 под `cl`, пример и лицо C++,
+  собранные `cl` против `libmyb.dll`), `test_rust_binding_msvc`, `test_go_binding`,
+  `test_haskell_binding`; на Linux под ASan — `test_python_binding_asan`,
+  `test_rust_binding_asan`.
+- `docs/models/`: 45 паспортов моделей и указатель, по-английски и по-русски.
 
 ### Изменено
 - `MYB_TIDES_ALL` включает `MYB_TIDES_ADMITTANCE`: с ядром, где есть таблица адмиттанса, и
@@ -243,6 +294,49 @@
 - `myb_nlp_solve`: вес штрафа больше не растёт, когда ограничения уже выполнены (результаты
   прежних тестов те же до бита).
 - `myb/optimal.h` включает `myb/kin.h` и `myb/time.h`.
+- Фаза 21. Новые поля в конце структур (ноль сохраняет прежнее поведение):
+  `myb_ias15_options.timescale`, `myb_orbit_options.timescale`, `myb_contact_law.kind`,
+  `tangential_stiffness`, `tangential_damping`, `myb_chain.impulse_exhaust`,
+  `myb_chain_result.impulse`, поля `normal_*` в `myb_cr3bp_torus_spectrum`.
+- `myb_system_partials`: производные дают вариационные уравнения, интегрируемые вместе с
+  состоянием (сигнатура та же; два тела против замкнутой формы — 2,3·10⁻¹⁶ вместо 1,8·10⁻¹¹ у
+  разностей); система с контактами по-прежнему берётся разностями целых пропагаций.
+- FMM (`myb_nbody_set_approximation`) с 2048 тел идёт на пуле `myb_nbody_set_pool` с битами
+  вычисления без пула.
+- `myb_nlp_solve`: где убыль функции меньше 10⁻¹² от её значений, шаг принимается по наклону
+  (приближённые условия Вульфа); задача 71 Хока и Шиттковски сдвигается на 10⁻¹⁴, участок
+  Симса–Фланагана берёт 436 вычислений вместо 435, а цепочки, не доходившие до
+  стационарности, сходятся.
+- `myb_system_add_contact` принимает трение с залипанием (3 координаты на точку после всех
+  остальных); `myb_contact_force` и `myb_term_contact` его отвергают (`MYB_E_DOMAIN`).
+- IAS15: шаг, чьи проходы расходятся (состояние в узле не конечно), отвергается и повторяется
+  вчетверо короче, без вызова ускорения с таким состоянием, при любом масштабе времени.
+- `myb_sclk_decode` печатает поля целыми числами (поле длиннее 18 цифр — `MYB_E_RANGE`) и
+  принимает пустой текст (NULL) размера 0, чтобы сообщить длину (`MYB_E_OVERFLOW`).
+- Эталон `test_repro` — `0xaa258e26488b41eb`; префиксы 22, 20 и 19 — `0xe234728b95d060b4`,
+  `0x7fc24de1c1d525be`, `0x4352d2d0bc185d9e` (наклон решателя).
+- Описания в заголовках исправлены по сверке паспортов моделей (отказы `myb_wh_start` и
+  системы, читатели XML, свет на сетке, диапазоны JB2008 и Мендеса–Павлиса, высшие порядки
+  ионосферы, ошибки Ламберта); поведение не менялось.
+
+### Исправлено
+- Фаза 21. Читатели, найдено фаззингом: `myb_sclk_decode` мог выйти за буфер текста; моменты
+  вне диапазона из ядер шкал времени; эпохи WGCCRE; эпохи SPK и PCK дальше 2⁵¹ с и пакеты SPK
+  типа 10; непроверенные приведения в читателе EOP; длина имён XML CCSDS считалась до раскрытия
+  сущностей; поля TLE, которые читатель брал, а писатель писал без должной строгости
+  (`ext/sgp4`).
+- `myb_sclk_decode` неверно печатал большие поля с рантаймом C Windows (`%.0f` из msvcrt даёт
+  17 значащих цифр).
+- `myb_fit_orbit` при точных наблюдениях никогда не сообщала о сходимости (взвешенное СКО
+  падает до округления пропагации); теперь она останавливается и при СКО ниже допуска.
+- Описание `myb_filter_start`: ковариация, которую она читает, — (6 + np + bias_count)²
+  значений.
+- Python: писатель SP3 хранил указатель, прочитанный обратно из поля структуры, — тот не
+  удерживал массив спутников (запись случайно падала после работы сборщика).
+- Rust: с набором MSVC крейты, зависящие от `myb-sys`, не находили библиотеку импорта;
+  `build.rs` копирует её в `OUT_DIR` как `myb.lib`.
+- Go: тест ключует кеш cgo хешем заголовков (устаревший объект связки читал за концом
+  выросшей структуры); после установки другой библиотеки выполняйте `go clean -cache`.
 
 ## 1.1.0.0 — 2026-11-10 (без тега)
 

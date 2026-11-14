@@ -29,7 +29,8 @@ separate level, `myb_system_add_contact`.
 Header [`myb/system.h`](../../include/myb/system.h):
 
 - functions `myb_system_set_radius`, `myb_system_radius`, `myb_system_present`,
-  `myb_system_advance`, `myb_system_merge`, `myb_system_bounce`, `myb_system_add_contact`;
+  `myb_system_advance`, `myb_system_merge`, `myb_system_bounce`, `myb_system_add_contact`,
+  `myb_system_pack_contact`, `myb_system_unpack_contact`;
 - structures `myb_system_event` (kinds `MYB_SYSTEM_ARRIVED`, `MYB_SYSTEM_CONTACT`,
   `MYB_SYSTEM_APPROACH` of `myb_system_event_kind`), `myb_system_merger`,
   `myb_system_contact`;
@@ -65,7 +66,12 @@ Header [`myb/system.h`](../../include/myb/system.h):
   body. The friction acts on the velocity of each point relative to the ground under it (a
   turning ground carries its surface along); the ground is pushed back by the ratio of the masses
   at the same points (a ground of gm 0 is not pushed); the torques turn the bodies whose rotation
-  is integrated. A body without a frame keeps the axes of the system and does not turn.
+  is integrated. A body without a frame keeps the axes of the system and does not turn. A
+  friction that sticks (`MYB_CONTACT_FRICTION_STICK`) adds 3 coordinates a point to the state,
+  after every other kind: their rates are the deflections of the springs in the axes of the
+  surface (`myb_system_pack_contact`, `myb_system_unpack_contact`; zero — the springs at rest),
+  their accelerations the rates of the deflections; a merger that drops the contact leaves them
+  in the state, meaning nothing.
 
 ## Domain of validity
 
@@ -80,10 +86,12 @@ Header [`myb/system.h`](../../include/myb/system.h):
   until it has separated; a closest approach is not reported twice.
 - A closest approach is found where the range rate turns from negative to non-negative inside a
   step: a pass with its minimum inside a step is not missed.
-- A contact against gravity stalls the steps of IAS15 (at every touch the acceleration passes
-  through zero): such a system is integrated with DOP853, `myb_system_acceleration` taken as a
-  first-order system (x, v)′ = (v, a); the events of `myb_system_advance` are found with IAS15
-  only.
+- A system with contacts is integrated with DOP853, `myb_system_acceleration` taken as a
+  first-order system (x, v)′ = (v, a): IAS15 needs its steps ended at the touches, which the
+  system does not do (a term of a force model under `myb_orbit` goes with IAS15:
+  [contact and landing](contact-landing.en.md)); the events of `myb_system_advance` are found
+  with IAS15 only. `myb_system_partials` takes a system with contacts by differences of whole
+  propagations ([system of bodies](system-of-bodies.en.md)).
 
 ## Accuracy
 
@@ -109,6 +117,9 @@ integrated with DOP853):
 | Lander on four legs, slope 15°, μ = 0.6 | creep speed of the smooth law in closed form | 6·10⁻¹³; the legs carry its weight to 10⁻⁹ |
 | The same on 40° | g (sin α − μ cos α) | 9·10⁻⁸ |
 | Spinning ball off a turning ellipsoid | conservation | momentum 2·10⁻¹⁶, angular momentum 1.2·10⁻¹³ |
+| The lander with the friction that sticks (k_t = 1000 s⁻², c_t = 16 s⁻¹ a leg), 15° | at rest | 9.3·10⁻¹⁴ m/s after 20 s (the smooth law creeps at 5.0·10⁻⁴ m/s); the legs bear its weight to 10⁻¹¹ |
+| The same on 40° | g (sin α − μ cos α) | 8.3·10⁻⁸; the energy never grows by more than 4.4·10⁻¹⁶ m²/s² |
+| A block on 25° with the friction that sticks | rest at the deflection of its weight | to 10⁻⁹ of it |
 
 ## Cost
 
@@ -129,10 +140,9 @@ gravity.
 - The neighbour search cuts the pairs examined, not the gravity: that stays the direct sum
   (O(N²)) unless the approximate FMM level of [N bodies](nbody.en.md) is chosen.
 - The contact level is integrated with DOP853, the event search of `myb_system_advance` with
-  IAS15: the two are not combined. The friction of the contact is smooth — below the angle of
-  friction a body creeps instead of sticking.
-- Phase 21 adds: friction that sticks (a law with a state of its own) and contact under IAS15,
-  for the contact level as well.
+  IAS15: the two are not combined, and contacts of a system under IAS15 are not done (the system
+  does not end its steps at the touches). With the smooth friction a body below the angle of
+  friction creeps; with the friction that sticks it stands.
 
 ## Data
 

@@ -207,7 +207,7 @@ until the tag every phase is committed to `main`.
 | 18 | N bodies and the body model: levels of the graph (harmonics, figure–figure, tides — the lagged tides of the Earth and the Moon among them), coupled translation and rotation (with the derivative of the rotational deformation), close encounters, collisions and mergers, PN binaries among N bodies | re-integration of DE440 by the library's own means (the Moon with its librations) | Windows and Gentoo: done (DE440 again with the librations of the Moon, from JD 2440400.5: the Moon 1.1 cm after 30 days, 8.8 cm after a year, **19 cm after 5 years** (54 m without the tides of the Earth); the attitude of the Moon 0.003″, 0.041″ and 0.16″; Mercury 0.77 m and Venus 0.56 m after a year; the rest is the small bodies of DE440 that are missing; a free top 3·10⁻¹³; the contact of two spheres 10⁻¹² of the closed form) |
 | 19 | applications: initial orbit determination, relative motion, the approach of two objects and the probability of collision, mean elements and TLE fitting, multiple shooting, pseudo-arclength continuation of families and quasi-periodic orbits, variational equations with DOP853 in `myb_orbit`, optimal low thrust | Vallado, the JPL catalogue | Windows and Gentoo: done (orbit determination — the examples 7-3 and 7-4 of Vallado to six digits, Gauss — the orbit to 10⁻¹⁴; relative motion; closest approaches and the probability of collision, the covariances carried by the orbits themselves — 2.5·10⁻⁹ of the closed transition matrix; mean elements and TLE fitting — elements to 10⁻¹⁵; multiple shooting and families — a member closes to 4·10⁻¹³; **quasi-periodic orbits** — the circle of a torus returns onto itself over 20 turns to 3.7·10⁻¹¹; the variational equations with DOP853; low thrust: the Q-law — 1234.3 m/s against Edelbaum's 1232.6, the **indirect method** — the Hamiltonian constant to 10⁻¹², at high thrust 486.84 m/s against Hohmann's 486.82, **Sims–Flanagan** — 0.11 % of the propellant from the indirect method with 30 segments) |
 | 20 | files and frames: CK and SCLK (read and written), a graph of frames (SPK across frames), SPK type 15, nutation grid, TDB−TT from the ephemeris, space weather; bodies of a system whose motion is given (a provider) and the small bodies of DE440 from their SPK; the ground station: station displacements (IERS ch. 7), the admittance of the secondary waves of the ocean tide and the atmospheric S1/S2, VMF3/GPT3 and the APG gradients, three-dimensional ionosphere maps and the higher orders of the ionosphere, light time in the measurements; `ext/`: NRLMSISE-00 adapter, JB2008, DTM2020, NRLMSIS 2.1, HWM14 (after the licence checks) | CSPICE; references of the models | Windows and Gentoo: done (SPK type 15 — 9·10⁻¹⁶ of its rule in 60 digits; the graph of frames against CSPICE 1.3·10⁻¹⁵; CK — 1302 requests equal to CSPICE, the matrix 7·10⁻¹⁶, CSPICE reads the file written; the nutation table 4·10⁻¹⁶ rad; TDB−TT of DE440t to 1.4·10⁻¹⁶ of its rate; DE440 with the 373 small bodies after 5 years — Mercury 2.1 cm, Venus 1.0 cm, Mars 1.3 cm, the Moon 4.9 cm; site displacements — 1.1·10⁻⁷ m from the arithmetic of the IERS routine, ocean loading 5·10⁻⁷ m from HARDISP; secondary waves: LAGEOS 2.05 → 1.57 cm; light time in the measurements ≤ 1.4·10⁻⁸ m; GPT3 6·10⁻¹³ and VMF3 1.3·10⁻¹⁵ from the routines of TU Wien; the ionosphere integrals 1.3·10⁻⁹). The licences of JB2008, DTM2020, NRLMSIS 2.1 and HWM14 do not allow porting — a common input for the user's own copies of the models is there; the evaluation of CK types 4–6, three-dimensional IONEX maps from files and JB2008 from the papers are in phase 22 |
-| 21 | (last) engineering: fuzzing of the parsers, benchmarks, coverage, model passports `docs/models/`, ARM64 and macOS in CI, consumers built with MSVC; bindings: the upper layers for the rest of the interface, array forms of the calls in C, Go and Haskell, tests under the sanitizers; the edge of a shadow without withdrawing the step (a speed-up, judged by measurement); what phase 22 left (its decisions: tori, chains, spin terms, the FMM over threads, sticking friction, variational equations of the system). The vcpkg, Conan, PyPI and crates.io packages are cancelled (the user's decision of 2026-11-12): the library is distributed through GitHub only | CI green on every target; the orbit of the example from every binding bit for bit with the C calls | — |
+| 21 | (last) engineering: fuzzing of the parsers, benchmarks, coverage, model passports `docs/models/`, ARM64 and macOS in CI, consumers built with MSVC; bindings: the upper layers for the rest of the interface, array forms of the calls in C, Go and Haskell, tests under the sanitizers; the edge of a shadow without withdrawing the step (a speed-up, judged by measurement); what phase 22 left (its decisions: tori, chains, spin terms, the FMM over threads, sticking friction, variational equations of the system). The vcpkg, Conan, PyPI and crates.io packages are cancelled (the user's decision of 2026-11-12): the library is distributed through GitHub only | CI green on every target; the orbit of the example from every binding bit for bit with the C calls | @@STATUS21_EN@@ (the array forms of the calls in C, 26 functions; the bindings of Go and Haskell — the orbit of the example bit for bit with the C calls; the upper layers for the rest of the interface, all bit for bit with C: C++ 551 checks (541 of them built by MSVC's cl), Python 53 tests, Rust 36 integration tests on each toolchain, Haskell 309 checks, Go 26 tests; 27 fuzz harnesses, eight faults of the readers fixed; benchmarks, coverage; 45 model passports; the variational equations of the system — two bodies against the closed form 2.3·10⁻¹⁶; the FMM on four threads about twice faster, the same bits; tori about vertical Lyapunov orbits return to 1.3·10⁻¹¹; a powered flyby reaches Mars where the unpowered chain cannot; the PN tails on hyperbolas against Bini–Damour 4·10⁻⁶; a lander with the friction that sticks stands on 15° to 9.3·10⁻¹⁴ m/s; the edges of a shadow by prediction save 1–5 % of the evaluations and no time, so withdrawing stays the default). macOS and Linux on ARM64 — in CI, at the tag; what the phase leaves are known limits of the release (see "Phase 21 decisions") |
 | 22 | (before 21) the tails of the models and what §4 and §5 kept outside the first version: optimal low thrust beyond the rendezvous — insertion into an orbit with a free phase and the field of a model in Sims–Flanagan, chains of legs with flybys; the stability and the manifolds of tori; 4PN with the hereditary tail, higher-order spin-orbit terms and the radiation reaction of spins; secondary emission and the limit a ≫ λ_D in charging; compositions with smaller error constants (7 and 15 stages) and a dense output of RKN12(10) for `myb_orbit`; orbit determination by the double-r iteration and the methods of Laplace and Gooding; the probability of a long encounter; atmospheric entry — continuum hypersonic aerodynamics and ablation; contact and landing; random impacts of micrometeoroids; FMM as an approximate level of the graph and a neighbour search for the encounters of many bodies; in the system of bodies — mergers of rotating bodies, derivatives with respect to the state and the parameters; thermal inertia in the torque of light at the moment; from phase 20 — the evaluation of CK types 4, 5, 6, reading three-dimensional IONEX maps, a clean implementation of JB2008 from the papers with readers of its indices, a reader of the S1/S2 loading grids, the turning of the body in the velocity of an offset point for attitude laws that follow the velocity | own references from the papers | Windows and Gentoo: done (CK types 4–6 against CSPICE — the same answers to 3842 requests, the matrix 4.4·10⁻¹⁶; JB2008 from the papers against the program of the authors — T∞ 1.1·10⁻⁶ K, log ρ 8.9·10⁻⁴; Gooding over 3.3 turns 2·10⁻¹⁵; compositions of 7 and 15 stages refined at 512 bits; a long encounter against Monte Carlo 1.3σ; a thin sheath at Bohm's potential to 10⁻¹²; 4PN energy of circles to 0.035 of −54.92; the multiplier of a torus as the square of its size; a flyby of Venus saves 103 kg; FMM to the rounding of the direct sum at p = 16; contact restitution 3.5·10⁻¹³). What it left went to phase 21 |
 
 ### Completion after 1.1 (phases 12–22)
@@ -228,6 +228,326 @@ closed at once; what is harder now gets the phase where it will cost least or gi
 the final phase 22); an item is dropped only by the user's decision. The leftovers of phases
 3–11 that belonged to no phase were sorted by this rule too: the section "Old debts (phases
 3–11) and the bindings" below.
+
+### Phase 21 decisions
+
+@@CHECKS_EN@@
+
+Phase 21 is the last phase of the roadmap: it came after phase 22 (the user's decision of
+2026-11-12), so that the bindings, the passports, fuzzing and the benchmarks were written over
+the final interface. What it leaves is at the end of the section; there is no later phase, so
+those are the known limits of the release, each written in the passport of its model.
+
+- **Array forms of the calls in C** (26 functions named `*_many`): the time scales and the
+  calendar (`myb_time_from_seconds_many`, `myb_timesys_convert_many`,
+  `myb_timesys_from_utc_many`, …), SPK states (`myb_spk_state_many`, `myb_spk_state_in_many`),
+  the rotations and the orientation providers of the frames (`myb_cip_terrestrial_many`,
+  `myb_eop_at_many`, `myb_equinox_rotation_many`, `myb_wgccre_rotation_many`,
+  `myb_pck_rotation_many`, `myb_orientation_many`, `myb_frame_graph_rotation_many`,
+  `myb_rotation_apply_state_many`, …), Kepler and its transition matrix
+  (`myb_kepler_propagate_many`, `myb_kepler_stm_many`) and the conversions of elements. Each
+  does what the single call does, element by element in index order: the outputs are the bytes
+  of the single call in a loop (`test_arrays` compares them with memcmp); one that can fail
+  stops at the first element that fails, returns its status and gives its index, the outputs
+  before it filled. A binding pays for every crossing into C; a series now costs one.
+- **The Go binding** (`bindings/go`, the module `github.com/RATWareLua/MYBLib/bindings/go`,
+  Go 1.24): plain cgo over the static library, found through pkg-config (the modules
+  `myb-static` and `myb_sgp4-static`, installed with the library; they name the archives by
+  their paths, since the linker of macOS has no `-Bstatic` and pkgconf dropped the second of
+  two, and blanks in the paths are escaped). The coarse layer only, as decided: one call is one
+  task — a force model assembled from data (`ModelSpec`), a propagation, a search for events, a
+  fit, systems of bodies with their levels (runs with mergers, bounces and approaches,
+  invariants, partials, Wisdom–Holman), the filter and the measurements over slices, the
+  CR3BP (families and tori in one call), Lambert over a grid of dates, B-planes, shooting, IOD,
+  relative motion, conjunctions, the Q-law, the indirect method, Sims–Flanagan, chains with
+  powered flybys, attitude and observables over slices, OEM, OPM/OMM, SP3, SPK, CK and SCLK
+  files, TLE and SGP4 (the package `myb/sgp4`), and everything "per epoch" as one call over a
+  slice through the array forms. No arithmetic is done in Go: the orbit of
+  `examples/low_orbit.c` (the times of the 15 ascending nodes, the states there, the state a
+  day later, the count of steps) agrees bit for bit with the C program
+  `tests/bindings/low_orbit_reference.c`, and every other task with the same task written in C
+  (the internal package `cref`); 26 tests. Go functions may be terms, events, providers,
+  actions and residuals — the separate, plainly slow path, a crossing per call. Errors are
+  values (`*myb.Error`: the status, the index of the element of a slice that failed, the line
+  of a parser); nothing panics for a failure of the library, and a panic in a Go function that
+  the library calls is not recovered. Two models are locked in one order whatever the order of
+  the arguments. Go keys its build cache by the files of the package, not by the headers of the
+  library it includes, and a glue object compiled against a structure that had grown since read
+  past its end: `tests/tools/run_go_test.cmake` keys the cache by a hash of the headers, and the
+  READMEs of the binding say to run `go clean -cache` after installing another library.
+- **The Haskell binding** (`bindings/haskell`, a cabal package; the boot packages of GHC only,
+  no network; checked with GHC 9.10.3 and cabal 3.16.1.0). The lower layer `Myb.C` is the
+  whole C interface, generated from the headers by `tools/Generate.hs` — the preprocessor of
+  Clang, a small parser of C declarations, a module of hsc2hs per header, which takes the sizes
+  and the offsets from the headers when the package is built (`--check` fails when the
+  generated files are out of date); a function that takes or returns a structure by value goes
+  through a C function of the package that takes it by pointer. The upper layer `Myb`: objects
+  with finalizers (`ForeignPtr`), a failure as a value (`Result a`, that is `Either Error a`
+  with the status), terms, providers, events, actions, measurements and residuals as Haskell
+  functions; nothing is thrown or caught by the package, and an exception that leaves such a
+  function ends the program. Linking: elsewhere the static library; on Windows the shared one.
+  GHC brings there its own mingw-w64 toolchain, built for the UCRT, while the library is built
+  against the MSYS2 MINGW64 sysroot for msvcrt.dll: the static archive needs the stack protector
+  of the newer mingw-w64, which the toolchain of GHC lacks, and objects of two C runtimes are not
+  to be mixed anyway. `libmyb.dll` imports only KERNEL32.dll and msvcrt.dll and passes no object
+  of a C runtime across its interface (`MYB_HASKELL_LINK` chooses). 309 checks: the low orbit of
+  the example bit for bit with the C calls, then area by area the upper layer against the same
+  calls made through `Myb.C`.
+- **The upper layers for the rest of the interface**, in every binding at once now that phases
+  18–22 have stopped changing it: N bodies and the system of bodies, estimation, the CR3BP with
+  its tori, targeting and optimal transfers (chains with powered flybys), thrust, IOD, relative
+  motion, conjunctions, covariances, attitude, observables, the writers and readers of files
+  (SPK, SP3, OPM/OMM/OCM, CK, SCLK, tables), TLE and SGP4, the array forms. Each is checked
+  against the same calls in C, bit for bit: **C++** (`myb.hpp`; TLE and SGP4 when
+  `myb_sgp4.h` is included) — 551 checks of `test_cpp_binding`; **Python** — the package in
+  modules (`nbody`, `estim`, `cr3bp`, `targeting`, `attitude`, `observe`, `files`, `frames`)
+  re-exported from `myb`, sequences in and lists out (an `array.array` taken without a copy),
+  `myb.Error` with the element of an array form that failed and what a solver reached — 53
+  tests; **Rust** — the crate `myb` in modules, providers as traits (closures or the library's
+  own), the frames of `frames.h` with their array forms, TLE and SGP4 behind the feature `sgp4`
+  — 36 integration tests on each toolchain (GNU over the static library, MSVC over the DLL);
+  **Haskell** — the 309 checks above; **Go** — the coarse layer over the same areas, 26 tests.
+  Found on the way: the SP3 writer of Python kept a pointer read back from a field of a
+  structure, which did not keep the array of the satellites alive, and failed at random once the
+  collector ran; it now keeps the array.
+- **Consumers built with Microsoft's toolchain.** Visual Studio 2022 is on the development
+  machine after all: its vswhere lists no instance, which is why it was taken for absent;
+  `tests/CMakeLists.txt` looks for `vcvars64.bat` under the directories of Visual Studio as well
+  (or `MYB_MSVC_VCVARS` names it). `test_msvc_consumer` (`tests/tools/check_msvc.cmake`): the
+  public headers compile as C17, C++17 and C++20 under `cl /W4 /WX`; `examples/low_orbit.c`
+  built by cl runs against `libmyb.dll`; the C++ face built by cl with exceptions off passes 541
+  of the 551 checks of its test, bit for bit. The DLL of the GNU toolchain imports only KERNEL32
+  and msvcrt and passes no object of a C runtime across its interface, so the two toolchains
+  meet at the C ABI of Windows x64 alone; Microsoft's linker reads the import library
+  `libmyb.dll.a` as it is, under the name it looks for, `myb.lib`. The environment of
+  `vcvars64.bat` is read in any case of the names (a cmd started from PowerShell writes `Path`).
+  `test_rust_binding_msvc`: the Rust crates with the MSVC toolchain over the DLL; `build.rs` now
+  copies the import library into `OUT_DIR` under that name and adds the directory to the search
+  path, since the link argument it gave before did not reach the crates that depend on
+  `myb-sys`.
+- **macOS and ARM64.** A toolchain for the Clang of Homebrew's LLVM
+  (`cmake/toolchains/clang-macos.cmake`; `MYB_LLVM_ROOT` names another, the SDK from `xcrun`),
+  presets `macos-dev`, `macos-release` and `macos-asan` (no LeakSanitizer there),
+  `_DARWIN_C_SOURCE` in the POSIX platform layer for the count of processors, Mach-O in the
+  checks of the exports and the imports. CI: Linux on ARM64 (`linux-release`, `linux-asan`,
+  `linux-ubsan` on ubuntu-24.04-arm), macOS on Apple silicon (macos-15, the three presets),
+  the MSVC consumers in the Windows jobs, Go and GHC for the tests of the new bindings, jobs for
+  fuzzing and coverage. None of it has run yet: CI runs on a tag, and the tag comes after this
+  phase.
+- **Python and Rust under AddressSanitizer** (Linux, `linux-asan`): `test_python_binding_asan`
+  loads the instrumented shared library into an interpreter built without the sanitizer — the
+  runtime of Clang goes first through `LD_PRELOAD`, and leaks are not looked for (the
+  interpreter keeps its objects to the end); `test_rust_binding_asan` links the static library
+  with Clang as the linker and `-fsanitize=address,undefined`. The reports are about the library
+  and what the bindings hand it. Their run: the checks at the top of the section.
+- **Fuzzing** (`tests/fuzz`, `MYB_FUZZ`): 27 harnesses, one per reader — numbers, the kernel
+  pool, the time, frame and series kernels, SPK, PCK, CK, SCLK, EOP, ICGEM, ocean tides, BLQ,
+  the magnetic field, IONEX, GPT3, the site grid and the atmospheric loading, space weather,
+  JB2008, OEM, OPM, OMM, OCM, SP3, tables, TLE. On Linux with libFuzzer under ASan and UBSan
+  (preset `linux-fuzz`; `tests/fuzz/run_fuzzers.cmake` runs each for a time budget and keeps
+  what fails); elsewhere each harness links a replay main. Every build registers one ctest test
+  per harness (label `fuzz`) over its seeds — files of `tests/data` and `data/` and the cases of
+  `tests/fuzz/corpus` — and, with the replay main, 24 damaged variants of each. Eight faults of
+  the readers were found and fixed: an overflow of the text of `myb_sclk_decode`; times out of
+  range from the kernels of time scales; WGCCRE epochs; SPK and PCK epochs beyond 2⁵¹ s; SPK
+  type 10 packets; unchecked casts in the EOP reader; the length of CCSDS XML names counted
+  before the entities; TLE fields that the reader took, or the writer wrote, loosely. Every such
+  input is kept in its corpus as a regression case.
+- **Benchmarks** (`bench/`, `MYB_BENCH`): `myb_bench` prints a table of median times with the
+  fastest and the slowest repeat and their spread — Kepler's equation and the two-body
+  propagation, SPK states of DE440, the celestial-to-terrestrial rotation from the series and
+  from its table, fields of degree 8, 70 and 360, all the accelerations of 10³ and 10⁴ bodies
+  (the direct sum on 1–4 threads against the FMM), six hours of a LAGEOS-like orbit by IAS15,
+  DOP853 and RKN12, two days of it by IAS15 with and without the edges of the shadows as breaks
+  (a new way of handling the edges is timed by adding a row), a fit; the time from a monotonic
+  clock of the platform layer. The test `bench_smoke` (label `bench`) runs its short form so
+  that the cases keep building and running. The measurements that decided the phase — the FMM
+  over threads and the edges of a shadow — are in their bullets below.
+- **Coverage** (`MYB_COVERAGE`; presets `linux-coverage`, `windows-coverage`;
+  `tests/tools/coverage.cmake`): source-based coverage of `src/` by llvm-profdata and llvm-cov
+  — per file and in total (regions, functions, lines, branches), an HTML report, a JSON summary,
+  the least covered files listed. Linux only in practice: the Clang of the development machine
+  has no profile runtime for the mingw-w64 target, and configuring `windows-coverage` stops
+  saying so. CI has a coverage job.
+- **Model passports** (`docs/models`, English and Russian): 45 passports and an index, each in
+  nine parts — what it is, the source, the interface, inputs and outputs, the domain of
+  validity, the accuracy, the cost, the limitations, the data — every number traced to a public
+  header, a named test with its reference, or this plan; where nothing was measured, the
+  passport says so.
+- **The audit of the passports.** Writing them meant reading the headers, the tests and this
+  plan side by side; where they disagreed the text was brought to what the code does.
+  Corrected in the plan: the default level of the graph of N bodies (the point masses; 1PN once
+  the relativity is set), the methods of Lambert (there is no solver of Gooding: the second
+  method is the check by propagation), the parser of numbers (Clinger's fast path and big
+  integers, not Eisel–Lemire), the licence table (19 functions of CORE-MATH; fast_float and Ryu
+  are not used), the biases recovered (4.5 m and 2.0 mm/s), the order of two accuracies of
+  Jacobians, the Jacobian of the continuum term (central differences) and its "cone" (a pyramid
+  of 64 faces), the six edges of a test, the thin Debye sheath, the DTCFILE of JB2008, the ERA
+  against MPFR (later 3.5·10⁻¹⁶), the kick of the Wisdom–Holman splitting (less the Keplerian
+  terms). In the notices: the VMF3 tables and the GPT3/VMF3 reference, the three-dimensional
+  IONEX test file. In the headers: that `myb_wh_start` refuses 1PN terms, that a tide is
+  refused on an integrated rotation, that the spins are zeroed after a PN merger, the field
+  degrees refused, that the XML readers do read CDATA and document types, the tree of boxes of
+  the light on a mesh, the range of the JB2008 check (90–6000 km), the size of the higher
+  ionosphere orders at L1 (+6.1 mm), the wavelengths of Mendes–Pavlis (fitted over 0.3–1.2 µm,
+  accepted over 0.25–2.0), the errors of Lambert, the three right-hand sides of the
+  regularisation, the covariance that `myb_filter_start` reads — (6 + np + bias_count)² values;
+  and comments of tests. The tables of DE440 of different phases stay as they are: they are the
+  states of different models.
+- **Variational equations of the system** (`myb_system_partials`, the same signature): the
+  derivatives with respect to the state and to the gravitational parameters come from the
+  variational equations integrated with the state by IAS15, the columns riding along the steps
+  of the state (y1 is that of a propagation without them, bit for bit). The Jacobian is
+  assembled level by level at every evaluation: analytic for the Newtonian point masses (also
+  where the FMM approximates them), the field of a body turned from outside (the gradient of
+  the harmonic field), frame dragging and the guided bodies; by central differences inside the
+  right-hand side for the other levels (1PN, the fields of integrated rotations, figures, tides,
+  pairs beyond 1PN, actions, contacts, the equations of rotation), h = 2⁻¹⁷ of the size of the
+  coordinate. Two bodies over 4000 s against the closed transition matrix — **2.3·10⁻¹⁶** of its
+  largest element (the differences of propagations gave 1.8·10⁻¹¹); the Jacobian of a system
+  with every level against differences of the acceleration 1.5·10⁻⁸; its derivatives over
+  2000 s against differences of propagations 5·10⁻⁸; the symplectic form of a conservative
+  system of five bodies with a field and a guided body kept to 4.1·10⁻¹⁶. 2.6–3.5 times cheaper
+  than the differences for two bodies, 1.3–2 times with every level. A system with contacts is
+  still taken by central differences of whole propagations: a contact is stiff where the state
+  is quiet, and the variations, which ride on the steps of the state, drift there (a block
+  resting on a plane: 10⁻⁴ of the largest element with the friction that sticks, all of it with
+  the smooth one, against 2·10⁻⁸ for the differences); the Jacobian has the columns of the
+  springs, exact against differences of the acceleration.
+- **The FMM over threads**: from 2048 bodies on the evaluation runs on the pool of
+  `myb_nbody_set_pool` with the bits of the evaluation without a pool, whatever the number of
+  threads — the passes up and down level by level, the walk recorded on one thread, the M2L cut
+  by target cell, the near field (72–79 % of the work) cut by ranges of points, each pair across
+  a cut computed by both sides. Measured (`test_fmm_threads`, p = 8, θ = 0.5, an i5-9300H of
+  four cores shared with six other jobs, three runs), µs per body serial / on two threads / on
+  four (the direct sum on four): a cube of 10⁴ bodies 10.6–15.3 / 7.5–9.9 / 5.4–6.7 (20–28), of
+  10⁵ 21–24 / 12–17 / 9.4–11 (200–280, scaled as N²); a Plummer sphere of 10⁴ 18–22 / 16–18 /
+  9.5–14 (21–24), of 10⁵ 30–46 / 21–35 / 15–21 (210–240, scaled). That is 0.9–1.8 times faster
+  on two threads and 1.3–2.5 on four (about 2 at the median), for 5000 bodies still 1.5 and 2;
+  on an idle machine the share computed twice bounds the gain of four threads near 2.6 for 10⁴
+  bodies and 3.2 for 10⁵. The threads pay, as the measurement was to decide, and the FMM on four
+  threads stays 1.7–4 times cheaper than the direct sum on four threads at 10⁴ bodies, 10–25
+  times at 10⁵.
+- **The normal rotation of elliptic tori; tori about vertical Lyapunov orbits.** The normal
+  pair of an elliptic torus is two circles of eigenvalues exp(i(σ − kρ)) on the unit circle, so
+  σ is defined modulo ρ: the library takes the member whose eigenfunction is the smoothest
+  along the circle — the least root-mean-square frequency of its complex eigenvector, found by
+  inverse iteration on the map in complex arithmetic — which continues the angle of the
+  elliptic pair of the orbit as the torus shrinks (the fields `normal_*` of
+  `myb_cr3bp_torus_spectrum`: σ, the eigenvalue, the frequency, the residual and the
+  eigenfunction, which with its conjugate spans the normal bundle). About a distant retrograde
+  orbit, tori of 21 points on either pair: σ tends to the angle of the other pair as the square
+  of the size (6.86·10⁻⁶ at 10⁻³, ratios 3.997 and 3.987); A ψ = λψ to 2·10⁻¹⁵, |λ| = 1 to
+  3·10⁻¹⁵; between the points the bundle is carried into itself turned by σ to 7.5·10⁻¹³; 25 and
+  35 points give the σ of 21 to 5·10⁻¹⁵; one complex LU per candidate, 0.1 s for the spectrum
+  with 21 points, 0.35 s with 35. About the vertical Lyapunov orbits of L1 and L2 that reach
+  11 500 km out of the plane (built from the second-order guess of the figure eight and the
+  symmetric corrector): tori of 25 points return onto themselves after a turn to 1.3·10⁻¹¹, the
+  Jacobi constant one over the circle to 10⁻¹⁴; ρ tends to the angle of the centre pair as the
+  square of the size (ratios 4.000 at both points), and so does the unstable eigenvalue of the
+  torus to that of the orbit; they are hyperbolic, with no normal rotation.
+- **Powered flybys in the chains; the floor of the solver.** A flyby whose body has
+  `myb_chain.impulse_exhaust` > 0 is powered: an impulse along the motion at the common
+  periapsis of the incoming and the outgoing hyperbola, dv = |√(|w⁺|² + 2gm/r_p) −
+  √(|w⁻|² + 2gm/r_p)|, the turn asin(1/e⁻) + asin(1/e⁺), the mass by the rocket equation with
+  the engine's own exhaust velocity. r_p and dv are two more unknowns, the turn an equality, and
+  dv is bounded below by the difference of the speeds taken both ways, so that the solver meets
+  no corner at dv = 0 and drives an impulse that does not pay onto its bound
+  (`myb_chain_flyby` gives dv and the turn with their derivatives, `myb_chain_result.impulse`
+  the impulses). The closed form against 50 digits 2.2·10⁻¹⁶, the derivatives of the chain by
+  r_p and dv against differences 1.4·10⁻⁸. With 1 N on the legs and an impulse by an engine of
+  3000 m/s exhaust velocity the electric engine does better everywhere: dv is driven to 0 and the
+  chain is the unpowered one to 4·10⁻⁷ kg; with 0.25 N the unpowered chain cannot meet Mars, the powered one does with
+  380.797 m/s at 26 530 km from Venus and 587.501 kg left. The "floor of stationarity on the
+  bounds" that phase 22 left was not the tolerance on the bounds: it was the test of Armijo
+  asked below the rounding of the function. Where the fall is below 10⁻¹² of the values the
+  slope now decides (the approximate Wolfe conditions of Hager and Zhang), and the chain kept
+  10⁶ km from Venus converges — 731.350 kg from the guess and from the chain by Venus alike, to
+  1.3·10⁻⁷ kg (before, the criticality stopped at 2·10⁻⁶ … 2·10⁻⁴, the multipliers drifting).
+  This moved golden results, once, as decided (below).
+- **PN: the spin terms at the next order, the tails** (new bits of `myb_pn_binary.orders`,
+  asked for by name; `MYB_PN_ALL` keeps its value). `MYB_PN_SS3` — the spin-spin terms at
+  next-to-leading order (Bohé, Faye, Marsat, Porter 2015) with their precession: the S²
+  coefficients of the energy of circular orbits to 3·10⁻⁹. `MYB_PN_SORR5` — the spin-orbit
+  radiation reaction at next-to-leading order; it is not published in harmonic coordinates, so
+  it is built by energy and angular-momentum balance, exactly, against the fluxes of the
+  published source moments (the free gauge parameters set to zero): the flux on circles 0.25422
+  against the published 0.25441. `MYB_PN_SOTAIL` — the dissipative spin-orbit part of the tail
+  on quasi-circular orbits, by balance with the published tail-induced spin-orbit flux.
+  `MYB_PN_TAILX` — the 4PN tails on any osculating conic (unbound, parabolic, and bound beyond
+  e ≈ 0.83, where the Fourier series stops) by a quadrature in the time domain, continuous
+  through the switch and through e = 1: against an evaluation in mpmath 2.9·10⁻¹⁵, hyperbolic
+  encounters against Bini and Damour to 4·10⁻⁶; 0.2–2 ms an evaluation.
+- **Friction that sticks; contact under IAS15.** `MYB_CONTACT_FRICTION_STICK`
+  (`myb_contact_law.kind`, `tangential_stiffness`, `tangential_damping`): a spring between each
+  point and an anchor on the surface, which slides when the spring would pull harder than μ f_n
+  — the elasto-plastic element of Prandtl, the spring with a slip limit of the discrete element
+  method (Cundall and Strack 1979). Its deflection is a coordinate of the state of a system
+  (3 a point, `myb_system_pack_contact`) or is carried by the caller's integrator through
+  `myb_contact_force_stick`; a term of a force model, a function of the state alone, refuses it.
+  Below 0.95 of the limit the anchor holds, at the limit it is dragged and the force is
+  Coulomb's exactly; with the energy of the springs counted a contact never adds energy. A lander
+  on four legs on 15° stands — **9.3·10⁻¹⁴ m/s** after 20 s, where the smooth law creeps at
+  5·10⁻⁴ m/s (3402 steps of DOP853 against 7653); on 40° it slides at g(sin α − μ cos α) to
+  8.3·10⁻⁸; the energy never grows by more than 4.4·10⁻¹⁶ m²/s². Contact under IAS15 in
+  `myb_orbit` takes three things: the timescale `MYB_IAS15_TIMESCALE_JERK`
+  (`myb_ias15_options.timescale`, `myb_orbit_options.timescale`) — the larger of τ of the
+  acceleration and the same expression one derivative up, which does not vanish where the
+  acceleration passes through zero; the breaks at the touch and at the parting; some other force
+  on the body during the contact. The ball dropped 0.2 m on the Moon touches 24 times, at
+  7.0·10⁻⁸, 1.4·10⁻⁸ and 7.6·10⁻⁹ s of DOP853's touches (ε = 10⁻⁹, 10⁻¹⁰, 10⁻¹²), and rests at
+  its height to 1.5·10⁻¹⁶ m; with the timescale of the acceleration alone the first contact stops
+  IAS15. With that option IAS15 also rejects a step whose sweeps stop correcting far above
+  round-off and does not shorten a step for an acceleration that is the rounding of a balance.
+  A system of bodies with contacts still goes with DOP853: the system does not end its steps at
+  the touches.
+- **The edge of a shadow without withdrawing the step** (`myb_force_model_set_break_scheme`,
+  `MYB_BREAKS_PREDICT`): before a step the break functions are examined on the polynomial of the
+  last step carried over the step to come, and a predicted sign change becomes the end of the
+  step; once taken, the step's own polynomial locates the edge again and the step is reshaped,
+  warm, until the root is at its end to 2⁻³⁰ of the step — no step is taken across a break and
+  thrown away; the step after a break is planned at most a quarter of the one before it
+  (without the quarter the prediction lost three orders: 1.2·10⁻⁴ m at ε = 10⁻⁹). On the orbit of
+  12 000 km through 54 edges the final place over ε = 10⁻⁹ … 10⁻¹² stays within 8.4·10⁻⁷ m
+  (withdrawing: 8.2·10⁻⁷ m), a step more an edge. On the fit of LAGEOS (a week, 176 edges) at
+  ε = 10⁻⁹, 10⁻¹⁰, 10⁻¹¹, 10⁻¹² the model was evaluated 5.4, 4.5, 1.4 and 1.1 % less often, the
+  fit 1.5685 cm either way, and the time showed no gain (the least of three rounds on a shared
+  machine, withdrawing / predicting: 28.6 / 26.0, 31.9 / 35.7, 40.5 / 44.3, 53.3 / 50.9 s).
+  Measurement decided, as the plan said it would: `MYB_BREAKS_RETAKE` stays the default. Most of
+  the 26 % that the breaks cost the fit is not the steps withdrawn but the shorter steps around
+  the edges, which every scheme pays.
+- **The floor of convergence of the fit**: `myb_fit_orbit` never reported convergence with exact
+  observations — the weighted RMS falls to the rounding of the propagation, where its relative
+  change stays large. It now also stops when the RMS is below the tolerance (the residuals that
+  far below their sigmas). No golden value moves.
+- **SCLK printing**: `myb_sclk_decode` prints its fields as integers (a field of more than 18
+  digits is `MYB_E_RANGE`), since the `%.0f` of msvcrt gives 17 significant digits; a NULL text
+  of size 0 asks for the length alone, as with the other writers.
+- **Reproducibility**: the workload of phase 21 in `tests/repro` — the array forms, the
+  variational equations of the system, the FMM over two threads, a powered flyby, the PN terms of
+  the phase (the spin-spin terms and the spin-orbit radiation reaction at the next order, the
+  spin-orbit tail, the tails on a hyperbola), the friction that sticks, IAS15 with the timescale
+  of the jerk. The phases are hashed in the order they were done, 20, 22, 21: the golden value
+  is `0xaa258e26488b41eb`; `MYB_REPRO_PREFIX=22` gives `0xe234728b95d060b4`, and 21 the whole run.
+  The golden results changed once, as decided: the slope of the solver moves problem 71 of Hock
+  and Schittkowski in the workload of phase 19 by 10⁻¹⁴ and the count of evaluations of its leg
+  of Sims and Flanagan from 435 to 436 (its throttles and mass the same bits), so the prefix 19
+  is now `0x4352d2d0bc185d9e` (was `0xb22481187ba3923a`), the prefix 20 `0x7fc24de1c1d525be` (was
+  `0x8a11e2afe9e666fa`) and the value through phase 22 `0xe234728b95d060b4` (was
+  `0x22590af49224a138`); the prefix 18 and everything before phase 19 are unchanged. The
+  derivatives of the system that the workload of phase 22 hashes stay those of the differences
+  of propagations (an internal function keeps them).
+
+Not done in the phase — and, the phase being the last, left as known limits of the release,
+each written in the passport of its model (by the rule of 2026-11-11 nothing is dropped): the
+conservative spin-orbit part of the tail, which is meaningful only with the local spin-orbit
+terms of the same order (1/c¹¹), not published in harmonic coordinates; `MYB_PN_SOTAIL` is exact
+on quasi-circular orbits only (on an eccentric orbit it is a model, an error of O(e) of a 1/c¹¹
+term); contact under RKN12(10) is not tested (DOP853 and IAS15 are); `myb_collision_rate` is
+costly when the covariance of the relative velocity is narrow — up to about a second a rate,
+and the integral of a long encounter up to minutes; contacts in a system of bodies go with
+DOP853 only, since the system does not end its steps at the touches, which IAS15 needs. macOS
+and Linux on ARM64 are built and tested only by CI, which runs at the tag.
 
 ### Phase 22 decisions
 
@@ -1095,45 +1415,51 @@ binding, gives the times of the nodes and the final state **bit for bit** with t
   binding agrees with the C calls bit for bit, and `test_install` builds the C++ example
   against an installation too.
 
-### Bindings: what is ahead
+### Bindings: Go, Haskell and the rest of the interface (phase 21)
 
-- **Haskell** (asked for by the user on 2026-11-11; by the user's decision at the end, like
-  Go: phase 21). A complete binding
-  on the scheme of the three that exist. The lower layer is the whole C interface: the
-  `foreign import` declarations and the `Storable` instances of the structures, generated
-  from the headers (hsc2hs takes the offsets of the fields from the headers themselves;
-  nothing by hand). The upper one is in the manner of the language over the same path:
-  objects with finalizers (`ForeignPtr`), a failure as a value (`Either` with the status of
-  the library), terms of a model, providers and events as Haskell functions through
-  `foreign import ccall "wrapper"`; a model keeps alive what its terms point to. No exception
-  handling, as in the other bindings: a function reports a failure by its status. No
-  arithmetic — the orbit of `examples/low_orbit.c` must agree with the C calls bit for bit. A
-  cabal package over the static library (GHC on Windows is a mingw-w64 toolchain too; whether
-  its C runtime is the one the library is built for will be found out when it is done, the
-  shared library being the fallback), a test in ctest when GHC and cabal are there; on Gentoo
-  they come from Portage and stay. By phase 21 phases 18–20 have stopped changing the
-  interface, and the upper layer is written once.
-- **Go** (the verdict of 2026-11-11, phase 21). Plain cgo, the static `libmyb.a` through
-  pkg-config, the coarse layer only: one crossing into C is one task (propagate an orbit,
-  find the events, fit, read or write a file). The cost of a crossing (tens of nanoseconds)
-  does not depend on the work inside, so a model is assembled from data and everything "per
-  epoch" and "per point" goes as one call over a slice. The array forms that are missing
-  (ephemerides, rotations, time, Kepler) are added to the library itself in C — Python gains
-  from them as well. Go functions as terms and events are a separate, plainly slow path.
-  There is no complete lower layer: the types of cgo do not leave their package. purego does
-  not serve (structures by value not on every platform, callbacks cannot return a `double`),
-  nor does a port to Go (the compiler may fuse `x*y + z` into an FMA).
-- **The upper layers for the rest of the interface** (phase 21): N bodies, estimation,
-  CR3BP, targeting, attitude, observables, the writers of files — in all the bindings at
-  once, when phases 18–20 have finished changing those parts.
+What this section listed as ahead was done in phase 21 (the details and the numbers are in
+"Phase 21 decisions"):
+
+- **Haskell** (asked for by the user on 2026-11-11). A complete binding on the scheme of the
+  three before it: the lower layer `Myb.C` — the `foreign import` declarations and the
+  `Storable` instances of the structures, generated from the headers (hsc2hs takes the offsets
+  of the fields from the headers themselves; nothing by hand); the upper layer `Myb` — objects
+  with finalizers (`ForeignPtr`), a failure as a value (`Either` with the status of the
+  library), terms, providers and events as Haskell functions; a model keeps alive what its
+  terms point to. No exception handling, no arithmetic: the orbit of `examples/low_orbit.c`
+  agrees with the C calls bit for bit. Whether the C runtime of GHC on Windows is the one the
+  library is built for was found out: it is not (GHC is built for the UCRT, the library for
+  msvcrt.dll), and there the package links the shared library — the fallback named in advance;
+  elsewhere the static one. A test in ctest when GHC and cabal are there; on Gentoo they come
+  from Portage and stay.
+- **Go** (the verdict of 2026-11-11). Plain cgo, the static `libmyb.a` through pkg-config, the
+  coarse layer only: one crossing into C is one task, a model is assembled from data and
+  everything "per epoch" and "per point" goes as one call over a slice. The array forms were
+  added to the library itself in C (26 functions), and Python uses them too. Go functions as
+  terms and events are a separate, plainly slow path. There is no complete lower layer, as
+  decided: the types of cgo do not leave their package; purego does not serve (structures by
+  value not on every platform, callbacks cannot return a `double`), nor does a port to Go (the
+  compiler may fuse `x*y + z` into an FMA).
+- **The upper layers for the rest of the interface** — in C++, Python, Rust and Haskell, and
+  the coarse layer of Go over the same areas: N bodies and systems of bodies, estimation, the
+  CR3BP, targeting and optimal transfers, attitude, observables, the writers and readers of
+  files, the array forms.
+- **Consumers built with MSVC**: the headers and the C++ face under `cl`, the MSVC toolchain of
+  Rust through the DLL and the import library under the name `myb.lib` (`test_msvc_consumer`,
+  `test_rust_binding_msvc`). The development machine has Visual Studio 2022 after all — its
+  vswhere lists no instance, which is why it was taken for absent; the tests find
+  `vcvars64.bat` by its path.
+- **The sanitizers**: the tests of Python and Rust under AddressSanitizer on Linux
+  (`test_python_binding_asan`, `test_rust_binding_asan`).
 - **Publication** — cancelled (the user's decision of 2026-11-12): neither PyPI and
   crates.io nor vcpkg and Conan; the library and the bindings stay on GitHub only and are
   built from the sources (`find_package(myb)`, pkg-config, `pip install bindings/python`, a
-  path to the crate in Cargo).
-- **What the bindings do not check yet** (phase 21): consumers built with MSVC — the C++
-  header under `cl` and the MSVC toolchain of Rust through the DLL (it needs the import
-  library `myb.lib`; the development machine has no MSVC linker); macOS; the tests of Python
-  and Rust under the sanitizers.
+  path to the crate in Cargo, a `replace` to the checkout in `go.mod`, the path of the package
+  in `cabal.project`).
+
+What is left: macOS (the presets `macos-*`, Apple silicon) and Linux on ARM64 are built and
+tested only by CI, which runs at the tag; the tests of Go and Haskell do not run under the
+sanitizers (the linkers of Go and of GHC would have to bring the runtime of the sanitizer).
 
 ### Old debts (phases 3–11) and the bindings
 
@@ -1204,8 +1530,8 @@ closed or has a phase; nothing is dropped (the user's decision of 2026-11-11).
 | DTM2020 | 7 | 20 | next to JB2008 and NRLMSIS 2.1: the same space-weather indices as input |
 | CK reader, nutation grid, SPK across frames, SPK type 15, TDB−TT | 5, 7, 9 | 20 | already there |
 | The derivative of a measurement of an offset point through the attitude that follows the orbit (a part offset/distance, `myb_measure_offset`) | debts 12–17 | 20 | the measurement model is rewritten there for the light time; the attitude laws are differentiated already (`src/force/surface.c`) |
-| Upper layers of the bindings for the rest of the interface, Go, Haskell, MSVC, macOS, sanitizers (publication of the packages cancelled 2026-11-12) | bindings | 21 | see "Bindings: what is ahead" |
-| The edge of a shadow without withdrawing the step | debts 12–17 | 21 | a speed-up, judged by measurement, and the benchmarks come with this phase; see below |
+| Upper layers of the bindings for the rest of the interface, Go, Haskell, MSVC, macOS, sanitizers (publication of the packages cancelled 2026-11-12) | bindings | 21: done | see "Bindings: Go, Haskell and the rest of the interface"; macOS and ARM64 run in CI only |
+| The edge of a shadow without withdrawing the step | debts 12–17 | 21: done | a speed-up, judged by measurement, and the benchmarks come with this phase; see below. Measured: 1–5 % fewer evaluations and no time gained, so withdrawing stays the default |
 | 4PN with the tail, higher-order spin-orbit terms, the radiation reaction of spins | 11 | 22 | no phase opens this part again; the formulas are long (hundreds of terms), the reference is the coefficients of Blanchet's review |
 | Secondary emission and the limit a ≫ λ_D in charging | 11 | 22 | the same: nothing else touches charging; a model of the electron yield of materials has to be chosen |
 | Compositions with smaller error constants (7 and 15 stages) | 3 | 22 | the coefficients are published, but the rule of the project is to check the order conditions in MPFR and to refine them there |
@@ -1214,12 +1540,12 @@ closed or has a phase; nothing is dropped (the user's decision of 2026-11-11).
 | Contact and landing | §4 | 22 | rests on the coupled translation and rotation of phase 18 |
 | Random impacts of micrometeoroids | §4 | 22 | no phase makes them cheaper: the generator and the impulses are there already |
 | FMM | §5 | 22 | attaches to the levels of the graph that phase 18 introduces |
-| The normal rotation of elliptic tori; tori about vertical Lyapunov orbits | 22 | 21 | needs the complex eigenvectors of the whole map; the last phase |
-| A powered flyby in chains of legs; the floor of stationarity of the solver on its bounds | 22 | 21 | the tolerance on the bounds moves the golden results: changed once, at the last phase |
-| Spin-orbit tail, spin-orbit radiation reaction and spin-spin terms beyond the leading order; the tail on unbound orbits | 22 | 21 | long formulas from the same papers, read by the same machine transcription |
-| The FMM over threads | 22 | 21 | judged by the benchmarks of that phase |
-| Friction that sticks; contact under IAS15 | 22 | 21 | a law with a state of its own does not fit forces that are functions of the state; contact goes with DOP853 meanwhile |
-| Variational equations of the whole system (with every level) | 22 | 21 | the derivatives are differences of propagations (10⁻¹¹) meanwhile |
+| The normal rotation of elliptic tori; tori about vertical Lyapunov orbits | 22 | 21: done | needs the complex eigenvectors of the whole map; the last phase |
+| A powered flyby in chains of legs; the floor of stationarity of the solver on its bounds | 22 | 21: done | the tolerance on the bounds moves the golden results: changed once, at the last phase. The floor proved to be the test of Armijo below the rounding of the function, not the tolerance |
+| Spin-orbit tail, spin-orbit radiation reaction and spin-spin terms beyond the leading order; the tail on unbound orbits | 22 | 21: done | long formulas from the same papers, read by the same machine transcription. Of the spin-orbit tail the dissipative part on quasi-circular orbits: the conservative one needs local terms not published in harmonic coordinates |
+| The FMM over threads | 22 | 21: done | judged by the benchmarks of that phase: the threads pay |
+| Friction that sticks; contact under IAS15 | 22 | 21: done | a law with a state of its own does not fit forces that are functions of the state; contact goes with DOP853 meanwhile. IAS15 in `myb_orbit`; a system with contacts stays with DOP853 |
+| Variational equations of the whole system (with every level) | 22 | 21: done | the derivatives are differences of propagations (10⁻¹¹) meanwhile. A system with contacts keeps the differences |
 
 **The user's decision of 2026-11-11: nothing is dropped**
 
@@ -1234,6 +1560,8 @@ impossible; each has a phase now (the rows of the table above), and here is what
   of the LAGEOS fit. To be done otherwise: bring the end of the step to the edge itself —
   predict, step, refine the edge by the root on the dense output and end the step there,
   without withdrawing a long one. The gain is work, not accuracy, so measurement decides.
+  (Done in phase 21 so: the same accuracy, 1–5 % fewer evaluations of the LAGEOS fit, no time
+  gained — withdrawing stays the default.)
 - **RKN12(10) in `myb_orbit`** (phase 22). Events and states between the nodes need a dense
   output, and no output of order 10–12 is published for this method: it has to be built with
   additional stages, the order conditions solved and checked in MPFR. The limit of the

@@ -196,6 +196,59 @@ version the API only grows. Details, checks and measured accuracies of every pha
   in Sims–Flanagan (`myb_sims_flanagan.field`); chains of legs with flybys — `myb_chain`,
   `myb_chain_size`, `myb_chain_guess`, `myb_chain_evaluate`, `myb_chain_solve`;
   `myb_nlp_options.weight`.
+- Phase 21. Array forms of the calls (`*_many`, 26 functions: one call for a series, the
+  bits of the single call in a loop, the index of the element that failed): in `myb/time.h`
+  `myb_time_from_seconds_many`, `myb_time_seconds_many`, `myb_calendar_to_time_many`,
+  `myb_time_to_calendar_many`, `myb_timesys_convert_many`, `myb_timesys_from_utc_many`,
+  `myb_timesys_to_utc_many`; in `myb/kin.h` `myb_spk_state_many`, `myb_spk_state_in_many`; in
+  `myb/frames.h` `myb_cip_terrestrial_many`, `myb_cip_xys_many`, `myb_eop_at_many`,
+  `myb_equinox_rotation_many`, `myb_equinox_teme_pef_many`, `myb_wgccre_rotation_many`,
+  `myb_pck_rotation_many`, `myb_orientation_many`, `myb_frame_graph_rotation_many`,
+  `myb_rotation_apply_position_many`, `myb_rotation_apply_state_many`; in `myb/kepler.h`
+  `myb_kepler_propagate_many`, `myb_kepler_stm_many`, `myb_pv_from_elements_many`,
+  `myb_elements_from_pv_many`, `myb_pv_from_equinoctial_many`, `myb_equinoctial_from_pv_many`.
+- Bindings for Go (`bindings/go`: cgo over the static library, the coarse layer — one call,
+  one task; the package `myb/sgp4`) and Haskell (`bindings/haskell`: the whole C interface
+  `Myb.C` generated from the headers, the upper layer `Myb` with `ForeignPtr` and `Either`;
+  on Windows over the shared library). The pkg-config modules `myb-static` and
+  `myb_sgp4-static`, installed with the library, name the archives by their paths.
+- The upper layers of the C++, Python, Rust and Haskell bindings over the rest of the
+  interface — N bodies and systems, estimation, the CR3BP, targeting and optimal transfers,
+  attitude, observables, files, the array forms — and the same areas in the coarse layer of
+  Go; in Rust also the frames of `myb/frames.h` and `OemSegment.covariance_frame`,
+  `covariances`.
+- `myb/contact.h`: friction that sticks — `myb_contact_friction`
+  (`MYB_CONTACT_FRICTION_SMOOTH`, `MYB_CONTACT_FRICTION_STICK`), `myb_contact_force_stick`;
+  in `myb/system.h` the deflections of its springs in the state — `myb_system_pack_contact`,
+  `myb_system_unpack_contact`.
+- `myb/integ.h`: the timescale of the step of IAS15 — `myb_ias15_timescale`
+  (`MYB_IAS15_TIMESCALE_ACCELERATION`, `MYB_IAS15_TIMESCALE_JERK`); contact under IAS15 in
+  `myb_orbit` with it.
+- `myb/model.h`: the scheme of the breaks — `myb_break_scheme` (`MYB_BREAKS_RETAKE`, the
+  default, and `MYB_BREAKS_PREDICT`), `myb_force_model_set_break_scheme`,
+  `myb_force_model_break_scheme`.
+- `myb/rel.h`: `MYB_PN_SS3` (spin-spin terms at next-to-leading order), `MYB_PN_SORR5`
+  (spin-orbit radiation reaction at next-to-leading order), `MYB_PN_SOTAIL` (the dissipative
+  spin-orbit tail on quasi-circular orbits), `MYB_PN_TAILX` (the 4PN tails on any osculating
+  conic).
+- `myb/optimal.h`: powered flybys in the chains — `myb_chain_flyby`,
+  `myb_chain.impulse_exhaust`, `myb_chain_result.impulse`.
+- `myb/cr3bp.h`: the normal rotation of elliptic tori — the fields `normal_rotation`,
+  `normal_eigenvalue`, `normal_frequency`, `normal_residual`, `normal_re`, `normal_im` of
+  `myb_cr3bp_torus_spectrum`; tori about vertical Lyapunov orbits.
+- Fuzzing: 27 harnesses of the readers in `tests/fuzz` (`MYB_FUZZ`; libFuzzer with ASan and
+  UBSan in the preset `linux-fuzz`, `tests/fuzz/run_fuzzers.cmake`; elsewhere a replay of the
+  seeds and of damaged variants as ctest tests, label `fuzz`). Benchmarks: `bench/`
+  (`MYB_BENCH`, the program `myb_bench`, the test `bench_smoke`). Coverage: `MYB_COVERAGE`, the
+  presets `linux-coverage` and `windows-coverage`, `tests/tools/coverage.cmake`.
+- macOS: the toolchain `cmake/toolchains/clang-macos.cmake` (Homebrew's LLVM), the presets
+  `macos-dev`, `macos-release`, `macos-asan`. CI: Linux on ARM64, macOS, fuzzing, coverage,
+  Go and GHC, the consumers built with MSVC.
+- Tests: `test_msvc_consumer` (the headers as C17, C++17 and C++20 under `cl`, the example
+  and the C++ face built by `cl` against `libmyb.dll`), `test_rust_binding_msvc`,
+  `test_go_binding`, `test_haskell_binding`; on Linux under ASan `test_python_binding_asan`,
+  `test_rust_binding_asan`.
+- `docs/models/`: 45 model passports and an index, in English and Russian.
 ### Changed
 - `MYB_TIDES_ALL` includes `MYB_TIDES_ADMITTANCE`: with a kernel that has a table of
   admittance and ocean waves loaded the result changes (the secondary waves are added).
@@ -252,6 +305,52 @@ version the API only grows. Details, checks and measured accuracies of every pha
 - `myb_nlp_solve`: the penalty weight no longer grows once the constraints hold (the results of
   the earlier tests are the same to the bit).
 - `myb/optimal.h` includes `myb/kin.h` and `myb/time.h`.
+- Phase 21. New trailing fields (zero keeps the former behaviour): `myb_ias15_options.timescale`,
+  `myb_orbit_options.timescale`, `myb_contact_law.kind`, `tangential_stiffness`,
+  `tangential_damping`, `myb_chain.impulse_exhaust`, `myb_chain_result.impulse`, the
+  `normal_*` fields of `myb_cr3bp_torus_spectrum`.
+- `myb_system_partials`: the derivatives come from variational equations integrated with the
+  state (the same signature; two bodies against the closed form 2.3·10⁻¹⁶ instead of
+  1.8·10⁻¹¹ by differences); a system with contacts is still taken by differences of whole
+  propagations.
+- The FMM (`myb_nbody_set_approximation`) runs on the pool of `myb_nbody_set_pool` from 2048
+  bodies on, with the bits of the evaluation without a pool.
+- `myb_nlp_solve`: where the fall of the function is below 10⁻¹² of its values a step is
+  accepted by the slope (approximate Wolfe conditions); problem 71 of Hock and Schittkowski
+  moves by 10⁻¹⁴, a leg of Sims–Flanagan takes 436 evaluations instead of 435, and chains that
+  stopped short of stationarity converge.
+- `myb_system_add_contact` accepts the friction that sticks (3 coordinates a point after
+  every other kind); `myb_contact_force` and `myb_term_contact` refuse it (`MYB_E_DOMAIN`).
+- IAS15: a step whose sweeps diverge (a state at a node not finite) is rejected and tried four
+  times shorter without calling the acceleration with such a state, under every timescale.
+- `myb_sclk_decode` prints its fields as integers (a field of more than 18 digits is
+  `MYB_E_RANGE`) and takes a NULL text of size 0 to give the length (`MYB_E_OVERFLOW`).
+- The golden value of `test_repro` is `0xaa258e26488b41eb`; the prefixes 22, 20 and 19 are
+  `0xe234728b95d060b4`, `0x7fc24de1c1d525be`, `0x4352d2d0bc185d9e` (the slope of the solver).
+- Descriptions in the headers corrected after the audit of the model passports (the
+  refusals of `myb_wh_start` and of the system, the XML readers, the light on a mesh, the
+  ranges of JB2008 and of Mendes–Pavlis, the higher orders of the ionosphere, the errors of
+  Lambert); no behaviour changes.
+
+### Fixed
+- Phase 21. Readers, found by fuzzing: `myb_sclk_decode` could overflow its text; times out of
+  range from the kernels of time scales; WGCCRE epochs; SPK and PCK epochs beyond 2⁵¹ s and
+  SPK type 10 packets; unchecked casts in the EOP reader; the length of CCSDS XML names was
+  counted before the entities; TLE fields that the reader took, or the writer wrote, loosely
+  (`ext/sgp4`).
+- `myb_sclk_decode` printed large fields wrong with the C runtime of Windows (the `%.0f` of
+  msvcrt gives 17 significant digits).
+- `myb_fit_orbit` never reported convergence with exact observations (the weighted RMS falls
+  to the rounding of the propagation); it also stops when the RMS is below the tolerance.
+- The description of `myb_filter_start`: the covariance it reads is (6 + np + bias_count)²
+  values.
+- Python: the SP3 writer kept a pointer read back from a field of a structure, which did not
+  keep the array of the satellites alive (it failed at random after the collector ran).
+- Rust: with the MSVC toolchain the crates that depend on `myb-sys` did not find the import
+  library; `build.rs` copies it into `OUT_DIR` as `myb.lib`.
+- Go: the test keys the cache of cgo by a hash of the headers (a stale glue object read past
+  the end of a structure that had grown); after installing another library run
+  `go clean -cache`.
 
 ## 1.1.0.0 — 2026-11-10 (no tag)
 
