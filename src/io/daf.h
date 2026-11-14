@@ -40,7 +40,8 @@ typedef struct myb_internal_daf {
 [[nodiscard]] myb_status myb_internal_daf_open(const unsigned char* data, size_t size,
                                                myb_internal_daf* daf, myb_diag* diag);
 
-/* The double at a 1-based word address, 1 <= address <= daf->words (checked by the caller). */
+/* The double at a 1-based word address, 1 <= address <= daf->words (checked by the caller;
+ * outside, a debug build stops and a release build gives NaN). */
 double myb_internal_daf_double(const myb_internal_daf* daf, uint64_t address);
 
 /* A position in the list of summaries. Zero-initialise before the first call. */

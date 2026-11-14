@@ -180,7 +180,9 @@ static myb_status parse_type4(ck_segment* s, myb_diag* diag) {
     }
     const uint64_t size = b2 - b1 - s->packet_offset;
     const uint64_t at = s->packet_base + b1;
-    if (at + size - 1 > s->end ||
+    /* the whole packet inside the segment: a base or an offset of zero would put its first
+     * word before the segment (at the word before the file for the first segment) */
+    if (at < s->begin || at + size - 1 > s->end ||
         !as_count(word(s, at + 2), (uint64_t)1 << 50, &code)) {
       return format_error(diag, s, "packet outside the segment");
     }
@@ -325,9 +327,17 @@ static myb_status parse(ck_segment* s, myb_diag* diag) {
     s->ticks = s->begin + 8 * n;
     s->stops = s->ticks + n;
     for (uint64_t i = 0; i < n; ++i) {
-      if (!(word(s, s->stops + i) >= word(s, s->ticks + i)) ||
-          (i > 0 && !(word(s, s->ticks + i) >= word(s, s->stops + i - 1)))) {
-        return format_error(diag, s, "intervals out of order");
+      const double begin = word(s, s->ticks + i);
+      const double end = word(s, s->stops + i);
+      /* finite ends (an infinite one passes every comparison and turns the frame by an
+       * infinite angle), and a tick that lasts a positive time */
+      const double seconds_per_tick = word(s, s->begin + 8 * i + 7);
+      if (!isfinite(begin) || !isfinite(end) || !(end >= begin) ||
+          (i > 0 && !(begin >= word(s, s->stops + i - 1)))) {
+        return format_error(diag, s, "intervals out of order or not finite");
+      }
+      if (!(seconds_per_tick > 0.0) || !isfinite(seconds_per_tick)) {
+        return format_error(diag, s, "seconds per tick");
       }
     }
   } else if (s->type == 3) {
@@ -655,7 +665,8 @@ static myb_status answer_type2(const ck_segment* s, double ticks, double toleran
     }
   }
   double seconds_per_tick = 0.0;
-  if (!read_record(s, k, a->q, a->rate, &seconds_per_tick) || !isfinite(seconds_per_tick)) {
+  if (!read_record(s, k, a->q, a->rate, &seconds_per_tick) || !(seconds_per_tick > 0.0) ||
+      !isfinite(seconds_per_tick) || !isfinite(at)) {
     return MYB_E_FORMAT;
   }
   const double speed = myb_vec3_norm(a->rate);
@@ -1019,8 +1030,11 @@ static myb_status answer_type5(const ck_segment* s, double ticks, double toleran
     }
   }
   const uint64_t half = (uint64_t)s->window / 2;
+  /* left: ticks up to low, itself included; right: the ticks after low — n - low of them
+   * whether high is the next tick or low itself (the instant moved onto a tick between two
+   * intervals; counting from high there took one tick past the end of the segment's ticks) */
   const uint64_t left = half < low ? half : low;
-  const uint64_t right = half < n - high + 1 ? half : n - high + 1;
+  const uint64_t right = half < n - low ? half : n - low;
   uint64_t first = low - left + 1;
   const uint64_t size = left + right;
   /* only the ticks of the interval */

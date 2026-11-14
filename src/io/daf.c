@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 #include "io/daf.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "core/alloc.h"
@@ -136,6 +137,12 @@ myb_status myb_internal_daf_open(const unsigned char* data, size_t size, myb_int
 
 double myb_internal_daf_double(const myb_internal_daf* daf, uint64_t address) {
   MYB_DCHECK(address >= 1 && address <= daf->words);
+  /* An address outside the file is a reader's mistake on a damaged file: a release build
+   * gives NaN, which the readers refuse as they refuse any value that is not finite, rather
+   * than a word read from beyond the image (a debug build stops at the check above). */
+  if (address < 1 || address > daf->words) {
+    return (double)NAN;
+  }
   return load_double(daf->data + (address - 1) * 8, daf->big_endian);
 }
 

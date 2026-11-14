@@ -982,6 +982,7 @@ myb_status myb_ck_writer_add_packets(myb_ck_writer* writer, const myb_ck_segment
     if (at == n || packets->ticks[at] != interval_starts[i]) {
       return MYB_E_DOMAIN;
     }
+    ++at; /* the next start at a later tick: the starts increase strictly, as the reader wants */
   }
   const size_t size = ck_packet_size[packets->subtype];
   const size_t length = n * (size + 1) + (n - 1) / DIRECTORY_SPACING + m +

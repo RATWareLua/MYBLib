@@ -735,11 +735,133 @@ static void test_types456_writer(void) {
   myb_ck_writer_destroy(writer);
 }
 
+/* Replaces every occurrence of the double `from` (as the writer stores it: little-endian IEEE)
+ * by `to` in an image; returns how many were replaced. */
+static int replace_double(unsigned char* image, size_t size, double from, double to) {
+  unsigned char a[8];
+  unsigned char b[8];
+  memcpy(a, &from, 8);
+  memcpy(b, &to, 8);
+  int replaced = 0;
+  for (size_t i = 0; i + 8 <= size; i += 8) {
+    if (memcmp(image + i, a, 8) == 0) {
+      memcpy(image + i, b, 8);
+      ++replaced;
+    }
+  }
+  return replaced;
+}
+
+/* The writer's image of one segment, loaded back after `damage` (from -> to) — the status of the
+ * load. */
+static myb_status load_damaged(myb_ck_writer* writer, double from, double to, myb_ck** out) {
+  const size_t bytes = myb_ck_writer_size(writer);
+  unsigned char* image = malloc(bytes);
+  MT_CHECK(image != NULL);
+  if (image == NULL) {
+    return MYB_E_NOMEM;
+  }
+  MT_CHECK(myb_ck_writer_write(writer, image, bytes) == MYB_OK);
+  if (from != to) {
+    MT_CHECK(replace_double(image, bytes, from, to) == 1);
+  }
+  myb_ck* ck = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
+  const myb_status st = myb_ck_load_memory(ck, image, bytes, &diag);
+  free(image);
+  if (out != NULL && st == MYB_OK) {
+    *out = ck;
+  } else {
+    myb_ck_destroy(ck);
+  }
+  return st;
+}
+
+/* Found by review in phase 21: a type-5 segment of a single packet (the window took a tick past
+ * the end of the ticks), interval starts given twice to the writer of type 5 (it wrote a file its
+ * own reader refused), infinite ends of the intervals of type 2 (they passed every comparison and
+ * turned the frame by an infinite angle) and an offset of zero of a packet of type 4 (its first
+ * word before the segment). */
+static void test_reviewed_edges(void) {
+  /* type 5 with one packet: at its tick and near it, the packet itself */
+  {
+    double tick[1] = {3.0e7};
+    double packet[8];
+    make_packets(0, tick, 1, 0.1, 0.2, packet);
+    const myb_ck_packets one = {0, 2, 0.1, tick, packet, 1};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: one packet", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099051, 1, "type 5, one packet"};
+    MT_CHECK(myb_ck_writer_add_packets(writer, &h, &one, 1, tick[0], tick[0], NULL, 0) == MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(load_damaged(writer, 0.0, 0.0, &ck) == MYB_OK);
+    if (ck != NULL) {
+      myb_ck_pointing at;
+      myb_ck_pointing near;
+      MT_CHECK(myb_ck_pointing_at(ck, -9099051, tick[0], 0.0, 1, &at) == MYB_OK);
+      MT_CHECK(myb_ck_pointing_at(ck, -9099051, tick[0] + 5.0, 10.0, 1, &near) == MYB_OK);
+      MT_CHECK(at.ticks == tick[0] && near.ticks == tick[0]);
+      MT_CHECK(memcmp(&at.rotation, &near.rotation, sizeof at.rotation) == 0);
+      /* a rotation: its first row of unit length (the window of two equal ticks gave NaN) */
+      const double row = at.rotation.m[0] * at.rotation.m[0] + at.rotation.m[1] * at.rotation.m[1] +
+                         at.rotation.m[2] * at.rotation.m[2];
+      MT_CHECK(fabs(row - 1.0) < 1e-15);
+      myb_ck_destroy(ck);
+    }
+    myb_ck_writer_destroy(writer);
+  }
+  /* interval starts twice: refused, nothing written */
+  {
+    enum { N = 12 };
+    double ticks[N];
+    double packets[8 * N];
+    for (int k = 0; k < N; ++k) {
+      ticks[k] = 4.0e7 + 100.0 * k;
+    }
+    make_packets(0, ticks, N, 0.1, 0.3, packets);
+    const myb_ck_packets set = {0, 4, 0.1, ticks, packets, N};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: starts twice", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099052, 1, "type 5, starts twice"};
+    const double twice[3] = {ticks[0], ticks[5], ticks[5]};
+    MT_CHECK(myb_ck_writer_add_packets(writer, &h, &set, 1, ticks[0], ticks[N - 1], twice, 3) ==
+             MYB_E_DOMAIN);
+    MT_CHECK(myb_ck_writer_size(writer) == 0);
+    const double fine[3] = {ticks[0], ticks[5], ticks[6]};
+    MT_CHECK(myb_ck_writer_add_packets(writer, &h, &set, 1, ticks[0], ticks[N - 1], fine, 3) ==
+             MYB_OK);
+    myb_ck_writer_destroy(writer);
+  }
+  /* type 2 with an infinite end: refused on loading */
+  {
+    enum { M = 3 };
+    const double begin[M] = {5.0e6, 5.1e6, 5.2e6};
+    const double end[M] = {5.0e6 + 1234.5678125, 5.1e6 + 777.0, 5.2e6 + 999.0};
+    double q[4 * M];
+    double rates[3 * M];
+    for (int k = 0; k < M; ++k) {
+      sample(0.1 * k, 0.4, q + 4 * k, rates + 3 * k);
+    }
+    const double per_tick[M] = {1.0 / 256.0, 1.0 / 768.0, 1.0 / 1024.0};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: infinite end", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099053, 1, "type 2"};
+    MT_CHECK(myb_ck_writer_add_intervals(writer, &h, begin, end, q, rates, per_tick, M) ==
+             MYB_OK);
+    MT_CHECK(load_damaged(writer, 0.0, 0.0, NULL) == MYB_OK);
+    MT_CHECK(load_damaged(writer, end[0], HUGE_VAL, NULL) == MYB_E_FORMAT);
+    MT_CHECK(load_damaged(writer, per_tick[1], -per_tick[1], NULL) == MYB_E_FORMAT);
+    myb_ck_writer_destroy(writer);
+  }
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_reference();
   test_writer();
   test_type5_by_cspice();
   test_types456_writer();
+  test_reviewed_edges();
   return mt_finish("test_ck");
 }
