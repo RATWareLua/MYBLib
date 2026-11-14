@@ -75,3 +75,20 @@ myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t, myb_rota
   }
   return status;
 }
+
+myb_status myb_pck_rotation_many(const myb_pck* pck, int32_t id, const myb_time* t, size_t count,
+                                 myb_rotation* rotations, int32_t* bases, size_t* failed) {
+  MYB_CHECK(pck != NULL && (count == 0 || (t != NULL && rotations != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_pck_rotation(pck, id, t[k], &rotations[k], bases != NULL ? &bases[k] : NULL);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}

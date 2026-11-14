@@ -98,6 +98,21 @@ MYB_API MYB_NODISCARD myb_status myb_spk_state_in(const myb_spk* spk,
                                                   int32_t center, myb_time t, int32_t frame,
                                                   double state[6]);
 
+/* The two above at count epochs, one call for the whole series (the array forms of
+ * myb/time.h, "Array forms": the same bits as the single calls in a loop; *failed, may be
+ * NULL, gets the index of the epoch that failed, count when none did): states[6 k .. 6 k + 5]
+ * at t[k], and frames[k] (frames may be NULL) the frame code myb_spk_state reports for it. */
+MYB_API MYB_NODISCARD myb_status myb_spk_state_many(const myb_spk* spk, int32_t target,
+                                                    int32_t center, const myb_time* t,
+                                                    size_t count, double* states,
+                                                    int32_t* frames, size_t* failed);
+MYB_API MYB_NODISCARD myb_status myb_spk_state_in_many(const myb_spk* spk,
+                                                       const myb_frame_graph* graph,
+                                                       int32_t target, int32_t center,
+                                                       const myb_time* t, size_t count,
+                                                       int32_t frame, double* states,
+                                                       size_t* failed);
+
 /* ---- Providers -----------------------------------------------------------------------------
  * A provider gives the state (position m, velocity m/s) of a point as a function of time, in
  * the frame and on the time scale agreed between it and its user: the form in which

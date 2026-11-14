@@ -280,3 +280,11 @@ void myb_wgccre_rotation(const myb_wgccre* model, myb_time t, myb_rotation* rota
   myb_wgccre_euler(model, t, angles, rates);
   myb_rotation_euler313(angles, rates, rotation);
 }
+
+void myb_wgccre_rotation_many(const myb_wgccre* model, const myb_time* t, size_t count,
+                              myb_rotation* rotations) {
+  MYB_CHECK(model != NULL && (count == 0 || (t != NULL && rotations != NULL)));
+  for (size_t k = 0; k < count; ++k) {
+    myb_wgccre_rotation(model, t[k], &rotations[k]);
+  }
+}

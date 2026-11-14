@@ -284,3 +284,19 @@ void myb_cip_terrestrial(const myb_cip* cip, myb_time tt, myb_time ut1, const my
   myb_rotation_compose(&spin, &c2i, &r);
   myb_rotation_compose(&w, &r, rotation);
 }
+
+void myb_cip_xys_many(const myb_cip* cip, const myb_time* tt, size_t count, double* xys,
+                      double* rates) {
+  MYB_CHECK(cip != NULL && (count == 0 || (tt != NULL && xys != NULL)));
+  for (size_t k = 0; k < count; ++k) {
+    myb_cip_xys(cip, tt[k], xys + 3 * k, rates != NULL ? rates + 3 * k : NULL);
+  }
+}
+
+void myb_cip_terrestrial_many(const myb_cip* cip, const myb_time* tt, const myb_time* ut1,
+                              const myb_eop_values* eop, size_t count, myb_rotation* rotations) {
+  MYB_CHECK(cip != NULL && (count == 0 || (tt != NULL && ut1 != NULL && rotations != NULL)));
+  for (size_t k = 0; k < count; ++k) {
+    myb_cip_terrestrial(cip, tt[k], ut1[k], eop != NULL ? &eop[k] : NULL, &rotations[k]);
+  }
+}

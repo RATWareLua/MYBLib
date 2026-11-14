@@ -76,6 +76,20 @@ int myb_time_compare(myb_time a, myb_time b) {
   return 0;
 }
 
+void myb_time_from_seconds_many(const double* seconds, size_t count, myb_time* t) {
+  MYB_CHECK(count == 0 || (seconds != NULL && t != NULL));
+  for (size_t k = 0; k < count; ++k) {
+    t[k] = myb_time_from_seconds(seconds[k]);
+  }
+}
+
+void myb_time_seconds_many(const myb_time* t, size_t count, double* seconds) {
+  MYB_CHECK(count == 0 || (t != NULL && seconds != NULL));
+  for (size_t k = 0; k < count; ++k) {
+    seconds[k] = myb_time_seconds(t[k]);
+  }
+}
+
 /* ---- Julian dates -------------------------------------------------------------------------- */
 
 static const double jd_j2000 = 2451545.0;
@@ -168,4 +182,28 @@ void myb_time_to_calendar(myb_time t, myb_calendar* calendar) {
     c.second = 0x1.dffffffffffffp5;
   }
   *calendar = c;
+}
+
+myb_status myb_calendar_to_time_many(const myb_calendar* calendar, size_t count, myb_time* t,
+                                     size_t* failed) {
+  MYB_CHECK(count == 0 || (calendar != NULL && t != NULL));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_calendar_to_time(&calendar[k], &t[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+void myb_time_to_calendar_many(const myb_time* t, size_t count, myb_calendar* calendar) {
+  MYB_CHECK(count == 0 || (t != NULL && calendar != NULL));
+  for (size_t k = 0; k < count; ++k) {
+    myb_time_to_calendar(t[k], &calendar[k]);
+  }
 }

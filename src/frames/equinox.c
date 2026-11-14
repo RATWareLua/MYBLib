@@ -271,3 +271,19 @@ void myb_equinox_teme_pef(const myb_equinox* equinox, myb_time ut1, myb_rotation
   const double gmst = myb_equinox_gmst(equinox, ut1, &rate);
   axis_rotation(2, gmst, rate, rotation);
 }
+
+void myb_equinox_rotation_many(const myb_equinox* equinox, myb_equinox_frame frame,
+                               const myb_time* tt, size_t count, myb_rotation* rotations) {
+  MYB_CHECK(equinox != NULL && (count == 0 || (tt != NULL && rotations != NULL)));
+  for (size_t k = 0; k < count; ++k) {
+    myb_equinox_rotation(equinox, frame, tt[k], &rotations[k]);
+  }
+}
+
+void myb_equinox_teme_pef_many(const myb_equinox* equinox, const myb_time* ut1, size_t count,
+                               myb_rotation* rotations) {
+  MYB_CHECK(equinox != NULL && (count == 0 || (ut1 != NULL && rotations != NULL)));
+  for (size_t k = 0; k < count; ++k) {
+    myb_equinox_teme_pef(equinox, ut1[k], &rotations[k]);
+  }
+}

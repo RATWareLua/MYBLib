@@ -280,6 +280,8 @@ typedef struct myb_time {
         int myb_time_compare(myb_time a, myb_time b);
         myb_time myb_time_from_jd(double jd1, double jd2);
         void myb_time_to_jd(myb_time t, double* jd1, double* jd2);
+        void myb_time_from_seconds_many(const double* seconds, size_t count, myb_time* t);
+        void myb_time_seconds_many(const myb_time* t, size_t count, double* seconds);
 typedef struct myb_calendar {
   int64_t year;
   int month;
@@ -290,6 +292,10 @@ typedef struct myb_calendar {
 } myb_calendar;
                       myb_status myb_calendar_to_time(const myb_calendar* calendar, myb_time* t);
         void myb_time_to_calendar(myb_time t, myb_calendar* calendar);
+                      myb_status myb_calendar_to_time_many(const myb_calendar* calendar,
+                                                           size_t count, myb_time* t,
+                                                           size_t* failed);
+        void myb_time_to_calendar_many(const myb_time* t, size_t count, myb_calendar* calendar);
 typedef struct myb_timesys myb_timesys;
 typedef struct myb_scale {
   int index;
@@ -303,6 +309,10 @@ typedef struct myb_scale {
         const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale scale);
                       myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
                                                      myb_scale from, myb_scale to, myb_time* out);
+                      myb_status myb_timesys_convert_many(const myb_timesys* system,
+                                                          const myb_time* t, size_t count,
+                                                          myb_scale from, myb_scale to,
+                                                          myb_time* out, size_t* failed);
 typedef myb_status (*myb_scale_difference)(void* context, myb_time t, double* difference);
                       myb_status myb_timesys_set_difference(myb_timesys* system, myb_scale scale,
                                                             myb_scale_difference function,
@@ -314,6 +324,14 @@ typedef myb_status (*myb_scale_difference)(void* context, myb_time t, double* di
                                                       myb_time* out);
                       myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t,
                                                     myb_scale from, myb_calendar* utc);
+                      myb_status myb_timesys_from_utc_many(const myb_timesys* system,
+                                                           const myb_calendar* utc, size_t count,
+                                                           myb_scale to, myb_time* out,
+                                                           size_t* failed);
+                      myb_status myb_timesys_to_utc_many(const myb_timesys* system,
+                                                         const myb_time* t, size_t count,
+                                                         myb_scale from, myb_calendar* utc,
+                                                         size_t* failed);
 enum { MYB_ODM_TEXT = 64, MYB_OPM_MAX_MANEUVERS = 16 };
 typedef enum myb_odm_notation {
   MYB_ODM_KVN = 0,
@@ -517,12 +535,18 @@ typedef struct myb_rotation {
         void myb_rotation_invert(const myb_rotation* rotation, myb_rotation* out);
         void myb_rotation_euler313(const double angles[3], const double rates[3],
                                    myb_rotation* rotation);
+        void myb_rotation_apply_position_many(const myb_rotation* rotations, const double* in,
+                                              size_t count, double* out);
+        void myb_rotation_apply_state_many(const myb_rotation* rotations, const double* in,
+                                           size_t count, double* out);
 typedef struct myb_cip myb_cip;
                       myb_status myb_cip_create(const myb_kpool* pool, const char* prefix,
                                                 const myb_allocator* allocator, myb_cip** cip,
                                                 myb_diag* diag);
         void myb_cip_destroy(myb_cip* cip);
         void myb_cip_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]);
+        void myb_cip_xys_many(const myb_cip* cip, const myb_time* tt, size_t count, double* xys,
+                              double* rates);
                       myb_status myb_cip_tabulate(myb_cip* cip, myb_time tt0, myb_time tt1,
                                                   double step);
         double myb_cip_era(const myb_cip* cip, myb_time ut1, double* rate);
@@ -553,8 +577,15 @@ typedef struct myb_eop myb_eop;
                       myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
                                             myb_time t, myb_scale scale, myb_eop_values* values,
                                             myb_time* ut1);
+                      myb_status myb_eop_at_many(const myb_eop* eop, const myb_timesys* system,
+                                                 const myb_time* t, size_t count,
+                                                 myb_scale scale, myb_eop_values* values,
+                                                 myb_time* ut1, size_t* failed);
         void myb_cip_terrestrial(const myb_cip* cip, myb_time tt, myb_time ut1,
                                  const myb_eop_values* eop, myb_rotation* rotation);
+        void myb_cip_terrestrial_many(const myb_cip* cip, const myb_time* tt, const myb_time* ut1,
+                                      const myb_eop_values* eop, size_t count,
+                                      myb_rotation* rotations);
 typedef struct myb_equinox myb_equinox;
                       myb_status myb_equinox_create(const myb_kpool* pool, const char* prefix,
                                                     const myb_allocator* allocator,
@@ -572,9 +603,14 @@ typedef enum myb_equinox_frame {
 } myb_equinox_frame;
         void myb_equinox_rotation(const myb_equinox* equinox, myb_equinox_frame frame,
                                   myb_time tt, myb_rotation* rotation);
+        void myb_equinox_rotation_many(const myb_equinox* equinox, myb_equinox_frame frame,
+                                       const myb_time* tt, size_t count,
+                                       myb_rotation* rotations);
         double myb_equinox_gmst(const myb_equinox* equinox, myb_time ut1, double* rate);
         void myb_equinox_teme_pef(const myb_equinox* equinox, myb_time ut1,
                                   myb_rotation* rotation);
+        void myb_equinox_teme_pef_many(const myb_equinox* equinox, const myb_time* ut1,
+                                       size_t count, myb_rotation* rotations);
 typedef struct myb_wgccre myb_wgccre;
                       myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
                                                    const myb_allocator* allocator,
@@ -584,6 +620,8 @@ typedef struct myb_wgccre myb_wgccre;
         void myb_wgccre_euler(const myb_wgccre* model, myb_time t, double angles[3],
                               double rates[3]);
         void myb_wgccre_rotation(const myb_wgccre* model, myb_time t, myb_rotation* rotation);
+        void myb_wgccre_rotation_many(const myb_wgccre* model, const myb_time* t, size_t count,
+                                      myb_rotation* rotations);
 typedef struct myb_ellipsoid {
   double a;
   double f;
@@ -618,6 +656,10 @@ typedef struct myb_pck myb_pck;
                                                double angles[3], double rates[3], int32_t* base);
                       myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
                                                   myb_rotation* rotation, int32_t* base);
+                      myb_status myb_pck_rotation_many(const myb_pck* pck, int32_t id,
+                                                       const myb_time* t, size_t count,
+                                                       myb_rotation* rotations, int32_t* bases,
+                                                       size_t* failed);
 typedef struct myb_orientation myb_orientation;
 typedef myb_status (*myb_orientation_function)(void* context, myb_time t,
                                                myb_orientation* orientation);
@@ -668,6 +710,11 @@ typedef struct myb_wgccre_orientation {
                                                         myb_orientation* orientation);
                       myb_status myb_orientation_fixed(void* rotation, myb_time t,
                                                        myb_orientation* orientation);
+                      myb_status myb_orientation_many(myb_orientation_function orientation,
+                                                      void* context, const myb_time* t,
+                                                      size_t count,
+                                                      myb_orientation* orientations,
+                                                      size_t* failed);
 enum { MYB_FRAME_GRAPH_MAX_DEPTH = 32 };
 typedef struct myb_frame_graph myb_frame_graph;
 typedef struct myb_frame_graph_options {
@@ -691,6 +738,11 @@ typedef struct myb_frame_graph_options {
                       myb_status myb_frame_graph_rotation(const myb_frame_graph* graph,
                                                           int32_t from, int32_t to, myb_time t,
                                                           myb_rotation* rotation);
+                      myb_status myb_frame_graph_rotation_many(const myb_frame_graph* graph,
+                                                               int32_t from, int32_t to,
+                                                               const myb_time* t, size_t count,
+                                                               myb_rotation* rotations,
+                                                               size_t* failed);
 typedef struct myb_graph_orientation {
   const myb_frame_graph* graph;
   int32_t from;
@@ -844,6 +896,16 @@ typedef struct myb_spk_segment_info {
                                                   const myb_frame_graph* graph, int32_t target,
                                                   int32_t center, myb_time t, int32_t frame,
                                                   double state[6]);
+                      myb_status myb_spk_state_many(const myb_spk* spk, int32_t target,
+                                                    int32_t center, const myb_time* t,
+                                                    size_t count, double* states,
+                                                    int32_t* frames, size_t* failed);
+                      myb_status myb_spk_state_in_many(const myb_spk* spk,
+                                                       const myb_frame_graph* graph,
+                                                       int32_t target, int32_t center,
+                                                       const myb_time* t, size_t count,
+                                                       int32_t frame, double* states,
+                                                       size_t* failed);
 typedef myb_status (*myb_state_function)(void* context, myb_time t, double state[6]);
 typedef struct myb_spk_body {
   const myb_spk* spk;
@@ -2577,6 +2639,20 @@ typedef struct myb_equinoctial {
                                                          myb_equinoctial* elements);
                       myb_status myb_pv_from_equinoctial(double mu, const myb_equinoctial* elements,
                                                          myb_pv* pv);
+                      myb_status myb_elements_from_pv_many(double mu, const myb_pv* pv,
+                                                           size_t count, myb_elements* elements,
+                                                           size_t* failed);
+                      myb_status myb_pv_from_elements_many(double mu, const myb_elements* elements,
+                                                           size_t count, myb_pv* pv,
+                                                           size_t* failed);
+                      myb_status myb_equinoctial_from_pv_many(double mu, const myb_pv* pv,
+                                                              size_t count,
+                                                              myb_equinoctial* elements,
+                                                              size_t* failed);
+                      myb_status myb_pv_from_equinoctial_many(double mu,
+                                                              const myb_equinoctial* elements,
+                                                              size_t count, myb_pv* pv,
+                                                              size_t* failed);
 typedef struct myb_mean_elements {
   double a;
   double f;
@@ -2594,6 +2670,12 @@ typedef struct myb_mean_elements {
                                                       myb_pv* pv);
                       myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt,
                                                 myb_pv* pv, double stm[36]);
+                      myb_status myb_kepler_propagate_many(double mu, const myb_pv* pv0,
+                                                           const double* dt, size_t count,
+                                                           myb_pv* pv, size_t* failed);
+                      myb_status myb_kepler_stm_many(double mu, const myb_pv* pv0, const double* dt,
+                                                     size_t count, myb_pv* pv, double* stm,
+                                                     size_t* failed);
 typedef struct myb_lambert_solution {
   double v1[3];
   double v2[3];

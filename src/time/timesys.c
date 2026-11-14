@@ -601,6 +601,24 @@ myb_status myb_timesys_convert(const myb_timesys* system, myb_time t, myb_scale 
   return MYB_OK;
 }
 
+myb_status myb_timesys_convert_many(const myb_timesys* system, const myb_time* t, size_t count,
+                                    myb_scale from, myb_scale to, myb_time* out,
+                                    size_t* failed) {
+  MYB_CHECK(system != NULL && (count == 0 || (t != NULL && out != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_timesys_convert(system, t[k], from, to, &out[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
 /* ---- UTC ------------------------------------------------------------------------------------ */
 
 typedef struct utc_day {
@@ -749,4 +767,38 @@ myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t, myb_scale f
   }
   *utc = c;
   return MYB_OK;
+}
+
+myb_status myb_timesys_from_utc_many(const myb_timesys* system, const myb_calendar* utc,
+                                     size_t count, myb_scale to, myb_time* out, size_t* failed) {
+  MYB_CHECK(system != NULL && (count == 0 || (utc != NULL && out != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_timesys_from_utc(system, &utc[k], to, &out[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+myb_status myb_timesys_to_utc_many(const myb_timesys* system, const myb_time* t, size_t count,
+                                   myb_scale from, myb_calendar* utc, size_t* failed) {
+  MYB_CHECK(system != NULL && (count == 0 || (t != NULL && utc != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_timesys_to_utc(system, t[k], from, &utc[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
 }

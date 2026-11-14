@@ -597,3 +597,37 @@ myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt, myb_pv* pv, d
   }
   return universal_stm(mu, pv0, r0, alpha, dt, pv, stm);
 }
+
+myb_status myb_kepler_propagate_many(double mu, const myb_pv* pv0, const double* dt, size_t count,
+                                     myb_pv* pv, size_t* failed) {
+  MYB_CHECK(pv0 != NULL && (count == 0 || (dt != NULL && pv != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_kepler_propagate(mu, pv0, dt[k], &pv[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+myb_status myb_kepler_stm_many(double mu, const myb_pv* pv0, const double* dt, size_t count,
+                               myb_pv* pv, double* stm, size_t* failed) {
+  MYB_CHECK(pv0 != NULL && (count == 0 || (dt != NULL && pv != NULL && stm != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_kepler_stm(mu, pv0, dt[k], &pv[k], stm + 36 * k);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}

@@ -65,7 +65,7 @@ typedef struct myb_jb2008_output {
 /* The model at the modified Julian date `mjd` (UT), for the Sun at the right ascension and the
  * declination given (rad) and the place at the right ascension `right_ascension` (rad: the
  * sidereal angle plus the east longitude), the geocentric latitude `latitude` (rad) and the
- * height `height` (km, from 90 km up; checked against the program to 4000 km). Errors:
+ * height `height` (km, from 90 km up; checked against the program from 90 to 6000 km). Errors:
  * MYB_E_DOMAIN (non-finite input, height below 90 km, negative indices). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008(double mjd, double sun_right_ascension,
                                             double sun_declination, double right_ascension,

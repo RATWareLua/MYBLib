@@ -56,7 +56,7 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_zwd_saastamoinen(double temperatu
                                                             double vapour_pressure, double* zwd);
 
 /* Mendes-Pavlis zenith hydrostatic and non-hydrostatic delays (m) at optical wavelength
- * (micrometres; 0.3-1.2) for pressure and water-vapour pressure (hPa), geodetic latitude,
+ * (micrometres; the model is fitted over 0.3-1.2, accepted over 0.25-2.0, refused outside) for pressure and water-vapour pressure (hPa), geodetic latitude,
  * ellipsoidal height and CO2 content (ppm; the IERS Conventions use 375). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_tropo_zenith_optical(double latitude, double height,
                                                           double pressure, double vapour_pressure,

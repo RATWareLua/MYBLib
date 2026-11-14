@@ -32,7 +32,7 @@
  * P. Nacozy, Celest. Mech. 16, 309, 1977; 0: the time itself); the state is y = (x, v, t),
  * 7 values: dx/ds = r^alpha v, dv/ds = r^alpha a, dt/ds = r^alpha.
  *
- * Both right-hand sides have the signature of myb_ode_function (myb/integ.h) with a
+ * The three right-hand sides (myb_ks_rhs, myb_ks_element_rhs, myb_sundman_rhs) have the signature of myb_ode_function (myb/integ.h) with a
  * myb_regular_problem as the context, for use with DOP853; myb_regular_propagate does that up to
  * a given physical time. */
 #ifndef MYB_REGULAR_H_

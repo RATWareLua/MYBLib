@@ -63,18 +63,29 @@ fn main() {
     if kind == "static" && target_env == "msvc" {
         panic!("libmyb.a is built for the GNU ABI: link the shared library (MYB_LINK=dylib)");
     }
+    // The MSVC linker looks for <name>.lib, not for the lib<name>.dll.a of the GNU toolchain:
+    // the import library is copied under that name into OUT_DIR. (Naming the file itself with
+    // rustc-link-arg would reach only this crate's own binaries — such arguments do not pass to
+    // the crates that depend on it, and their tests would miss every symbol.)
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+    let mut copied = false;
     for name in &libraries {
-        // the MSVC linker does not look for lib<name>.dll.a: name the import library itself
         let import = directories
             .iter()
             .map(|d| d.join(format!("lib{name}.dll.a")))
             .find(|path| path.exists());
-        match import {
-            Some(path) if kind == "dylib" && target_env == "msvc" => {
-                println!("cargo:rustc-link-arg={}", path.display());
+        if let Some(path) = import {
+            if kind == "dylib" && target_env == "msvc" {
+                std::fs::copy(&path, out_dir.join(format!("{name}.lib")))
+                    .expect("the import library could not be copied into OUT_DIR");
+                println!("cargo:rerun-if-changed={}", path.display());
+                copied = true;
             }
-            _ => println!("cargo:rustc-link-lib={kind}={name}"),
         }
+        println!("cargo:rustc-link-lib={kind}={name}");
+    }
+    if copied {
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
     }
     if kind == "static" && target_os != "windows" {
         // what the static library itself needs: its own square roots, its threads

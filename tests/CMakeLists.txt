@@ -108,6 +108,7 @@ myb_add_test(test_entry SOURCES unit/test_entry.c)
 myb_add_test(test_shadow SOURCES unit/test_shadow.c)
 myb_add_test(test_contact SOURCES unit/test_contact.c)
 myb_add_test(test_meteoroid SOURCES unit/test_meteoroid.c)
+myb_add_test(test_arrays SOURCES unit/test_arrays.c)
 myb_add_test(test_repro SOURCES repro/test_repro.c
              LIBRARIES myb_sgp4 myb_troposphere myb_ionosphere myb_jb2008)
 
@@ -130,6 +131,15 @@ myb_apply_flags(check_death)
 add_test(NAME test_check_death
   COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:check_death>"
           "-DEXPECT=check_death\\.c:[0-9]+: main: CHECK failed: 1 \\+ 1 == 3"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/expect_death.cmake")
+
+# So must an array form given NULL for an array of count > 0 elements (a contract).
+add_executable(array_death unit/array_death.c)
+target_link_libraries(array_death PRIVATE myb)
+myb_apply_flags(array_death)
+add_test(NAME test_array_death
+  COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:array_death>"
+          "-DEXPECT=propagate\\.c:[0-9]+: myb_kepler_propagate_many: CHECK failed"
           -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/expect_death.cmake")
 
 # The library must not import libm functions whose results differ between C runtimes.
@@ -202,6 +212,51 @@ if(CMAKE_CXX_COMPILER)
     target_link_libraries(test_cpp_binding PRIVATE winpthread) # for the static libstdc++
   endif()
   add_test(NAME test_cpp_binding COMMAND test_cpp_binding)
+endif()
+
+# Consumers built with Microsoft's toolchain (Windows, the shared library): the headers, the
+# example and the C++ face compiled by cl against libmyb.dll (tests/tools/check_msvc.cmake).
+# Visual Studio is found through vswhere; MYB_MSVC_VCVARS names its vcvars64.bat otherwise.
+if(WIN32 AND MYB_BUILD_SHARED AND MYB_SANITIZE STREQUAL "")
+  set(MYB_MSVC_VCVARS "" CACHE FILEPATH "vcvars64.bat of Visual Studio, for test_msvc_consumer")
+  if(NOT MYB_MSVC_VCVARS)
+    set(_myb_programs_x86 "ProgramFiles(x86)")
+    find_program(MYB_VSWHERE vswhere
+      HINTS "$ENV{${_myb_programs_x86}}/Microsoft Visual Studio/Installer")
+    mark_as_advanced(MYB_VSWHERE)
+    if(MYB_VSWHERE)
+      execute_process(COMMAND "${MYB_VSWHERE}" -latest -products *
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        OUTPUT_VARIABLE _myb_vs OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+      file(TO_CMAKE_PATH "${_myb_vs}" _myb_vs)
+      if(_myb_vs AND EXISTS "${_myb_vs}/VC/Auxiliary/Build/vcvars64.bat")
+        set(MYB_MSVC_VCVARS "${_myb_vs}/VC/Auxiliary/Build/vcvars64.bat" CACHE FILEPATH
+          "vcvars64.bat of Visual Studio, for test_msvc_consumer" FORCE)
+      endif()
+    endif()
+  endif()
+  if(NOT MYB_MSVC_VCVARS)
+    # an installation vswhere does not list (copied, or registered for another user): the
+    # usual places, the newest first
+    file(TO_CMAKE_PATH "$ENV{ProgramFiles}" _myb_programs)
+    file(GLOB _myb_vcvars LIST_DIRECTORIES false
+      "${_myb_programs}/Microsoft Visual Studio/*/*/VC/Auxiliary/Build/vcvars64.bat")
+    list(SORT _myb_vcvars ORDER DESCENDING)
+    list(LENGTH _myb_vcvars _myb_vcvars_count)
+    if(_myb_vcvars_count GREATER 0)
+      list(GET _myb_vcvars 0 _myb_vcvars_first)
+      set(MYB_MSVC_VCVARS "${_myb_vcvars_first}" CACHE FILEPATH
+        "vcvars64.bat of Visual Studio, for test_msvc_consumer" FORCE)
+    endif()
+  endif()
+  if(MYB_MSVC_VCVARS)
+    add_test(NAME test_msvc_consumer
+      COMMAND "${CMAKE_COMMAND}" "-DVCVARS=${MYB_MSVC_VCVARS}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        "-DLIB_DIR=$<TARGET_FILE_DIR:myb_shared>" "-DWORK_DIR=${PROJECT_BINARY_DIR}/msvc-consumer"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_msvc.cmake")
+  else()
+    message(STATUS "no Visual Studio with the C++ tools: test_msvc_consumer is not registered")
+  endif()
 endif()
 
 # The Python package (bindings/python) over the shared library: needs an interpreter with cffi
@@ -281,13 +336,188 @@ if(MYB_SANITIZE STREQUAL "")
         "${MYB_CARGO}" ${_myb_cargo_toolchain} test --offline --locked
         --manifest-path "${PROJECT_SOURCE_DIR}/bindings/rust/Cargo.toml" --features myb/sgp4)
     set_tests_properties(test_rust_binding PROPERTIES TIMEOUT 900)
+    # The MSVC toolchain of Rust on Windows: only the shared library, through its import
+    # library (bindings/rust/myb-sys/build.rs copies it under the name that linker wants).
+    if(MINGW AND MYB_BUILD_SHARED)
+      execute_process(COMMAND "${MYB_CARGO}" +stable-x86_64-pc-windows-msvc --version
+        RESULT_VARIABLE _myb_cargo_msvc_rc OUTPUT_QUIET ERROR_QUIET)
+      if(_myb_cargo_msvc_rc EQUAL 0)
+        # the tests find the DLLs on PATH; its separators kept inside the one argument
+        string(REPLACE ";" "\\;" _myb_env_path "$ENV{PATH}")
+        add_test(NAME test_rust_binding_msvc
+          COMMAND "${CMAKE_COMMAND}" -E env
+            "MYB_LIB_DIR=$<TARGET_FILE_DIR:myb_shared>${_myb_path_separator}$<TARGET_FILE_DIR:myb_sgp4_shared>"
+            "MYB_LINK=dylib"
+            "PATH=$<TARGET_FILE_DIR:myb_shared>${_myb_path_separator}$<TARGET_FILE_DIR:myb_sgp4_shared>${_myb_path_separator}${_myb_env_path}"
+            "CARGO_TARGET_DIR=${PROJECT_BINARY_DIR}/rust-msvc"
+            "MYB_DATA_DIR=${PROJECT_SOURCE_DIR}/data"
+            "MYB_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "${MYB_CARGO}" +stable-x86_64-pc-windows-msvc test --offline --locked
+            --manifest-path "${PROJECT_SOURCE_DIR}/bindings/rust/Cargo.toml" --features myb/sgp4)
+        set_tests_properties(test_rust_binding_msvc PROPERTIES TIMEOUT 900)
+      else()
+        message(STATUS "no Rust toolchain stable-x86_64-pc-windows-msvc: test_rust_binding_msvc "
+          "is not registered")
+      endif()
+    endif()
   else()
     message(STATUS "cargo not found: test_rust_binding is not registered")
   endif()
 endif()
 
-# The shared libraries export the public API and nothing else.
-if(MYB_BUILD_SHARED)
+# The Go package (bindings/go) over the static library: needs Go (MYB_GO names it; otherwise
+# the one of PATH or of toolchains/ in the source tree) and pkg-config. cgo compiles with the
+# project's Clang for its target and links with its linker; the orbit of examples/low_orbit.c
+# is checked against the C program low_orbit_reference, which prints the bits of the same
+# calls. Not with a sanitizer: the Go linker would have to bring its runtime.
+if(MYB_SANITIZE STREQUAL "")
+  file(GLOB _myb_go_hints LIST_DIRECTORIES true "${PROJECT_SOURCE_DIR}/toolchains/go*/bin")
+  find_program(MYB_GO NAMES go HINTS ${_myb_go_hints} DOC "Go, for the test of bindings/go")
+  find_program(MYB_PKG_CONFIG NAMES pkgconf pkg-config DOC "pkg-config, for the test of bindings/go")
+  mark_as_advanced(MYB_PKG_CONFIG)
+  if(MYB_GO AND MYB_PKG_CONFIG)
+    add_executable(go_low_orbit_reference bindings/low_orbit_reference.c)
+    target_link_libraries(go_low_orbit_reference PRIVATE myb)
+    target_compile_definitions(go_low_orbit_reference PRIVATE
+      $<$<BOOL:${WIN32}>:__USE_MINGW_ANSI_STDIO=1>)
+    myb_apply_flags(go_low_orbit_reference)
+    add_test(NAME test_go_binding
+      COMMAND "${CMAKE_COMMAND}" "-DGO=${MYB_GO}" "-DPKG_CONFIG=${MYB_PKG_CONFIG}"
+              "-DPC_DIR=${PROJECT_BINARY_DIR}/bindings/go/pkgconfig"
+              "-DCC=${CMAKE_C_COMPILER}" "-DCC_TARGET=${CMAKE_C_COMPILER_TARGET}"
+              "-DSYSROOT=${CMAKE_SYSROOT}" "-DLDFLAGS=${CMAKE_EXE_LINKER_FLAGS}"
+              "-DWORK_DIR=${PROJECT_BINARY_DIR}/go" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/bindings/go"
+              "-DREFERENCE=$<TARGET_FILE:go_low_orbit_reference>"
+              "-DDATA_DIR=${PROJECT_SOURCE_DIR}/data" "-DTEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_go_test.cmake")
+    set_tests_properties(test_go_binding PROPERTIES TIMEOUT 900)
+  else()
+    message(STATUS "Go or pkg-config not found (set MYB_GO): test_go_binding is not registered")
+  endif()
+endif()
+
+# The Haskell package (bindings/haskell): needs GHC and cabal (MYB_GHC, MYB_CABAL: on PATH, or
+# in toolchains/ of the source tree or of the home directory, or ghcup's). GHC on Windows brings
+# its own mingw-w64 toolchain for the UCRT, while the library is built against the msvcrt of
+# MSYS2 MINGW64 (and needs its stack protector), so there the package links the shared library;
+# elsewhere the static one (MYB_HASKELL_LINK). Not with a sanitizer: GHC would have to link its
+# runtime.
+if(MYB_SANITIZE STREQUAL "")
+  file(GLOB _myb_ghc_hints LIST_DIRECTORIES true
+    "${PROJECT_SOURCE_DIR}/toolchains/ghc-*/bin" "$ENV{HOME}/toolchains/ghc*/bin"
+    "$ENV{USERPROFILE}/toolchains/ghc*/bin")
+  file(GLOB _myb_cabal_hints LIST_DIRECTORIES true
+    "${PROJECT_SOURCE_DIR}/toolchains/cabal-*" "$ENV{HOME}/toolchains/cabal*"
+    "$ENV{HOME}/toolchains/cabal*/bin" "$ENV{USERPROFILE}/toolchains/cabal*")
+  find_program(MYB_GHC NAMES ghc
+    HINTS ${_myb_ghc_hints} "$ENV{HOME}/toolchains/bin" "$ENV{HOME}/toolchains"
+      "$ENV{HOME}/.ghcup/bin"
+    DOC "GHC for the test of bindings/haskell")
+  find_program(MYB_CABAL NAMES cabal
+    HINTS ${_myb_cabal_hints} "$ENV{HOME}/toolchains/bin" "$ENV{HOME}/toolchains"
+      "$ENV{HOME}/.ghcup/bin" "$ENV{HOME}/.cabal/bin"
+    DOC "cabal-install for the test of bindings/haskell")
+  mark_as_advanced(MYB_GHC MYB_CABAL)
+  if(WIN32)
+    set(_myb_haskell_link_default shared)
+  else()
+    set(_myb_haskell_link_default static)
+  endif()
+  set(MYB_HASKELL_LINK "${_myb_haskell_link_default}" CACHE STRING
+    "How the test of bindings/haskell links libmyb: static or shared")
+  set_property(CACHE MYB_HASKELL_LINK PROPERTY STRINGS static shared)
+  if(NOT MYB_GHC OR NOT MYB_CABAL)
+    message(STATUS "GHC or cabal not found (set MYB_GHC, MYB_CABAL): test_haskell_binding is "
+      "not registered")
+  elseif(MYB_HASKELL_LINK STREQUAL "shared" AND NOT MYB_BUILD_SHARED)
+    message(STATUS "MYB_HASKELL_LINK=shared without MYB_BUILD_SHARED: test_haskell_binding is "
+      "not registered")
+  else()
+    if(MYB_HASKELL_LINK STREQUAL "shared")
+      set(_myb_haskell_libraries "$<TARGET_LINKER_FILE:myb_shared>|$<TARGET_LINKER_FILE:myb_sgp4_shared>")
+      set(_myb_haskell_runtime "$<TARGET_FILE_DIR:myb_shared>|$<TARGET_FILE_DIR:myb_sgp4_shared>")
+    else()
+      set(_myb_haskell_libraries "$<TARGET_FILE:myb>|$<TARGET_FILE:myb_sgp4>")
+      set(_myb_haskell_runtime "")
+    endif()
+    add_test(NAME test_haskell_binding
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCABAL=${MYB_CABAL}" "-DGHC=${MYB_GHC}" "-DCLANG=${CMAKE_C_COMPILER}"
+        "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DBINARY=${PROJECT_BINARY_DIR}/haskell"
+        "-DLIBRARIES=${_myb_haskell_libraries}" "-DRUNTIME_DIRS=${_myb_haskell_runtime}"
+        "-DDATA_DIR=${PROJECT_SOURCE_DIR}/data"
+        "-DTEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+        -P "${PROJECT_SOURCE_DIR}/bindings/haskell/tools/test.cmake")
+    set_tests_properties(test_haskell_binding PROPERTIES TIMEOUT 1800)
+  endif()
+endif()
+
+# The bindings under AddressSanitizer (Linux): the library is instrumented, the interpreter and
+# the code of Rust are not, so the reports are about the library and what the bindings hand it.
+# Python loads the shared library into an interpreter built without the sanitizer: the runtime
+# of Clang has to be there first (LD_PRELOAD), and leaks are not looked for (the interpreter
+# keeps its objects to the end). Rust links the static library, with the runtime brought by
+# Clang as its linker.
+if(MYB_SANITIZE STREQUAL "address" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(_myb_asan_runtime "")
+  foreach(_myb_name libclang_rt.asan.so libclang_rt.asan-${CMAKE_SYSTEM_PROCESSOR}.so)
+    execute_process(COMMAND "${CMAKE_C_COMPILER}" -print-file-name=${_myb_name}
+      OUTPUT_VARIABLE _myb_found OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT _myb_asan_runtime AND IS_ABSOLUTE "${_myb_found}" AND EXISTS "${_myb_found}")
+      set(_myb_asan_runtime "${_myb_found}")
+    endif()
+  endforeach()
+  if(_myb_asan_runtime AND MYB_BUILD_SHARED)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    set(_myb_python_asan "${MYB_PYTHON}")
+    if(NOT _myb_python_asan)
+      set(_myb_python_asan "${Python3_EXECUTABLE}")
+    endif()
+    if(_myb_python_asan)
+      execute_process(COMMAND "${_myb_python_asan}" -c "import cffi"
+        RESULT_VARIABLE _myb_cffi_rc OUTPUT_QUIET ERROR_QUIET)
+    endif()
+    if(_myb_python_asan AND _myb_cffi_rc EQUAL 0)
+      add_test(NAME test_python_binding_asan
+        COMMAND "${CMAKE_COMMAND}" -E env
+          "LD_PRELOAD=${_myb_asan_runtime}"
+          "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1:detect_stack_use_after_return=1"
+          "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+          "PYTHONPATH=${PROJECT_SOURCE_DIR}/bindings/python"
+          "MYB_LIBRARY=$<TARGET_FILE:myb_shared>"
+          "MYB_LIBRARY_PATH=$<TARGET_FILE_DIR:myb_sgp4_shared>"
+          "MYB_DATA_DIR=${PROJECT_SOURCE_DIR}/data"
+          "MYB_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+          "MYB_CLANG=${CMAKE_C_COMPILER}"
+          "${_myb_python_asan}" -m unittest discover -s
+          "${PROJECT_SOURCE_DIR}/bindings/python/tests")
+    else()
+      message(STATUS "no Python with cffi: test_python_binding_asan is not registered")
+    endif()
+  elseif(NOT _myb_asan_runtime)
+    message(STATUS "the shared runtime of ASan was not found: test_python_binding_asan is not "
+      "registered")
+  endif()
+  find_program(MYB_CARGO cargo)
+  mark_as_advanced(MYB_CARGO)
+  if(MYB_CARGO)
+    add_test(NAME test_rust_binding_asan
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "MYB_LIB_DIR=$<TARGET_FILE_DIR:myb>:$<TARGET_FILE_DIR:myb_sgp4>"
+        "MYB_LINK=static"
+        "RUSTFLAGS=-C linker=${CMAKE_C_COMPILER} -C link-arg=-fsanitize=address,undefined"
+        "CARGO_TARGET_DIR=${PROJECT_BINARY_DIR}/rust-asan"
+        "MYB_DATA_DIR=${PROJECT_SOURCE_DIR}/data"
+        "MYB_TEST_DATA_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data"
+        "${MYB_CARGO}" test --offline --locked
+        --manifest-path "${PROJECT_SOURCE_DIR}/bindings/rust/Cargo.toml" --features myb/sgp4)
+    set_tests_properties(test_rust_binding_asan PROPERTIES TIMEOUT 900)
+  endif()
+endif()
+
+# The shared libraries export the public API and nothing else (the release binaries: the
+# instrumentation of a sanitizer adds symbols of its own).
+if(MYB_BUILD_SHARED AND MYB_SANITIZE STREQUAL "")
   find_program(MYB_LLVM_READOBJ NAMES llvm-readobj HINTS "${_myb_compiler_dir}")
   if(MYB_LLVM_NM AND (MYB_LLVM_READOBJ OR NOT WIN32))
     add_test(NAME test_exports

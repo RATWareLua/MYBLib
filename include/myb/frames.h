@@ -53,6 +53,24 @@ MYB_API void myb_rotation_invert(const myb_rotation* rotation, myb_rotation* out
 MYB_API void myb_rotation_euler313(const double angles[3], const double rates[3],
                                    myb_rotation* rotation);
 
+/* ---- Array forms ------------------------------------------------------------------------------
+ * The functions named *_many below do what the function without the suffix does at count
+ * instants at once, element by element in index order: the same bits as the single call in a
+ * loop, with one call instead of count. count 0 does nothing; with count > 0 the arrays must
+ * not be NULL (except where an argument is said to be optional). Those that can fail stop at
+ * the first instant that fails and return its status; *failed (may be NULL) then receives its
+ * index — the outputs before it are filled, from it on they are not defined — and count when
+ * all succeed (the array forms of myb/time.h, myb/kin.h and myb/kepler.h follow the same
+ * rules). */
+
+/* out[3 k ..] = rotations[k] applied to in[3 k ..] (positions), resp. out[6 k ..] to the
+ * states in[6 k ..]: a series of states carried into a frame that turns, one rotation per
+ * state. in and out may be the same array. */
+MYB_API void myb_rotation_apply_position_many(const myb_rotation* rotations, const double* in,
+                                              size_t count, double* out);
+MYB_API void myb_rotation_apply_state_many(const myb_rotation* rotations, const double* in,
+                                           size_t count, double* out);
+
 /* ---- Celestial intermediate pole and origin ---------------------------------------------------
  * The CIO-based transformation between a celestial frame (GCRS) and the terrestrial frame of
  * a body (ITRS for the Earth), IERS Conventions 2010, ch. 5:
@@ -77,6 +95,11 @@ MYB_API void myb_cip_destroy(myb_cip* cip); /* accepts NULL */
 /* X, Y and s (rad) at the TT instant tt, and their rates (rad per TT second; rates may be
  * NULL). Thread-safe. */
 MYB_API void myb_cip_xys(const myb_cip* cip, myb_time tt, double xys[3], double rates[3]);
+
+/* The same at count instants (array form): xys[3 k ..] and rates[3 k ..] (rates may be NULL)
+ * at tt[k]. */
+MYB_API void myb_cip_xys_many(const myb_cip* cip, const myb_time* tt, size_t count, double* xys,
+                              double* rates);
 
 /* The series tabulated every `step` seconds of TT (0: an hour) from tt0 to tt1: between
  * them myb_cip_xys — and all that uses it, myb_cip_terrestrial and the orientation provider
@@ -160,11 +183,24 @@ MYB_API MYB_NODISCARD myb_status myb_eop_at(const myb_eop* eop, const myb_timesy
                                             myb_time t, myb_scale scale, myb_eop_values* values,
                                             myb_time* ut1);
 
+/* The same at count instants (array form): values[k] and ut1[k] (ut1 may be NULL) at t[k]. */
+MYB_API MYB_NODISCARD myb_status myb_eop_at_many(const myb_eop* eop, const myb_timesys* system,
+                                                 const myb_time* t, size_t count,
+                                                 myb_scale scale, myb_eop_values* values,
+                                                 myb_time* ut1, size_t* failed);
+
 /* Celestial -> terrestrial rotation at one instant given as tt and ut1, with the EOP (NULL:
  * all zero). dX, dY are added to the X, Y of the series. The derivative is with respect to TT
  * and includes the rates of X, Y, s and of the angle, ERA rate * (1 - LOD / 86400 s). */
 MYB_API void myb_cip_terrestrial(const myb_cip* cip, myb_time tt, myb_time ut1,
                                  const myb_eop_values* eop, myb_rotation* rotation);
+
+/* The same at count instants (array form): rotations[k] at tt[k] and ut1[k] with eop[k] (eop
+ * may be NULL: all zero at every instant) — after myb_eop_at_many, the celestial ->
+ * terrestrial rotations of a whole series in two calls. */
+MYB_API void myb_cip_terrestrial_many(const myb_cip* cip, const myb_time* tt, const myb_time* ut1,
+                                      const myb_eop_values* eop, size_t count,
+                                      myb_rotation* rotations);
 
 /* ---- Equinox-based systems ---------------------------------------------------------------
  * The classical (FK5-era) systems of the Earth, from the mean equator and equinox of J2000.0
@@ -208,6 +244,11 @@ typedef enum myb_equinox_frame {
 MYB_API void myb_equinox_rotation(const myb_equinox* equinox, myb_equinox_frame frame,
                                   myb_time tt, myb_rotation* rotation);
 
+/* The same at count instants (array form): rotations[k] at tt[k]. */
+MYB_API void myb_equinox_rotation_many(const myb_equinox* equinox, myb_equinox_frame frame,
+                                       const myb_time* tt, size_t count,
+                                       myb_rotation* rotations);
+
 /* Greenwich mean sidereal time of 1982 (rad, [0, 2 pi)) and its rate per UT1 second (may be
  * NULL), at ut1 (an instant on the UT1 scale). */
 MYB_API double myb_equinox_gmst(const myb_equinox* equinox, myb_time ut1, double* rate);
@@ -215,6 +256,10 @@ MYB_API double myb_equinox_gmst(const myb_equinox* equinox, myb_time ut1, double
 /* The rotation TEME -> PEF = R3(GMST82) at ut1, with its derivative (the Earth's rotation). */
 MYB_API void myb_equinox_teme_pef(const myb_equinox* equinox, myb_time ut1,
                                   myb_rotation* rotation);
+
+/* The same at count instants (array form): rotations[k] at ut1[k]. */
+MYB_API void myb_equinox_teme_pef_many(const myb_equinox* equinox, const myb_time* ut1,
+                                       size_t count, myb_rotation* rotations);
 
 /* ---- Rotation models of the IAU Working Group on Cartographic Coordinates ------------------
  * The orientation of a body as published by the WGCCRE (Archinal et al., Celest. Mech. Dyn.
@@ -249,6 +294,10 @@ MYB_API void myb_wgccre_euler(const myb_wgccre* model, myb_time t, double angles
 
 /* The rotation reference frame -> body-fixed frame at the TDB instant t. */
 MYB_API void myb_wgccre_rotation(const myb_wgccre* model, myb_time t, myb_rotation* rotation);
+
+/* The same at count instants (array form): rotations[k] at t[k]. */
+MYB_API void myb_wgccre_rotation_many(const myb_wgccre* model, const myb_time* t, size_t count,
+                                      myb_rotation* rotations);
 
 /* ---- Geodetic coordinates and topocentric frames ------------------------------------------
  * On an oblate ellipsoid of revolution with equatorial radius a and flattening f (from data,
@@ -334,6 +383,13 @@ MYB_API MYB_NODISCARD myb_status myb_pck_euler(const myb_pck* pck, int32_t id, m
 /* The rotation from the base frame to frame class `id` at t; errors as myb_pck_euler. */
 MYB_API MYB_NODISCARD myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
                                                   myb_rotation* rotation, int32_t* base);
+
+/* The same at count instants (array form): rotations[k] and bases[k] (bases may be NULL) at
+ * t[k]. */
+MYB_API MYB_NODISCARD myb_status myb_pck_rotation_many(const myb_pck* pck, int32_t id,
+                                                       const myb_time* t, size_t count,
+                                                       myb_rotation* rotations, int32_t* bases,
+                                                       size_t* failed);
 
 /* ---- Orientation providers, part 1: see below ------------------------------------------------ */
 typedef struct myb_orientation myb_orientation;
@@ -444,6 +500,15 @@ MYB_API MYB_NODISCARD myb_status myb_orientation_wgccre(void* context, myb_time 
 MYB_API MYB_NODISCARD myb_status myb_orientation_fixed(void* rotation, myb_time t,
                                                        myb_orientation* orientation);
 
+/* Any orientation provider — those above, myb_orientation_graph, one of the caller's — at
+ * count instants (array form): orientations[k] = what orientation(context, t[k]) gives. The
+ * pole of a body, its rotation time and its polar motion over a series in one call. */
+MYB_API MYB_NODISCARD myb_status myb_orientation_many(myb_orientation_function orientation,
+                                                      void* context, const myb_time* t,
+                                                      size_t count,
+                                                      myb_orientation* orientations,
+                                                      size_t* failed);
+
 /* ---- The graph of frames -----------------------------------------------------------------------
  * Frames named by codes (those of the files that refer to them: the library attaches no
  * meaning to a code), each given in another — its base — by a provider of its orientation or
@@ -503,6 +568,13 @@ MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_tkframe(myb_frame_graph* gr
 MYB_API MYB_NODISCARD myb_status myb_frame_graph_rotation(const myb_frame_graph* graph,
                                                           int32_t from, int32_t to, myb_time t,
                                                           myb_rotation* rotation);
+
+/* The same at count instants (array form): rotations[k] at t[k]. */
+MYB_API MYB_NODISCARD myb_status myb_frame_graph_rotation_many(const myb_frame_graph* graph,
+                                                               int32_t from, int32_t to,
+                                                               const myb_time* t, size_t count,
+                                                               myb_rotation* rotations,
+                                                               size_t* failed);
 
 /* Two frames of a graph as an orientation provider: the rotation from -> to.
  * myb_orientation_function; context: const myb_graph_orientation*. */

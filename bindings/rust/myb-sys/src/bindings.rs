@@ -783,6 +783,12 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn myb_time_to_jd(t: myb_time, jd1: *mut f64, jd2: *mut f64);
 }
+unsafe extern "C" {
+    pub fn myb_time_from_seconds_many(seconds: *const f64, count: usize, t: *mut myb_time);
+}
+unsafe extern "C" {
+    pub fn myb_time_seconds_many(t: *const myb_time, count: usize, seconds: *mut f64);
+}
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct myb_calendar {
@@ -798,6 +804,17 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn myb_time_to_calendar(t: myb_time, calendar: *mut myb_calendar);
+}
+unsafe extern "C" {
+    pub fn myb_calendar_to_time_many(
+        calendar: *const myb_calendar,
+        count: usize,
+        t: *mut myb_time,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_time_to_calendar_many(t: *const myb_time, count: usize, calendar: *mut myb_calendar);
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -842,6 +859,17 @@ unsafe extern "C" {
         out: *mut myb_time,
     ) -> myb_status;
 }
+unsafe extern "C" {
+    pub fn myb_timesys_convert_many(
+        system: *const myb_timesys,
+        t: *const myb_time,
+        count: usize,
+        from: myb_scale,
+        to: myb_scale,
+        out: *mut myb_time,
+        failed: *mut usize,
+    ) -> myb_status;
+}
 pub type myb_scale_difference = ::std::option::Option<
     unsafe extern "C" fn(
         context: *mut ::std::os::raw::c_void,
@@ -880,6 +908,26 @@ unsafe extern "C" {
         t: myb_time,
         from: myb_scale,
         utc: *mut myb_calendar,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_timesys_from_utc_many(
+        system: *const myb_timesys,
+        utc: *const myb_calendar,
+        count: usize,
+        to: myb_scale,
+        out: *mut myb_time,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_timesys_to_utc_many(
+        system: *const myb_timesys,
+        t: *const myb_time,
+        count: usize,
+        from: myb_scale,
+        utc: *mut myb_calendar,
+        failed: *mut usize,
     ) -> myb_status;
 }
 pub const MYB_ODM_TEXT: _bindgen_ty_5 = 64;
@@ -1368,6 +1416,22 @@ unsafe extern "C" {
         rotation: *mut myb_rotation,
     );
 }
+unsafe extern "C" {
+    pub fn myb_rotation_apply_position_many(
+        rotations: *const myb_rotation,
+        in_: *const f64,
+        count: usize,
+        out: *mut f64,
+    );
+}
+unsafe extern "C" {
+    pub fn myb_rotation_apply_state_many(
+        rotations: *const myb_rotation,
+        in_: *const f64,
+        count: usize,
+        out: *mut f64,
+    );
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct myb_cip {
@@ -1387,6 +1451,15 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn myb_cip_xys(cip: *const myb_cip, tt: myb_time, xys: *mut f64, rates: *mut f64);
+}
+unsafe extern "C" {
+    pub fn myb_cip_xys_many(
+        cip: *const myb_cip,
+        tt: *const myb_time,
+        count: usize,
+        xys: *mut f64,
+        rates: *mut f64,
+    );
 }
 unsafe extern "C" {
     pub fn myb_cip_tabulate(
@@ -1478,12 +1551,34 @@ unsafe extern "C" {
     ) -> myb_status;
 }
 unsafe extern "C" {
+    pub fn myb_eop_at_many(
+        eop: *const myb_eop,
+        system: *const myb_timesys,
+        t: *const myb_time,
+        count: usize,
+        scale: myb_scale,
+        values: *mut myb_eop_values,
+        ut1: *mut myb_time,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
     pub fn myb_cip_terrestrial(
         cip: *const myb_cip,
         tt: myb_time,
         ut1: myb_time,
         eop: *const myb_eop_values,
         rotation: *mut myb_rotation,
+    );
+}
+unsafe extern "C" {
+    pub fn myb_cip_terrestrial_many(
+        cip: *const myb_cip,
+        tt: *const myb_time,
+        ut1: *const myb_time,
+        eop: *const myb_eop_values,
+        count: usize,
+        rotations: *mut myb_rotation,
     );
 }
 #[repr(C)]
@@ -1535,6 +1630,15 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
+    pub fn myb_equinox_rotation_many(
+        equinox: *const myb_equinox,
+        frame: myb_equinox_frame,
+        tt: *const myb_time,
+        count: usize,
+        rotations: *mut myb_rotation,
+    );
+}
+unsafe extern "C" {
     pub fn myb_equinox_gmst(equinox: *const myb_equinox, ut1: myb_time, rate: *mut f64) -> f64;
 }
 unsafe extern "C" {
@@ -1542,6 +1646,14 @@ unsafe extern "C" {
         equinox: *const myb_equinox,
         ut1: myb_time,
         rotation: *mut myb_rotation,
+    );
+}
+unsafe extern "C" {
+    pub fn myb_equinox_teme_pef_many(
+        equinox: *const myb_equinox,
+        ut1: *const myb_time,
+        count: usize,
+        rotations: *mut myb_rotation,
     );
 }
 #[repr(C)]
@@ -1574,6 +1686,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn myb_wgccre_rotation(model: *const myb_wgccre, t: myb_time, rotation: *mut myb_rotation);
+}
+unsafe extern "C" {
+    pub fn myb_wgccre_rotation_many(
+        model: *const myb_wgccre,
+        t: *const myb_time,
+        count: usize,
+        rotations: *mut myb_rotation,
+    );
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -1666,6 +1786,17 @@ unsafe extern "C" {
         t: myb_time,
         rotation: *mut myb_rotation,
         base: *mut i32,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_pck_rotation_many(
+        pck: *const myb_pck,
+        id: i32,
+        t: *const myb_time,
+        count: usize,
+        rotations: *mut myb_rotation,
+        bases: *mut i32,
+        failed: *mut usize,
     ) -> myb_status;
 }
 pub type myb_orientation_function = ::std::option::Option<
@@ -1818,6 +1949,16 @@ unsafe extern "C" {
         orientation: *mut myb_orientation,
     ) -> myb_status;
 }
+unsafe extern "C" {
+    pub fn myb_orientation_many(
+        orientation: myb_orientation_function,
+        context: *mut ::std::os::raw::c_void,
+        t: *const myb_time,
+        count: usize,
+        orientations: *mut myb_orientation,
+        failed: *mut usize,
+    ) -> myb_status;
+}
 pub const MYB_FRAME_GRAPH_MAX_DEPTH: _bindgen_ty_6 = 32;
 pub type _bindgen_ty_6 = ::std::os::raw::c_uint;
 #[repr(C)]
@@ -1883,6 +2024,17 @@ unsafe extern "C" {
         to: i32,
         t: myb_time,
         rotation: *mut myb_rotation,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_frame_graph_rotation_many(
+        graph: *const myb_frame_graph,
+        from: i32,
+        to: i32,
+        t: *const myb_time,
+        count: usize,
+        rotations: *mut myb_rotation,
+        failed: *mut usize,
     ) -> myb_status;
 }
 #[repr(C)]
@@ -2328,6 +2480,31 @@ unsafe extern "C" {
         t: myb_time,
         frame: i32,
         state: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_state_many(
+        spk: *const myb_spk,
+        target: i32,
+        center: i32,
+        t: *const myb_time,
+        count: usize,
+        states: *mut f64,
+        frames: *mut i32,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_spk_state_in_many(
+        spk: *const myb_spk,
+        graph: *const myb_frame_graph,
+        target: i32,
+        center: i32,
+        t: *const myb_time,
+        count: usize,
+        frame: i32,
+        states: *mut f64,
+        failed: *mut usize,
     ) -> myb_status;
 }
 pub type myb_state_function = ::std::option::Option<
@@ -6669,6 +6846,42 @@ unsafe extern "C" {
         pv: *mut myb_pv,
     ) -> myb_status;
 }
+unsafe extern "C" {
+    pub fn myb_elements_from_pv_many(
+        mu: f64,
+        pv: *const myb_pv,
+        count: usize,
+        elements: *mut myb_elements,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_pv_from_elements_many(
+        mu: f64,
+        elements: *const myb_elements,
+        count: usize,
+        pv: *mut myb_pv,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_equinoctial_from_pv_many(
+        mu: f64,
+        pv: *const myb_pv,
+        count: usize,
+        elements: *mut myb_equinoctial,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_pv_from_equinoctial_many(
+        mu: f64,
+        elements: *const myb_equinoctial,
+        count: usize,
+        pv: *mut myb_pv,
+        failed: *mut usize,
+    ) -> myb_status;
+}
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct myb_mean_elements {
@@ -6705,6 +6918,27 @@ unsafe extern "C" {
         dt: f64,
         pv: *mut myb_pv,
         stm: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_kepler_propagate_many(
+        mu: f64,
+        pv0: *const myb_pv,
+        dt: *const f64,
+        count: usize,
+        pv: *mut myb_pv,
+        failed: *mut usize,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_kepler_stm_many(
+        mu: f64,
+        pv0: *const myb_pv,
+        dt: *const f64,
+        count: usize,
+        pv: *mut myb_pv,
+        stm: *mut f64,
+        failed: *mut usize,
     ) -> myb_status;
 }
 #[repr(C)]

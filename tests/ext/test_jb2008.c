@@ -212,7 +212,7 @@ static void test_atmosphere(void) {
   MT_CHECK(myb_geodetic_from_cartesian(&wgs84, r, &lon, &lat, &h) == MYB_OK);
   const myb_jb2008_indices x = {.f10 = 601.0, .f10_average = 611.0, .s10 = 602.0,
                                 .s10_average = 612.0, .m10 = 503.0, .m10_average = 513.0,
-                                .y10 = 104.0, .y10_average = 114.0, .dtc = 12.0};
+                                .y10 = 204.0, .y10_average = 214.0, .dtc = 12.0};
   myb_jb2008_output out;
   MT_CHECK(myb_jb2008(mjd, ra, dec, gmst * degree + lon, atan2(r[2], hypot(r[0], r[1])), h / 1000.0,
                       &x, &out) == MYB_OK);

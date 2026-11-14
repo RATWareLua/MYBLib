@@ -30,8 +30,8 @@ typedef struct myb_lambert_solution {
  * which `capacity` must allow). Direction: retrograde == 0 selects motion counter-clockwise
  * about +z (angular momentum with positive z component), retrograde != 0 the other sense.
  * tof > 0 in seconds, mu > 0 in m^3 s^-2.
- * Errors: MYB_E_DOMAIN (non-finite input, r1 or r2 zero, r1 and r2 collinear: the plane of the
- * transfer is undefined), MYB_E_NOCONV (iteration budget; not expected). Multi-revolution
+ * Errors: MYB_E_DOMAIN (non-finite input, tof <= 0, mu <= 0, r1 or r2 zero, r1 and r2
+ * collinear: the plane of the transfer is undefined), MYB_E_NOCONV (iteration budget; not expected). Multi-revolution
  * solutions that do not exist for this tof are simply absent from the result. */
 MYB_API MYB_NODISCARD myb_status myb_lambert(double mu, const double r1[3], const double r2[3],
                                              double tof, int retrograde, int max_revolutions,

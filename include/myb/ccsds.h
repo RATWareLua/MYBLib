@@ -11,8 +11,9 @@
  * them (myb_timesys_from_utc for UTC, myb_calendar_to_time for the continuous scales).
  * Covariances are 6 x 6 matrices of a state, by rows, of which the messages carry the lower
  * triangle. Comments and, in OEM, OPM and OMM, user-defined keywords are passed over. Of XML
- * the elements and attributes of the messages are read; CDATA sections and document types
- * with an internal subset are not. */
+ * the elements and attributes of the messages are read; a value given as one CDATA section is
+ * taken as written, and a document type with an internal subset is passed over whole (the
+ * entities it declares are not known: `&name;` stays as written). */
 #ifndef MYB_CCSDS_H_
 #define MYB_CCSDS_H_
 

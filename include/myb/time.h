@@ -46,6 +46,20 @@ MYB_API int myb_time_compare(myb_time a, myb_time b); /* -1, 0, 1 */
 MYB_API myb_time myb_time_from_jd(double jd1, double jd2);
 MYB_API void myb_time_to_jd(myb_time t, double* jd1, double* jd2);
 
+/* ---- Array forms -----------------------------------------------------------------------------
+ * The functions named *_many do what the function without the suffix does, for count values
+ * at once, element by element in index order: the same bits as the single call in a loop,
+ * with one call instead of count (what a binding pays for at every crossing into C). count 0
+ * does nothing; with count > 0 the arrays must not be NULL. Those that can fail stop at the
+ * first element that fails and return its status; *failed (may be NULL) then receives its
+ * index — the outputs before it are filled, from it on they are not defined — and count when
+ * all succeed. */
+
+/* t[k] = myb_time_from_seconds(seconds[k]); seconds[k] = myb_time_seconds(t[k]). The
+ * contracts of the single functions hold for every element. */
+MYB_API void myb_time_from_seconds_many(const double* seconds, size_t count, myb_time* t);
+MYB_API void myb_time_seconds_many(const myb_time* t, size_t count, double* seconds);
+
 /* ---- Calendar ------------------------------------------------------------------------------ */
 
 typedef struct myb_calendar {
@@ -61,6 +75,12 @@ typedef struct myb_calendar {
  * invalid date or time (including second >= 60) or |year| > 10^9. */
 MYB_API MYB_NODISCARD myb_status myb_calendar_to_time(const myb_calendar* calendar, myb_time* t);
 MYB_API void myb_time_to_calendar(myb_time t, myb_calendar* calendar);
+
+/* The array forms of the two (see "Array forms" above). */
+MYB_API MYB_NODISCARD myb_status myb_calendar_to_time_many(const myb_calendar* calendar,
+                                                           size_t count, myb_time* t,
+                                                           size_t* failed);
+MYB_API void myb_time_to_calendar_many(const myb_time* t, size_t count, myb_calendar* calendar);
 
 /* ---- Time scale systems --------------------------------------------------------------------- */
 
@@ -91,6 +111,12 @@ MYB_API const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale 
  * myb_timesys_set_difference. */
 MYB_API MYB_NODISCARD myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
                                                      myb_scale from, myb_scale to, myb_time* out);
+
+/* The same for count instants (see "Array forms" above); out may be t. */
+MYB_API MYB_NODISCARD myb_status myb_timesys_convert_many(const myb_timesys* system,
+                                                          const myb_time* t, size_t count,
+                                                          myb_scale from, myb_scale to,
+                                                          myb_time* out, size_t* failed);
 
 /* A relation of the kind SERIES given by a function in place of its series: the difference
  * scale - parent (s) at an instant of the scale — TDB - TT from the time ephemeris of a
@@ -125,6 +151,16 @@ MYB_API MYB_NODISCARD myb_status myb_timesys_from_utc(const myb_timesys* system,
 /* Instant on scale `from` -> UTC calendar label (23:59:60.x during a positive leap second). */
 MYB_API MYB_NODISCARD myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t,
                                                     myb_scale from, myb_calendar* utc);
+
+/* The array forms of the two (see "Array forms" above). */
+MYB_API MYB_NODISCARD myb_status myb_timesys_from_utc_many(const myb_timesys* system,
+                                                           const myb_calendar* utc, size_t count,
+                                                           myb_scale to, myb_time* out,
+                                                           size_t* failed);
+MYB_API MYB_NODISCARD myb_status myb_timesys_to_utc_many(const myb_timesys* system,
+                                                         const myb_time* t, size_t count,
+                                                         myb_scale from, myb_calendar* utc,
+                                                         size_t* failed);
 
 #ifdef __cplusplus
 }

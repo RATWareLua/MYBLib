@@ -1,7 +1,10 @@
-# Continuous integration of myb: the CMake presets of the repository on Linux (Clang, Ninja) and
-# Windows (Clang targeting x86_64-w64-windows-gnu with the MSYS2 MINGW64 sysroot), with the
-# sanitizers. Every job runs the whole test suite, the reproducibility hash included, so a
-# result that changes by one bit on one platform fails the build. The tests of bindings/ run in
+# Continuous integration of myb: the CMake presets of the repository on Linux (Clang, Ninja; x86-64
+# and ARM64), macOS (the Clang of Homebrew's LLVM on Apple silicon) and Windows (Clang targeting
+# x86_64-w64-windows-gnu with the MSYS2 MINGW64 sysroot), with the sanitizers. Every job runs the
+# whole test suite, the reproducibility hash included, so a result that changes by one bit on one
+# platform or processor fails the build. On Windows, programs built by Microsoft's compiler and
+# by the MSVC toolchain of Rust are checked against the shared library as well
+# (test_msvc_consumer, test_rust_binding_msvc). The tests of bindings/ run in
 # the presets without a sanitizer: C++ everywhere, Rust wherever cargo is, Python where the
 # shared library is built — the "Bindings" step installs what they need and then checks that
 # CMake registered them, so that a missing interpreter or toolchain fails the job instead of
@@ -30,14 +33,22 @@ env:
 
 jobs:
   linux:
-    name: linux (${{ matrix.preset }})
-    runs-on: ubuntu-24.04
+    name: linux ${{ matrix.arch }} (${{ matrix.preset }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         preset: [linux-dev, linux-release, linux-asan, linux-asan-debug, linux-ubsan, linux-lsan,
                  linux-tsan]
+        arch: [x86-64]
+        runner: [ubuntu-24.04]
+        include:
+          # ARM64: the same bits from another processor (no FMA contraction, the library's own
+          # correctly rounded functions)
+          - { preset: linux-release, arch: arm64, runner: ubuntu-24.04-arm }
+          - { preset: linux-asan, arch: arm64, runner: ubuntu-24.04-arm }
+          - { preset: linux-ubsan, arch: arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +69,12 @@ jobs:
           set -euo pipefail
           sudo apt-get install -y --no-install-recommends python3-cffi
           python3 -c "import cffi; print('cffi', cffi.__version__)"
+          if ! command -v cargo > /dev/null; then
+            # an image without Rust (the ARM64 one may be): rustup, the minimal profile
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
           cargo --version
 
       - name: Allow the sanitizers' shadow memory (kernel ASLR entropy)
@@ -82,7 +99,76 @@ jobs:
           cmake --preset ${{ matrix.preset }}
 
       - name: Bindings are registered
-        if: ${{ matrix.preset == 'linux-dev' || matrix.preset == 'linux-release' }}
+        if: ${{ matrix.preset == 'linux-dev' || matrix.preset == 'linux-release' || matrix.preset == 'linux-asan' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset ${{ matrix.preset }} -N > registered.txt
+          grep -q test_cpp_binding registered.txt
+          if [ "${{ matrix.preset }}" = linux-asan ]; then
+            # Python and Rust over the instrumented library
+            grep -q test_python_binding_asan registered.txt
+            grep -q test_rust_binding_asan registered.txt
+          else
+            grep -q test_rust_binding registered.txt
+            if grep -q 'MYB_BUILD_SHARED:BOOL=ON' build/${{ matrix.preset }}/CMakeCache.txt; then
+              grep -q test_python_binding registered.txt
+            fi
+          fi
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --parallel 4 --timeout ${{ env.CTEST_TIMEOUT }}
+
+  macos:
+    name: macos arm64 (${{ matrix.preset }})
+    runs-on: macos-15
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [macos-dev, macos-release, macos-asan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: LLVM ${{ env.LLVM_VERSION }}, Ninja, MPFR (Homebrew)
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install "llvm@$LLVM_VERSION" ninja mpfr gmp
+          echo "MYB_LLVM_ROOT=$(brew --prefix "llvm@$LLVM_VERSION")" >> "$GITHUB_ENV"
+          echo "$(brew --prefix "llvm@$LLVM_VERSION")/bin" >> "$GITHUB_PATH"
+
+      - name: Python with cffi (a virtual environment) and Rust (the tests of bindings/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --disable-pip-version-check cffi
+          echo "MYB_PYTHON=$RUNNER_TEMP/venv/bin/python" >> "$GITHUB_ENV"
+          cargo --version
+
+      - name: Cache the downloaded data
+        uses: actions/cache@v4
+        with:
+          path: data/download
+          key: data-${{ hashFiles('cmake/FetchData.cmake') }}-${{ github.run_id }}
+          restore-keys: data-${{ hashFiles('cmake/FetchData.cmake') }}-
+
+      - name: Fetch the data (fresh live series)
+        shell: bash
+        run: cmake -DREFRESH=ON -P cmake/FetchData.cmake
+
+      - name: Configure
+        shell: bash
+        run: |
+          "$MYB_LLVM_ROOT/bin/clang" --version
+          cmake --preset ${{ matrix.preset }} -DMYB_PYTHON="$MYB_PYTHON"
+
+      - name: Bindings are registered
+        if: ${{ matrix.preset != 'macos-asan' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -94,10 +180,10 @@ jobs:
           fi
 
       - name: Build
-        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 3
 
       - name: Test
-        run: ctest --preset ${{ matrix.preset }} --parallel 4 --timeout ${{ env.CTEST_TIMEOUT }}
+        run: ctest --preset ${{ matrix.preset }} --parallel 3 --timeout ${{ env.CTEST_TIMEOUT }}
 
   windows:
     name: windows (${{ matrix.preset }})
@@ -168,7 +254,8 @@ jobs:
           $registered = ctest --preset ${{ matrix.preset }} -N | Out-String
           $wanted = @('test_cpp_binding', 'test_rust_binding')
           if (Select-String -Path build/${{ matrix.preset }}/CMakeCache.txt -Pattern 'MYB_BUILD_SHARED:BOOL=ON' -Quiet) {
-            $wanted += 'test_python_binding'
+            # the shared library: Python, and the consumers built by Microsoft's toolchains
+            $wanted += 'test_python_binding', 'test_msvc_consumer', 'test_rust_binding_msvc'
           }
           foreach ($name in $wanted) {
             if ($registered -notmatch $name) { throw "$name is not registered" }

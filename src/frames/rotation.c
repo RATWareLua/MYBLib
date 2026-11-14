@@ -74,6 +74,22 @@ void myb_rotation_apply_state(const myb_rotation* rotation, const double in[6], 
   }
 }
 
+void myb_rotation_apply_position_many(const myb_rotation* rotations, const double* in, size_t count,
+                                      double* out) {
+  MYB_CHECK(count == 0 || (rotations != NULL && in != NULL && out != NULL));
+  for (size_t k = 0; k < count; ++k) {
+    myb_rotation_apply_position(&rotations[k], in + 3 * k, out + 3 * k);
+  }
+}
+
+void myb_rotation_apply_state_many(const myb_rotation* rotations, const double* in, size_t count,
+                                   double* out) {
+  MYB_CHECK(count == 0 || (rotations != NULL && in != NULL && out != NULL));
+  for (size_t k = 0; k < count; ++k) {
+    myb_rotation_apply_state(&rotations[k], in + 6 * k, out + 6 * k);
+  }
+}
+
 void myb_rotation_compose(const myb_rotation* second, const myb_rotation* first,
                           myb_rotation* out) {
   MYB_CHECK(second != NULL && first != NULL && out != NULL);

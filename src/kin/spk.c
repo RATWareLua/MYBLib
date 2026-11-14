@@ -195,6 +195,42 @@ myb_status myb_spk_state_in(const myb_spk* spk, const myb_frame_graph* graph, in
   return chain_state(spk, graph, frame, target, center, t, state, NULL);
 }
 
+myb_status myb_spk_state_many(const myb_spk* spk, int32_t target, int32_t center, const myb_time* t,
+                              size_t count, double* states, int32_t* frames, size_t* failed) {
+  MYB_CHECK(spk != NULL && (count == 0 || (t != NULL && states != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_spk_state(spk, target, center, t[k], states + 6 * k,
+                           frames != NULL ? &frames[k] : NULL);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+myb_status myb_spk_state_in_many(const myb_spk* spk, const myb_frame_graph* graph, int32_t target,
+                                 int32_t center, const myb_time* t, size_t count, int32_t frame,
+                                 double* states, size_t* failed) {
+  MYB_CHECK(spk != NULL && graph != NULL && (count == 0 || (t != NULL && states != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_spk_state_in(spk, graph, target, center, t[k], frame, states + 6 * k);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
 myb_status myb_spk_time_difference(void* context, myb_time tdb, double* difference) {
   const myb_spk_time* c = context;
   MYB_CHECK(c != NULL && c->spk != NULL && difference != NULL);

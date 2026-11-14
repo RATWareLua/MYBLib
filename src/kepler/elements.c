@@ -178,3 +178,71 @@ myb_status myb_pv_from_equinoctial(double mu, const myb_equinoctial* elements, m
   myb_vec3_combine(f_hat, -speed * (el.g + sl), g_hat, speed * (el.f + cl), pv->v);
   return MYB_OK;
 }
+
+myb_status myb_elements_from_pv_many(double mu, const myb_pv* pv, size_t count,
+                                     myb_elements* elements, size_t* failed) {
+  MYB_CHECK(count == 0 || (pv != NULL && elements != NULL));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_elements_from_pv(mu, &pv[k], &elements[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+myb_status myb_pv_from_elements_many(double mu, const myb_elements* elements, size_t count,
+                                     myb_pv* pv, size_t* failed) {
+  MYB_CHECK(count == 0 || (elements != NULL && pv != NULL));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_pv_from_elements(mu, &elements[k], &pv[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+myb_status myb_equinoctial_from_pv_many(double mu, const myb_pv* pv, size_t count,
+                                        myb_equinoctial* elements, size_t* failed) {
+  MYB_CHECK(count == 0 || (pv != NULL && elements != NULL));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_equinoctial_from_pv(mu, &pv[k], &elements[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
+
+myb_status myb_pv_from_equinoctial_many(double mu, const myb_equinoctial* elements, size_t count,
+                                        myb_pv* pv, size_t* failed) {
+  MYB_CHECK(count == 0 || (elements != NULL && pv != NULL));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_pv_from_equinoctial(mu, &elements[k], &pv[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}

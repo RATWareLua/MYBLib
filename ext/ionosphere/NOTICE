@@ -10,6 +10,9 @@ ionosphere.c is written by the authors of myb from:
     Determination in Europe (S. Schaer, "Mapping and predicting the Earth's ionosphere using the
     Global Positioning System", dissertation, University of Bern, 1999).
 
-No code of others is included. The test file tests/data/ionosphere/synthetic.inx is synthetic
-(an analytic field written in the format by the authors of myb), not data of any analysis
-centre.
+Three-dimensional maps (MAP DIMENSION 3) are read as the IONEX 1.1 description gives them:
+the values are densities at the nodes times DHGT, in 10^k TECU.
+
+No code of others is included. The test files tests/data/ionosphere/synthetic.inx (2-D maps)
+and tests/data/ionosphere/synthetic3d.inx (3-D maps) are synthetic (analytic fields written in
+the format by the authors of myb), not data of any analysis centre.

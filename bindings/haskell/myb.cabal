@@ -1,0 +1,172 @@
+cabal-version: 3.0
+name:          myb
+version:       1.2.0.0
+synopsis:      Motion of bodies in space: N-body, orbits, transfers - the Haskell face of the C library myb
+description:
+  Two layers over the C library myb. "Myb.C" is the whole C interface, generated from the
+  headers (bindings/haskell/tools/Generate.hs): every function as a foreign import, every
+  structure as a record with a Storable instance whose layout hsc2hs takes from the headers.
+  "Myb" is the upper layer: objects with finalizers, failures as values (Either with the status
+  of the library), Haskell functions as terms of a force model, providers and events. No
+  arithmetic is done on the way: a number has the bits of the same calls made in C.
+license:       BSD-3-Clause
+license-file:  ../../LICENSE
+homepage:      https://github.com/RATWareLua/MYBLib
+category:      Science, Physics, Astronomy
+build-type:    Simple
+tested-with:   GHC == 9.10.3
+
+-- What the lower layer of every library of the package shares: the headers of myb, hsc2hs,
+-- the boot packages of GHC only (no download is needed).
+common lower
+  default-language: Haskell2010
+  build-depends:    base >= 4.14 && < 5
+  include-dirs:     ../../include
+  ghc-options:      -Wall
+
+library
+  import:          lower
+  hs-source-dirs:  src generated/core
+  -- The upper layer, written by hand.
+  exposed-modules:
+    Myb
+    Myb.Environment
+    Myb.Ephemeris
+    Myb.Error
+    Myb.Force
+    Myb.Gravity
+    Myb.Kepler
+    Myb.Message
+    Myb.Orbit
+    Myb.Time
+    Myb.Types
+  other-modules:
+    Myb.Internal
+  -- The libraries to link: libmyb (static, or the import library of the shared one) in a
+  -- directory given by --extra-lib-dirs.
+  extra-libraries: myb
+  -- The lower layer, written by myb-generate (between the two marks):
+  -- BEGIN myb-generate: modules
+  exposed-modules:
+    Myb.C
+    Myb.C.Zero
+    Myb.C.Core
+    Myb.C.Attitude
+    Myb.C.Io
+    Myb.C.Body
+    Myb.C.Model
+    Myb.C.Budget
+    Myb.C.Num
+    Myb.C.Time
+    Myb.C.Ccsds
+    Myb.C.Frames
+    Myb.C.Ck
+    Myb.C.Cmath
+    Myb.C.Kin
+    Myb.C.Integ
+    Myb.C.Orbit
+    Myb.C.Conjunction
+    Myb.C.Grav
+    Myb.C.Force
+    Myb.C.Rel
+    Myb.C.Env
+    Myb.C.Contact
+    Myb.C.Cr3bp
+    Myb.C.Pool
+    Myb.C.Dyn
+    Myb.C.Site
+    Myb.C.Surface
+    Myb.C.Estim
+    Myb.C.Events
+    Myb.C.Geometry
+    Myb.C.Iod
+    Myb.C.Kepler
+    Myb.C.Lambert
+    Myb.C.Uncert
+    Myb.C.Meteoroid
+    Myb.C.Observe
+    Myb.C.Optimal
+    Myb.C.Regular
+    Myb.C.Relative
+    Myb.C.System
+    Myb.C.Thrust
+    Myb.C.Transfer
+    Myb.C.Weather
+  c-sources: generated/cbits/myb_hs.c
+  -- END myb-generate: modules
+
+-- The libraries of ext/, each over its own C library: build-depends: myb:sgp4, ...
+-- BEGIN myb-generate: ext
+library ionosphere
+  import: lower
+  visibility: public
+  hs-source-dirs: generated/ext
+  exposed-modules: Myb.C.Ext.Ionosphere
+  include-dirs: ../../ext/ionosphere
+  extra-libraries: myb_ionosphere
+  build-depends: myb
+
+library jb2008
+  import: lower
+  visibility: public
+  hs-source-dirs: generated/ext
+  exposed-modules: Myb.C.Ext.Jb2008
+  c-sources: generated/cbits/myb_hs_jb2008.c
+  include-dirs: ../../ext/jb2008
+  extra-libraries: myb_jb2008
+  build-depends: myb
+
+library nrlmsise00
+  import: lower
+  visibility: public
+  hs-source-dirs: generated/ext
+  exposed-modules: Myb.C.Ext.Nrlmsise00
+  c-sources: generated/cbits/myb_hs_nrlmsise00.c
+  include-dirs: ../../ext/nrlmsise00
+  extra-libraries: myb_nrlmsise00
+  build-depends: myb
+
+library sgp4
+  import: lower
+  visibility: public
+  hs-source-dirs: generated/ext
+  exposed-modules: Myb.C.Ext.Sgp4
+  c-sources: generated/cbits/myb_hs_sgp4.c
+  include-dirs: ../../ext/sgp4
+  extra-libraries: myb_sgp4
+  build-depends: myb
+
+library troposphere
+  import: lower
+  visibility: public
+  hs-source-dirs: generated/ext
+  exposed-modules: Myb.C.Ext.Troposphere
+  include-dirs: ../../ext/troposphere
+  extra-libraries: myb_troposphere
+  build-depends: myb
+-- END myb-generate: ext
+
+-- Writes the lower layer from the headers: cabal run myb-generate -- <repository root>
+executable myb-generate
+  default-language: Haskell2010
+  hs-source-dirs:   tools
+  main-is:          Generate.hs
+  build-depends:    base >= 4.14 && < 5, containers, directory, filepath, process
+  ghc-options:      -Wall
+
+-- The example of the README, built and run by the test.
+executable myb-example
+  default-language: Haskell2010
+  hs-source-dirs:   examples
+  main-is:          LowOrbit.hs
+  build-depends:    base >= 4.14 && < 5, myb, transformers
+  ghc-options:      -Wall
+
+-- The upper layer against the C calls it wraps (the orbit of examples/low_orbit.c bit for bit).
+test-suite binding
+  type:             exitcode-stdio-1.0
+  default-language: Haskell2010
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  build-depends:    base >= 4.14 && < 5, filepath, myb, myb:sgp4, process
+  ghc-options:      -Wall -rtsopts

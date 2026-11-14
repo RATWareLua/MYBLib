@@ -1,0 +1,4 @@
+-- The package alone, with the boot packages of GHC: no repository is asked, so neither
+-- `cabal update` nor a network is needed.
+packages: .
+active-repositories: :none

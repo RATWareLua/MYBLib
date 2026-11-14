@@ -449,3 +449,21 @@ myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system, myb_time t,
   }
   return MYB_OK;
 }
+
+myb_status myb_eop_at_many(const myb_eop* eop, const myb_timesys* system, const myb_time* t,
+                           size_t count, myb_scale scale, myb_eop_values* values, myb_time* ut1,
+                           size_t* failed) {
+  MYB_CHECK(eop != NULL && system != NULL && (count == 0 || (t != NULL && values != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = myb_eop_at(eop, system, t[k], scale, &values[k], ut1 != NULL ? &ut1[k] : NULL);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}

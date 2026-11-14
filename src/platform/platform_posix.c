@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* POSIX.1-2008 (O_CLOEXEC, pthread, mmap): the library is built as strict C23, without the
- * C library's extensions. */
+ * C library's extensions. The count of processors (_SC_NPROCESSORS_ONLN) is not POSIX: glibc
+ * gives it in any mode, the C library of macOS only with its own extensions asked for. */
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
 
 #include <errno.h>
 #include <fcntl.h>

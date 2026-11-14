@@ -40,7 +40,8 @@ MYB_API MYB_NODISCARD myb_status myb_kepler_hyperbolic(double mean_anomaly, doub
                                                        double* hyperbolic_anomaly);
 
 /* Barker's equation D + D^3 / 3 = M, D = tan(nu / 2), M = 2 sqrt(mu / p^3) (t - T_periapsis):
- * closed form D = 2 sinh(asinh(3M / 2) / 3). */
+ * closed form D = 2 sinh(asinh(3M / 2) / 3), then one Newton step on D + D^3/3 - M (the closed
+ * form loses about asinh(3M/2)/3 ulp through sinh; the step restores ~1 ulp). */
 MYB_API double myb_kepler_parabolic(double mean_anomaly);
 
 /* ---- Anomalies -----------------------------------------------------------------------------
@@ -106,6 +107,27 @@ MYB_API MYB_NODISCARD myb_status myb_equinoctial_from_pv(double mu, const myb_pv
 MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial(double mu, const myb_equinoctial* elements,
                                                          myb_pv* pv);
 
+/* Array forms: the four conversions above for count states or sets of elements, element k
+ * of the output from element k of the input — the same bits as the single calls in a loop,
+ * with one call for all. count 0 does nothing; with count > 0 the arrays must not be NULL.
+ * The first element that fails stops the call with its status; *failed (may be NULL) then
+ * gets its index — the outputs before it are filled, from it on they are not defined — and
+ * count when all succeed. */
+MYB_API MYB_NODISCARD myb_status myb_elements_from_pv_many(double mu, const myb_pv* pv,
+                                                           size_t count, myb_elements* elements,
+                                                           size_t* failed);
+MYB_API MYB_NODISCARD myb_status myb_pv_from_elements_many(double mu, const myb_elements* elements,
+                                                           size_t count, myb_pv* pv,
+                                                           size_t* failed);
+MYB_API MYB_NODISCARD myb_status myb_equinoctial_from_pv_many(double mu, const myb_pv* pv,
+                                                              size_t count,
+                                                              myb_equinoctial* elements,
+                                                              size_t* failed);
+MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial_many(double mu,
+                                                              const myb_equinoctial* elements,
+                                                              size_t count, myb_pv* pv,
+                                                              size_t* failed);
+
 /* Mean elements by averaging: the elements of a perturbed orbit oscillate about values that
  * change slowly; the means of the semi-major axis and of the equinoctial f, g, h, k over
  * samples that span whole revolutions are free of the oscillation to the first order, and
@@ -161,6 +183,17 @@ MYB_API MYB_NODISCARD myb_status myb_kepler_propagate(double mu, const myb_pv* p
  * of a symplectic matrix taken exactly. Errors as myb_kepler_propagate. */
 MYB_API MYB_NODISCARD myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt,
                                                 myb_pv* pv, double stm[36]);
+
+/* The two above from one state pv0 to count time offsets dt[k] (array forms as for the
+ * elements: the same bits as the single calls in a loop; *failed, may be NULL, gets the index
+ * of the offset that failed, count when none did): pv[k] after dt[k], and stm[36 k .. 36 k +
+ * 35] its transition matrix. pv0 must not be one of the outputs. */
+MYB_API MYB_NODISCARD myb_status myb_kepler_propagate_many(double mu, const myb_pv* pv0,
+                                                           const double* dt, size_t count,
+                                                           myb_pv* pv, size_t* failed);
+MYB_API MYB_NODISCARD myb_status myb_kepler_stm_many(double mu, const myb_pv* pv0, const double* dt,
+                                                     size_t count, myb_pv* pv, double* stm,
+                                                     size_t* failed);
 
 #ifdef __cplusplus
 }

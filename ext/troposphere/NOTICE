@@ -32,3 +32,10 @@ tables of the Conventions used elsewhere in myb) taken from the DATA statements 
 GPT.F of the Conventions software, chapter 9, identified by SHA-256 in that file. The test cases
 in the headers of FCUL_ZD_HPA.F, FCUL_A.F, VMF1.F, VMF1_HT.F, GMF.F and GPT.F serve as the
 reference of tests/ext/test_troposphere.c.
+
+VMF3 and GPT3 are written from D. Landskron, J. Boehm, "VMF3/GPT3: refined discrete and empirical
+troposphere mapping functions", J. Geod. 92, 349, 2018. The coefficients in vmf3_tables.inc are
+numbers taken from the DATA statements of vmf3_ht.f90 of https://vmf.geo.tuwien.ac.at/codes/
+(SHA-256 in that file); the grid gpt3_5.grd is downloaded, not distributed. The reference
+tests/data/tropo/gpt3_vmf3.ref was computed with the routines of TU Wien (gpt3_5.f90,
+vmf3_ht.f90, asknewet.f) for comparison only; none of their code is included.

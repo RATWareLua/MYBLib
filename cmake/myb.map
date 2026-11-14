@@ -430,6 +430,7 @@ MYB_1.2 {
     myb_attitude_spin;
     myb_attitude_sun_nadir;
     myb_budget_linear;
+    myb_calendar_to_time_many;
     myb_chain_evaluate;
     myb_chain_guess;
     myb_chain_size;
@@ -437,6 +438,8 @@ MYB_1.2 {
     myb_charging_current_model;
     myb_charging_equilibria;
     myb_cip_tabulate;
+    myb_cip_terrestrial_many;
+    myb_cip_xys_many;
     myb_ck_create;
     myb_ck_destroy;
     myb_ck_load_file;
@@ -477,6 +480,7 @@ MYB_1.2 {
     myb_cw_stm;
     myb_debye_length;
     myb_density_exponential;
+    myb_elements_from_pv_many;
     myb_ellipsoid_limb;
     myb_ellipsoid_nearest;
     myb_ellipsoid_normal;
@@ -493,6 +497,10 @@ MYB_1.2 {
     myb_env_orientation;
     myb_env_state;
     myb_env_time;
+    myb_eop_at_many;
+    myb_equinoctial_from_pv_many;
+    myb_equinox_rotation_many;
+    myb_equinox_teme_pef_many;
     myb_event_altitude;
     myb_event_contact;
     myb_event_eclipse;
@@ -544,6 +552,7 @@ MYB_1.2 {
     myb_frame_graph_create;
     myb_frame_graph_destroy;
     myb_frame_graph_rotation;
+    myb_frame_graph_rotation_many;
     myb_gas_bridge;
     myb_gas_knudsen;
     myb_gas_sphere_cd;
@@ -558,6 +567,8 @@ MYB_1.2 {
     myb_iod_gooding;
     myb_iod_herrick_gibbs;
     myb_iod_laplace;
+    myb_kepler_propagate_many;
+    myb_kepler_stm_many;
     myb_ks_element_from_cartesian;
     myb_ks_element_rhs;
     myb_ks_element_to_cartesian;
@@ -636,8 +647,10 @@ MYB_1.2 {
     myb_orientation_ck;
     myb_orientation_fixed;
     myb_orientation_graph;
+    myb_orientation_many;
     myb_orientation_pck;
     myb_orientation_wgccre;
+    myb_pck_rotation_many;
     myb_pck_writer_add_chebyshev;
     myb_pck_writer_add_raw;
     myb_pck_writer_create;
@@ -650,6 +663,8 @@ MYB_1.2 {
     myb_polyhedron_nearest;
     myb_polyhedron_ray;
     myb_polyhedron_solid_angle;
+    myb_pv_from_elements_many;
+    myb_pv_from_equinoctial_many;
     myb_qlaw_arrived;
     myb_qlaw_direction;
     myb_qlaw_flight_rhs;
@@ -665,6 +680,8 @@ MYB_1.2 {
     myb_relative_to_inertial;
     myb_roe_from_states;
     myb_roe_to_position;
+    myb_rotation_apply_position_many;
+    myb_rotation_apply_state_many;
     myb_sclk_create;
     myb_sclk_decode;
     myb_sclk_destroy;
@@ -706,6 +723,8 @@ MYB_1.2 {
     myb_space_weather_load_file;
     myb_spk_body_state;
     myb_spk_state_in;
+    myb_spk_state_in_many;
+    myb_spk_state_many;
     myb_spk_time_difference;
     myb_spk_writer_add_chebyshev;
     myb_spk_writer_add_raw;
@@ -802,11 +821,18 @@ MYB_1.2 {
     myb_tides_add_waves;
     myb_tides_add_waves_file;
     myb_tides_secondary_waves;
+    myb_time_from_seconds_many;
+    myb_time_seconds_many;
+    myb_time_to_calendar_many;
+    myb_timesys_convert_many;
+    myb_timesys_from_utc_many;
     myb_timesys_set_difference;
     myb_timesys_tabulate;
+    myb_timesys_to_utc_many;
     myb_torque_tidal_lag;
     myb_view_body;
     myb_view_intercept;
+    myb_wgccre_rotation_many;
     myb_yarkovsky_drift;
     myb_yarkovsky_response;
     myb_yarkovsky_season_create;

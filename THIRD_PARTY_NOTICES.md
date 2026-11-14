@@ -167,6 +167,18 @@ equations and is not a translation of that software, whose licence is not BSD-co
 test cases printed in the headers of `FCUL_ZD_HPA.F`, `FCUL_A.F`, `VMF1.F`, `VMF1_HT.F`, `GMF.F`
 and `GPT.F` are the references of `tests/ext/test_troposphere.c`.
 
+## VMF3 and GPT3 (TU Wien)
+
+VMF3 and GPT3 in `ext/troposphere/troposphere.c` are written from D. Landskron, J. Böhm,
+"VMF3/GPT3: refined discrete and empirical troposphere mapping functions", J. Geod. 92, 349
+(2018), an open-access paper. `ext/troposphere/vmf3_tables.inc` holds the coefficients of the
+expansions of b and c taken from the DATA statements of `vmf3_ht.f90`
+(https://vmf.geo.tuwien.ac.at/codes/, SHA-256 in the file) — numbers only. The grid
+`gpt3_5.grd` is downloaded at build time and is not part of the repository.
+`tests/data/tropo/gpt3_vmf3.ref` was computed by the authors of myb with the routines of TU Wien
+(`gpt3_5.f90`, `vmf3_ht.f90`, `asknewet.f`, which carry no licence terms) for comparison only;
+no code of them is included.
+
 ## Gravity field models (ICGEM)
 
 `tests/data/grav/EGM2008_n20.gfc` is EGM2008 (N. K. Pavlis, S. A. Holmes, S. C. Kenyon,
@@ -239,8 +251,13 @@ public domain).
 of the relative acceleration of L. Blanchet, "Post-Newtonian theory for gravitational waves"
 (Living Rev. Relativ., revision of 2024; arXiv:1310.1528) were parsed by machine from the
 LaTeX source of the article into sympy and evaluated with mpmath. Only the evaluated numbers
-are stored. The synthetic IONEX file `tests/data/ionosphere/synthetic.inx` and its references
-were written by the authors of myb.
+are stored.
+
+## IONEX test files
+
+The synthetic IONEX files `tests/data/ionosphere/synthetic.inx` (two-dimensional maps) and
+`tests/data/ionosphere/synthetic3d.inx` (three-dimensional maps), and their references, were
+written by the authors of myb from analytic fields; they are not data of any analysis centre.
 
 ## IGRF and ppigrf
 

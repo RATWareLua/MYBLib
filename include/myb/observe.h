@@ -111,8 +111,9 @@ MYB_API void myb_direction_radec(const double p[3], double* ra, double* dec);
  *   K = e^2 / (8 pi^2 eps0 m_e) = 40.308 m^3/s^2
  * (e, m_e, eps0: MYB_CONST_E, MYB_CONST_ME, MYB_CONST_EPS0 of data/constants/codata-2022.tk).
  * Ranging measures the group delay, carrier phase and Doppler the phase delay; two frequencies
- * remove it. Higher orders ((f_p / f)^4, the magnetic field) are below 1 mm above 1 GHz on
- * Earth paths. Returns K N / f^2, NaN for invalid input. */
+ * remove it. Higher orders ((f_p / f)^4, the magnetic field) are not: millimetres at the
+ * frequencies of GNSS (33 TECU at 30 deg elevation, 1575.42 MHz: the second order +6.1 mm,
+ * the third +0.17 mm — myb_iono_orders_of and myb_iono_phase_delay of ext/ionosphere). Returns K N / f^2, NaN for invalid input. */
 MYB_API double myb_plasma_group_delay(double column, double frequency, double e, double m_e,
                                       double eps0);
 

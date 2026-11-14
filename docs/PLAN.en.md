@@ -89,7 +89,8 @@ Outside the first version (now phase 22, the user's decision of 2026-11-11): con
 ## 5. N bodies
 
 - Exact direct summation only: O(N²) over massive bodies + O(N·M) for test particles; target — up to ~10⁴ massive bodies.
-- Interaction graph: the level is set for each pair (point, harmonics, figure–figure, 1PN, tides); the default is point + 1PN.
+- Interaction graph: the level is set for each pair (point, harmonics, figure–figure, 1PN, tides); the default is the point masses, and 1PN (EIH)
+  once the relativity of the n-body is set (`myb_nbody_set_relativity`).
 - Threads — through the platform layer, partitioning over i, summation over j in a fixed order: the result does not depend on the thread count and matches the single-threaded symmetric version.
 - SIMD — vectorization over i, not over j; no FMA in the kernels; bit for bit with the scalar code.
 - Barnes–Hut gives a force error of ~10⁻³–10⁻⁴ — not included. FMM is a separate module, explicitly marked as approximate (phase 22).
@@ -116,7 +117,7 @@ Key methods by module (sources — §8):
 - **kin/ephem:** own reader for NAIF DAF/SPK (types 2, 3, 13, 21) and binary PCK; DE440/DE441 [Park et al. 2021]; cross-check against `testpo`.
 - **kepler:** elements (classical, equinoctial, modified equinoctial), Kepler's equation [Markley 1995; Raposo-Pulido & Peláez 2017; Conway 1986], universal variables and STM [Shepperd 1985]; SGP4 — only for the sake of TLE [Hoots & Roehrich 1980; Vallado et al. 2006].
 - **integ:** IAS15 [Rein & Spiegel 2015], RKN12(10) [Dormand, El-Mikkawy, Prince 1987], DOP853 [Hairer et al.], Gauss–Jackson [Berry & Healy 2004], WH/WHFast [Wisdom & Holman 1991; Rein & Tamayo 2015], Yoshida, SABA/SBAB; dense output, events, compensated update, Brouwer's law.
-- **transfer:** Lambert [Izzo 2015; Gooding 1990], patched conics, B-plane [Sergeyevsky et al. 1983], STM-based correction.
+- **transfer:** Lambert [Izzo 2015; each solution checked by propagation], patched conics, B-plane [Sergeyevsky et al. 1983], STM-based correction.
 - **cr3bp:** Lagrange points, Jacobi, halo [Richardson 1980; Howell 1984], manifolds [Koon, Lo, Marsden, Ross 2011].
 - **env, orbit:** the bodies of a scenario with providers of state and orientation, their values computed once per instant; the scales of the providers from a table of differences; ready-made terms of a force model; propagation by IAS15 with its own steps and dense output — the state at an instant does not depend on what else is asked.
 
@@ -126,7 +127,8 @@ Contract (verified by the build and by tests):
 - binary64, `FLT_EVAL_METHOD == 0`, `-ffp-contract=off`, no fast-math, `-fno-math-errno`, baseline x86-64-v2 (v3 allowed); the flags are appended last and are not overridden by user CFLAGS; `-ffast-math` → compilation error.
 - No libm functions with inexact rounding: `sin`, `cos`, etc. are correctly rounded (CORE-MATH), `fma` is our own integer implementation (the mingw-w64 `fma()` is wrong on roughly 1 input in 6). The `test_no_libm_imports` test checks the library's symbol table.
 - `long double` and `float` are forbidden in computations.
-- Numbers from files — our own correctly rounding parser, independent of the locale (Eisel–Lemire; Lemire 2021).
+- Numbers from files — our own correctly rounding parser, independent of the locale (Clinger's fast path, otherwise a double-word candidate decided
+  exactly in big integers; the 768-digit bound of Lemire 2021).
 - The result hash (`test_repro`) is identical on all builds; a difference = at least one bit has changed.
 
 ## 8. Sources
@@ -142,9 +144,9 @@ Data: JPL (DE440/441, testpo, NAIF generic kernels); IERS (EOP 20 C04, finals200
 | Source | License | Action |
 |---|---|---|
 | ERFA | BSD-3 | port with notice |
-| CORE-MATH | MIT | port with notice (done: sin, cos) |
-| fast_float | MIT / Apache / BSL | algorithm — under MIT |
-| Ryu | Apache-2.0 / BSL-1.0 | under BSL-1.0 |
+| CORE-MATH | MIT | ported with the notice: 19 functions (sin, cos, tan, their inverses and hyperbolic ones, exp, expm1, log, log1p, cbrt, hypot, atan2) |
+| fast_float | MIT / Apache / BSL | not used: the parser of numbers is the library's own (Clinger, big integers) |
+| Ryu | Apache-2.0 / BSL-1.0 | not used: the printing of numbers is the library's own (Steele–White in big integers) |
 | NRLMSISE-00 (C port) | public domain | in `ext/` |
 | fdlibm (FreeBSD msun) | SunPro (permissive, retain the notice) | ported: erf, erfc (`src/num/erf.c`) |
 | IERS Conventions software | custom, not BSD | do not port; equations — from the papers, tables — as data, examples — for cross-checking |
@@ -353,8 +355,9 @@ test; what remains is the direct sum of the gravity, O(N²) without the FMM).
   `myb_surface_drag_term`; shadowing as in the radiation), the stagnation coefficient of
   Rayleigh (`myb_newtonian_cp_max`, against NACA 1135 to its digits), the heating of
   Sutton–Graves and ablation (`myb_ablation_*`). A sphere of plates — C_D = Cp_max/2 to
-  4.4·10⁻¹⁶; a cone — 2.2·10⁻¹⁶; the analytic Jacobian against Richardson differences
-  5.2·10⁻⁶; a meteor against the closed solution of ablation — 1.9·10⁻¹⁴.
+  4.4·10⁻¹⁶; a pyramid of 64 faces (near a cone) — C_p,max sin²δ of its faces to 2.2·10⁻¹⁶; the
+  Jacobian of the term with a continuum (central differences of the term) against Richardson
+  differences 5.2·10⁻⁶; a meteor against the closed solution of ablation — 1.9·10⁻¹⁴.
 - **Contact and landing** (the new `myb/contact.h`): the normal force of Hunt and Crossley,
   k dⁿ (1 + χ ḋ) — zero at both ends of a contact, never pulling — whose restitution has a
   closed form independent of k and n (Marhefka and Orin 1999; `myb_contact_restitution`,
@@ -709,7 +712,7 @@ in, and where it went, is at the end of the section.
     three-dimensional maps could not be established from it, and there are no public
     three-dimensional products to check against; densities are taken as a grid in arrays;
   - a clean implementation of JB2008 from the papers and readers of its indices (S10, M10,
-    Y10, Dst);
+    Y10 and the temperature correction from Dst, DTCFILE);
   - a reader of the S1/S2 loading grids (the server with the grids is unreachable; the
     coefficients of a site are given as numbers);
   - the turning of the body in the velocity of an offset point for attitude laws that
@@ -1292,7 +1295,7 @@ done, how it was checked and what moved on, with the reason.
 - **Biases of the measurements as unknowns** (`myb_fit_options.bias_count`,
   `myb_observation.bias`; up to 32): bias number k − 1 + i is added to the i-th computed
   value of an observation; the unknowns are ordered state, parameters of the model, biases.
-  Three range delays of 35, −12 and 4.7 m and a range-rate offset of 2.1 mm/s are recovered
+  Three range delays of 35, −12 and 4.5 m and a range-rate offset of 2.0 mm/s are recovered
   with σ = 0.19 m, the largest error 1.1 σ, weighted RMS 0.963. The same in the filter
   (`myb_filter_set_bias`, `myb_filter_bias`).
 - **A smoother** (Rauch–Tung–Striebel; `myb_filter_options.history`, `myb_filter_smooth`,
@@ -1305,9 +1308,9 @@ done, how it was checked and what moved on, with the reason.
   is exact, its velocity within 3·10⁻¹⁰ m/s.
 - **Jacobians of the radiation of a planet and of the empirical accelerations** are analytic
   (`myb_term_planet_radiation_jacobian`: a quadrature of the derivative of the integrand,
-  `myb_force_planet_radiation_gradient`; `myb_term_empirical_jacobian`): 6·10⁻¹⁰ and
-  4.5·10⁻⁴ from differences (the second number is the accuracy of the differences
-  themselves over the grid of rings).
+  `myb_force_planet_radiation_gradient`; `myb_term_empirical_jacobian`): 4.5·10⁻⁴ and
+  6·10⁻¹⁰ from differences (the first number is the accuracy of the differences themselves
+  over the grid of rings).
 - Moved to phase 20: station displacements (IERS ch. 7) and light time in the measurements —
   they need the loading models and the graph of frames of that phase.
 
@@ -1595,7 +1598,7 @@ Yarkovsky term); golden value `0xb76153a8dca45827` at -O0 and -O2;
     per propagation, each with rejected first steps); withdrawing the step costs +26 %.
   - Check: an orbit of 12 000 km with 0.2 m²/kg, two days, 54 edges of the shadow. The spread
     of the final position over ε = 10⁻⁹…10⁻¹²: **6.4 m without breaks, 8·10⁻⁷ m with them**.
-    Φ across eight edges against differences of whole propagations — 7·10⁻⁸ with a largest
+    Φ across six edges against differences of whole propagations — 7·10⁻⁸ with a largest
     element of 25; ∂x/∂c_r — 2·10⁻⁷ m of 49 m.
 - **LAGEOS does not depend on the integrator's precision**: the edges of the shadows of the
   Earth and the Moon are declared to the model (`myb_term_radiation_breaks`), 176 edges in the
@@ -1964,7 +1967,7 @@ Yarkovsky term); golden value `0xb76153a8dca45827` at -O0 and -O2;
   disabled; `linux-asan-debug` is now in every run, the live EOP series are refreshed in each one.
 - **Not done**: 4PN (with the hereditary tail) and higher-order spin-orbit terms, radiation
   reaction due to spins; binaries in the N-body problem; APG gradients, VMF3/GPT3, 3D ionosphere
-  maps, higher-order ionospheric terms; secondary emission and a thick Debye sheath in
+  maps, higher-order ionospheric terms; secondary emission and a thin Debye sheath in
   charging. Assigned to phases or closed: see "Old debts (phases 3–11) and the bindings".
 
 ### Phase 10 decisions
@@ -2158,7 +2161,7 @@ Yarkovsky term); golden value `0xb76153a8dca45827` at -O0 and -O2;
   catalog (56 orbits of eight families: L1/L2 halo, L1/L2 Lyapunov, vertical, axial, Earth–Moon
   DRO, Sun–Earth L2 halo): Jacobi constant 3.6·10⁻¹⁵, the catalog state is a fixed point of the
   corrector to 9·10⁻¹², period 6·10⁻¹², stability index to 10⁻⁵, except for two L2 Lyapunov
-  orbits passing 500 km above the Moon (1.1·10⁻⁴; our index changes by ~10⁻⁵ when the integration
+  orbits passing 500 km above the Moon (1.1·10⁻⁴; our index changes by ~10⁻⁶ when the integration
   is tightened); catalog Lagrange points to 10⁻¹⁴; Richardson's first approximation — within 1–2%
   of γ of the converged orbit, period to 0.15%; the unstable manifold of an L1 Lyapunov orbit
   diverges over one period by exactly a factor λ = 2446, the stable one backward in time —
@@ -2461,7 +2464,7 @@ Found and fixed (did not manifest on Windows):
 - **Against ERFA** (`test_erfa_frames`, 3000 dates 1800–2200): X, Y — 1.7·10⁻¹⁷ rad, s —
   1.5·10⁻¹⁹, s′ — 2·10⁻²⁵; ERA and the matrix — 3.6·10⁻¹³: this is ERFA's rounding (eraEra00 adds
   ~200 revolutions in a single double). Our ERA keeps the whole days separate from the fraction,
-  with the product in double-double: error ≤ 1.3·10⁻¹⁵ rad against MPFR (`test_mpfr_frames`).
+  with the product in double-double: error ≤ 1.3·10⁻¹⁵ rad against MPFR (`test_mpfr_frames`; later 3.5·10⁻¹⁶).
   Found during checks: the first version rounded Tu = days + fraction before the multiplication
   and lost 10⁻¹³ rad.
 - **EOP** (`myb_eop`): EOP 20 C04 and finals2000A (Bulletin A columns; empty LOD, dX, dY in the
@@ -2566,7 +2569,7 @@ Found and fixed (did not manifest on Windows):
   state bit for bit.
 - **WH/WHFast** (`myb_wh`): Wisdom–Holman splitting in canonical Jacobi coordinates
   (Keplerian part with GM = η_i, drift — the universal propagator for all conic sections;
-  kick — the full N-body acceleration converted to Jacobi coordinates, plus the Keplerian term;
+  kick — the full N-body acceleration converted to Jacobi coordinates, less the Keplerian terms;
   the center of mass drifts freely, its acceleration is exactly 0 for a mutual graph). The Jacobi
   state is accumulated with compensation. Schemes: DKD (= SABA1), SABA2–4 (Gauss–Legendre nodes
   and weights), SBAB1–4 (Gauss–Lobatto; the acceleration of the last kick is reused by the first
@@ -2705,7 +2708,8 @@ Found and fixed (did not manifest on Windows):
   α is ill-conditioned, and the direct path hardly needs it). Cross-check against MPFR at 400 bits:
   ≤ 2·10⁻¹⁴.
 - **Lambert** (Izzo 2015) with the guaranteed solver instead of Householder; an independent check
-  serves as the second method (Gooding): each solution is propagated to r₂ by the propagator.
+  serves as the second method: each solution is propagated to r₂ by the propagator (there is no
+  Lambert solver of Gooding in the library).
 - **Not done in phase 2**: the analytic two-body state transition matrix (Shepperd 1985) —
   moved to phase 3 together with the variational equations of the integrators (done in phase 3).
 - **Conditioning of the elements**: classical and equinoctial elements of near-parabolic orbits

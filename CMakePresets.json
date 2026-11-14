@@ -66,12 +66,13 @@
     },
     {
       "name": "linux-asan",
-      "displayName": "Linux: ASan + UBSan + LeakSanitizer, abort on first error",
+      "displayName": "Linux: ASan + UBSan + LeakSanitizer, abort on first error; the bindings under ASan",
       "inherits": "linux-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "MYB_SANITIZE": "address",
-        "MYB_WARNINGS_AS_ERRORS": "ON"
+        "MYB_WARNINGS_AS_ERRORS": "ON",
+        "MYB_BUILD_SHARED": "ON"
       }
     },
     {
@@ -113,6 +114,42 @@
         "MYB_SANITIZE": "thread",
         "MYB_WARNINGS_AS_ERRORS": "ON"
       }
+    },
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "description": "Clang of LLVM (Homebrew's llvm; MYB_LLVM_ROOT names another) with the SDK and linker of macOS",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/clang-macos.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "macos-dev",
+      "displayName": "macOS: Debug, warnings as errors",
+      "inherits": "macos-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "MYB_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS: Release -O2, MYB_CHECK kept; static and shared libraries",
+      "inherits": "macos-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG",
+        "MYB_WARNINGS_AS_ERRORS": "ON",
+        "MYB_BUILD_SHARED": "ON"
+      }
+    },
+    {
+      "name": "macos-asan",
+      "displayName": "macOS: ASan + UBSan, abort on the first error (no LeakSanitizer there)",
+      "inherits": "macos-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MYB_SANITIZE": "address",
+        "MYB_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -125,7 +162,10 @@
     { "name": "linux-asan-debug", "configurePreset": "linux-asan-debug" },
     { "name": "linux-ubsan", "configurePreset": "linux-ubsan" },
     { "name": "linux-lsan", "configurePreset": "linux-lsan" },
-    { "name": "linux-tsan", "configurePreset": "linux-tsan" }
+    { "name": "linux-tsan", "configurePreset": "linux-tsan" },
+    { "name": "macos-dev", "configurePreset": "macos-dev" },
+    { "name": "macos-release", "configurePreset": "macos-release" },
+    { "name": "macos-asan", "configurePreset": "macos-asan" }
   ],
   "testPresets": [
     { "name": "windows-dev", "configurePreset": "windows-dev", "output": { "outputOnFailure": true } },
@@ -175,6 +215,17 @@
       "output": { "outputOnFailure": true },
       "environment": {
         "TSAN_OPTIONS": "halt_on_error=1:abort_on_error=1:second_deadlock_stack=1:report_signal_unsafe=1:history_size=7"
+      }
+    },
+    { "name": "macos-dev", "configurePreset": "macos-dev", "output": { "outputOnFailure": true } },
+    { "name": "macos-release", "configurePreset": "macos-release", "output": { "outputOnFailure": true } },
+    {
+      "name": "macos-asan",
+      "configurePreset": "macos-asan",
+      "output": { "outputOnFailure": true },
+      "environment": {
+        "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:strict_string_checks=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
       }
     }
   ]

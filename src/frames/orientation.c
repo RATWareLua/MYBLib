@@ -60,3 +60,21 @@ myb_status myb_orientation_fixed(void* rotation, myb_time t, myb_orientation* or
   finish(r, NULL, t, orientation);
   return MYB_OK;
 }
+
+myb_status myb_orientation_many(myb_orientation_function orientation, void* context,
+                                const myb_time* t, size_t count, myb_orientation* orientations,
+                                size_t* failed) {
+  MYB_CHECK(orientation != NULL && (count == 0 || (t != NULL && orientations != NULL)));
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    status = orientation(context, t[k], &orientations[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  if (failed != NULL) {
+    *failed = k;
+  }
+  return status;
+}
