@@ -21,6 +21,9 @@ module Myb.Force
   , termName
   , termEnabled
   , setEnabled
+  , BreakScheme (..)
+  , setBreakScheme
+  , breakScheme
   , forceModelKeep
   , forceModelPtr
   ) where
@@ -278,6 +281,24 @@ setEnabled fm@(ForceModel model _) index on = do
   if index < 0 || index >= count
     then pure False
     else True <$ withForeignPtr model (\m -> C.myb_force_model_set_enabled m (toSize index) (if on then 1 else 0))
+
+-- | How an orbit integrated by IAS15 ends its steps at the breaks of the model.
+data BreakScheme
+  = -- | a step found to hold a break is taken again up to it (the default)
+    BreaksRetake
+  | -- | the steps are aimed at the breaks predicted before them
+    BreaksPredict
+  deriving (Eq, Show)
+
+-- | The scheme of the breaks, from the next start of an orbit.
+setBreakScheme :: ForceModel -> BreakScheme -> IO ()
+setBreakScheme (ForceModel model _) scheme = withForeignPtr model $ \m ->
+  C.myb_force_model_set_break_scheme m (case scheme of BreaksRetake -> C.MYB_BREAKS_RETAKE; BreaksPredict -> C.MYB_BREAKS_PREDICT)
+
+breakScheme :: ForceModel -> IO BreakScheme
+breakScheme (ForceModel model _) = do
+  scheme <- withForeignPtr model C.myb_force_model_break_scheme
+  pure (if scheme == C.MYB_BREAKS_PREDICT then BreaksPredict else BreaksRetake)
 
 -- | Ties the life of an object to the model: for the context of a term added with 'addRaw'.
 forceModelKeep :: ForceModel -> ForeignPtr a -> IO ()

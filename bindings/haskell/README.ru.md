@@ -107,12 +107,12 @@ main = do
 | `Myb.Ephemeris` | `Ephemeris`: `loadEphemerisFile`, `ephemerisState`, `segments` |
 | `Myb.Gravity` | `GravityField`: `newGravityField`, `loadIcgemFile` |
 | `Myb.Environment` | `Environment`, `Body`: `addOrigin`, `addFromEphemeris`, `addWith` (поставщик на Haskell), `bodyState` |
-| `Myb.Force` | `ForceModel`: `addPointMass`, `addThirdBody`, `addField`, `addRadiation`, `addDrag`, `addSchwarzschild`, `addTerm` (член на Haskell), `addRaw`, `acceleration` |
-| `Myb.Orbit` | `Orbit`: `start`, `stateAt`, `statesAt`, `nextEvent` (событие на Haskell), `kick`, `partials` |
+| `Myb.Force` | `ForceModel`: `addPointMass`, `addThirdBody`, `addField`, `addRadiation`, `addDrag`, `addSchwarzschild`, `addTerm` (член на Haskell), `addRaw`, `acceleration`, `setBreakScheme` (`BreaksRetake`, `BreaksPredict`) |
+| `Myb.Orbit` | `Orbit`: `start`, `stateAt`, `statesAt`, `nextEvent` (событие на Haskell), `kick`, `partials`; `OrbitOptions` с `timescale` IAS15 (`TimescaleJerk` для контакта) |
 | `Myb.Message` | OEM: запись (с ковариациями) и чтение (заголовок, состояния, ускорения, ковариации, из текста или файла); разбор и запись OPM и OMM (`parseOpm`, `opmText`, `parseOmm`, `ommText`); OCM: чтение (блоки, значения, строки, состояния траектории) и запись (`writeOcm`, `ocmFormatLine`) |
 | `Myb.Source` | поставщики: `fromEphemeris` (тело набора SPK, передаётся как его собственный поставщик на C), `fromFunction` (функция Haskell), `fromC`; `orientationFunction`, `orientationC` |
 | `Myb.NBody` | `NBody`: `accelerations`, `accelerationsXV`, `setInteraction`, `setRelativity`, `invariants`, `pnInvariants`, `setApproximation` (FMM), `setPool`; `Wh` (Уиздом-Холман): `whStart`, `whStep`, `whIntegrate`, `whState`, `whDense`, `whStatistics` |
-| `Myb.System` | `System`: `setOrientation`, `setField`, `setRotation`, `setTide`, `addFieldPair`, `addFigures`, `addTide`, `addDistortion`, `addPnPair`, `addAction` (действие на Haskell), `addLightAction`, `addFrameDragging`, `setMassRate`, `addGuided`, `addContact`, `systemAcceleration`, `systemInertia`, `systemPartials`, упаковка вращений и спинов; `SystemIntegrator` (IAS15); `advance`, `merge`, `bounce` |
+| `Myb.System` | `System`: `setOrientation`, `setField`, `setRotation`, `setTide`, `addFieldPair`, `addFigures`, `addTide`, `addDistortion`, `addPnPair`, `addAction` (действие на Haskell), `addLightAction`, `addFrameDragging`, `setMassRate`, `addGuided`, `addContact`, `systemAcceleration`, `systemInertia`, `systemPartials`, упаковка вращений, спинов и пружин трения, которое залипает (`packContact`, `unpackContact`); `pnOrders` (члены пары PN по именам, среди них `PnSs3`, `PnSorr5`, `PnSotail`, `PnTailx`); `SystemIntegrator` (IAS15); `advance`, `merge`, `bounce` |
 | `Myb.Estimation` | `Station`, `Measure` (готовые, со временем света, вне центра масс или функция Haskell), `evaluateMeasure`, `Observation`, `fitOrbit`, `Filter` (`filterStart`, `filterUpdate`, `filterPredict`, `filterSmooth`, `filterStep`, сдвиги) |
 | `Myb.Cr3bp` | точки Лагранжа, Якоби, `correct`, `monodromy`, `stability`, `manifold`, `richardson`, семейства (`orbitCorrect`, `orbitContinue`), торы (`torusFromOrbit`, `torusContinue`, `torusState`, `torusStability`, `torusManifold`), `propagate` до сечения, системы отсчёта реальных тел, `addCr3bp` (член) |
 | `Myb.Transfer` | `bplane`, сопряжённые конические сечения, `shoot` (невязка на Haskell), `lambert` |
@@ -122,6 +122,7 @@ main = do
 | `Myb.Relative` | относительные состояния, их матрицы перехода, `rendezvous`, относительные орбитальные элементы |
 | `Myb.Conjunction` | `approachFind` (два поставщика), `approachOrbits`, плоскость сближения, вероятности, `conjunctionFind`, долгие сближения |
 | `Myb.Uncertainty` | `Variational`, `covarianceTransform`, `covarianceRtn`, `Rng`, `sampleStatistics` |
+| `Myb.Contact` | ближайшая точка поверхности, `contactForce`, `contactForceStick` (трение, которое залипает: прогибы на входе, их скорости на выходе), восстановление и демпфирование; `Friction` для поля `kind` закона |
 | `Myb.Attitude` | кватернионы, углы Эйлера, главные оси, скорости твёрдого тела и тела с ядром, моменты сил, точное свободное вращение, `rotationSplit` (момент на Haskell) |
 | `Myb.Observe` | `lightTime`, `roundTrip`, задержка Шапиро, аберрация, отклонение, направления, плазма |
 | `Myb.Files` | чтение и печать чисел, таблицы, `SpkWriter` (типы 2, 3, 9, 13, сырые), чтение и запись SP3 |
@@ -152,7 +153,7 @@ kepler.h достижима из `Myb`: вызывается или переда
 `myb_system_light_action`, `myb_orientation_ck`, `myb_spk_body_state`). То, у чего нет верхнего
 слоя, берётся через `Myb.C`: заголовки вне этого списка (объекты myb/frames.h — CIP, EOP,
 равноденствие, WGCCRE, PCK, граф систем отсчёта, — их формы для массивов принимают их как
-`ForeignPtr`; модели поверхности и сетки surface.h; функции сил force.h; contact.h, site.h,
+`ForeignPtr`; модели поверхности и сетки surface.h; функции сил force.h; член контакта из contact.h, site.h,
 weather.h, events.h, integ.h сверх интегратора системы, grav.h и env.h сверх пути выше),
 библиотеки ext/, кроме sgp4, и распределители памяти: верхний слой всегда берёт распределитель по
 умолчанию.
@@ -231,7 +232,7 @@ weather.h, events.h, integ.h сверх интегратора системы, g
 по умолчанию) выбирает библиотеку; она копируется одна в `build/<пресет>/haskell/lib`, а то, что
 пишет тест (файл SPK, читаемый обратно), попадает в `build/<пресет>/haskell/output`.
 
-Набор тестов (309 проверок) содержит: низкую орбиту примера бит в бит с вызовами C; неудачи как
+Набор тестов (333 проверки) содержит: низкую орбиту примера бит в бит с вызовами C; неудачи как
 значения со статусом и строкой разборщика; члены, поставщики и события как функции Haskell и их
 неудачи; члены давления излучения и релятивистской поправки; то, что модель держит своё
 окружение живым и оба финализируются, когда их отпустили (наблюдается через их финализаторы);
@@ -250,4 +251,5 @@ Haskell, сближение и его вероятность, сближения
 аберрация, направление, время света до тела SPK; числа, таблица, файлы SPK и CK, записанные
 байт в байт и прочитанные обратно, SP3, OPM, OCM, OEM с ковариацией, ориентация CK, часы,
 переменные пула, SGP4, TLE через OMM; формы для массивов против одиночных форм и элемент, на
-котором случилась неудача.
+котором случилась неудача; схему разрывов и орбиту со шкалой времени рывка, силу трения,
+которое залипает, и гладкого, упаковку пружин контакта в системе, новые члены PN.

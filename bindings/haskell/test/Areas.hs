@@ -45,6 +45,113 @@ theAreas tally = do
   observables tally
   files tally
   arrayForms tally
+  lastMerges tally
+
+-- ---- The last merges of phase 21 ---------------------------------------------------------
+-- The scheme of the breaks, the timescale of IAS15, the friction that sticks (in the force of a
+-- surface and in the state of a system), the new terms of a PN pair.
+
+lastMerges :: Tally -> IO ()
+lastMerges tally = do
+  -- the scheme of the breaks and the timescale of the jerk, against the same calls
+  made <- Myb.newForceModel
+  onRight tally "I: a model" made $ \model -> do
+    _ <- Myb.addPointMass model "earth" gm
+    before <- Myb.breakScheme model
+    Myb.setBreakScheme model Myb.BreaksPredict
+    after <- Myb.breakScheme model
+    raw <- withForeignPtr (Myb.forceModelPtr model) C.myb_force_model_break_scheme
+    expect tally "I: the scheme of the breaks" (before == Myb.BreaksRetake && after == Myb.BreaksPredict && raw == C.MYB_BREAKS_PREDICT)
+    orbit <- Myb.newOrbit model Myb.defaultOrbitOptions {Myb.timescale = Myb.TimescaleJerk}
+    onRight tally "I: an orbit with the timescale of the jerk" orbit $ \o -> do
+      _ <- Myb.start o 0 y0 6000
+      y <- Myb.stateAt o 6000
+      steps <- Myb.orbitSteps o
+      rawOrbit <- alloca $ \mout -> with (C.zero {C.myb_point_mass_term'gm = coerce gm}) $ \term -> do
+        _ <- C.myb_force_model_create nullPtr mout
+        m <- peek mout
+        _ <- withCString "earth" $ \name -> C.myb_force_model_add m name C.p'myb_term_point_mass C.p'myb_term_point_mass_jacobian (castPtr term) nullPtr
+        C.myb_force_model_set_break_scheme m C.MYB_BREAKS_PREDICT
+        r <- with C.zero {C.myb_orbit_options'timescale = C.MYB_IAS15_TIMESCALE_JERK} $ \po -> alloca $ \oout -> do
+          _ <- C.myb_orbit_create m po nullPtr oout
+          ob <- peek oout
+          _ <- with y0 $ \py -> C.myb_orbit_start ob 0 (castPtr py) 6000
+          state <- alloca $ \py -> C.myb_orbit_state ob 6000 (castPtr py) >> peek py
+          n <- C.myb_orbit_steps ob
+          C.myb_orbit_destroy ob
+          pure (state, n)
+        C.myb_force_model_destroy m
+        pure r
+      expect tally "I: the orbit bit for bit" (fmap bits y == Right (bits (fst rawOrbit)) && steps == snd rawOrbit)
+  twoBodies <- Myb.newSystem [gm, 4.9028e12]
+  onRight tally "I: a system" twoBodies $ \s -> do
+    unknown <- Myb.newIntegrator s (Just C.zero {C.myb_ias15_options'timescale = C.Myb_ias15_timescale 7})
+    expect tally "I: an unknown timescale" (failsWith Myb.Domain unknown)
+    jerk <- Myb.newIntegrator s (Just C.zero {C.myb_ias15_options'timescale = Myb.timescaleCode Myb.TimescaleJerk})
+    expect tally "I: an integrator with the timescale of the jerk" (either (const False) (const True) jerk)
+  -- the friction that sticks, against the same call
+  let surface = C.zero {C.myb_contact_surface'shape = C.MYB_CONTACT_PLANE, C.myb_contact_surface'normal = [0, 0, 1]}
+      stick =
+        C.zero
+          { C.myb_contact_law'stiffness = 1.0e4
+          , C.myb_contact_law'exponent = 1
+          , C.myb_contact_law'damping = 0.1
+          , C.myb_contact_law'friction = 0.5
+          , C.myb_contact_law'slip = 1.0e-3
+          , C.myb_contact_law'kind = Myb.frictionCode Myb.FrictionStick
+          , C.myb_contact_law'tangential_stiffness = 1.0e5
+          , C.myb_contact_law'tangential_damping = 10
+          }
+      smooth = stick {C.myb_contact_law'kind = Myb.frictionCode Myb.FrictionSmooth}
+      points = [C.zero {C.myb_contact_point'offset = [0, 0, -1]}, C.zero {C.myb_contact_point'offset = [0.5, 0, -1]}]
+      x = Vec3 0 0 0.999
+      v = Vec3 0.01 0 (-0.001)
+      identity = Mat3 (Vec3 1 0 0) (Vec3 0 1 0) (Vec3 0 0 1)
+      deflections = [Vec3 1.0e-4 0 0, Vec3 (-2.0e-5) 3.0e-5 0]
+  rawStick <- with surface $ \ps -> with stick $ \pl -> withArray points $ \pp -> with x $ \px -> with v $ \pv -> with identity $ \pa -> with (Vec3 0 0 0) $ \pw ->
+    withArray deflections $ \pd -> allocaArray 2 $ \rates -> with C.zero $ \result -> do
+      code <- C.myb_contact_force_stick ps pl pp 2 (castPtr px) (castPtr pv) (castPtr pa) (castPtr pw) (castPtr pd) (castPtr rates) result
+      (,,) code <$> peek result <*> peekArray 2 rates
+  let (scode, sresult, srates) = rawStick
+  onRight tally "I: the force of a friction that sticks" (Myb.contactForceStick surface stick points x v identity (Vec3 0 0 0) deflections) $ \(result, rates) -> do
+    same <- sameBytes result sresult
+    expect tally "I: the friction that sticks byte for byte" (ok scode && same && vecsBits rates == vecsBits srates)
+  expect tally "I: deflections of another number" (failsWith Myb.Domain (Myb.contactForceStick surface stick points x v identity (Vec3 0 0 0) (take 1 deflections)))
+  expect tally "I: a deflection that is not finite" (failsWith Myb.Domain (Myb.contactForceStick surface stick points x v identity (Vec3 0 0 0) [Vec3 (0 / 0) 0 0, Vec3 0 0 0]))
+  onRight tally "I: the smooth friction" (Myb.contactForce surface smooth points x v identity (Vec3 0 0 0)) $ \result -> do
+    rawSmooth <- with surface $ \ps -> with smooth $ \pl -> withArray points $ \pp -> with x $ \px -> with v $ \pv -> with identity $ \pa -> with (Vec3 0 0 0) $ \pw -> with C.zero $ \pr ->
+      C.myb_contact_force ps pl pp 2 (castPtr px) (castPtr pv) (castPtr pa) (castPtr pw) pr >> peek pr
+    sameBytes result rawSmooth >>= expect tally "I: the smooth friction byte for byte"
+  -- the springs of the friction that sticks in the state of a system
+  lander <- Myb.newSystem [4.9028e12, 1.0e-7]
+  onRight tally "I: a system with a contact" lander $ \s -> do
+    added <- Myb.addContact s 1 0 surface stick points
+    n <- Myb.systemCoordinates s
+    expect tally "I: three coordinates a point" (added == Right () && n == 6 + 6)
+    let y = replicate (2 * n) 0
+    packed <- Myb.packContact s 0 deflections y
+    rawPacked <- withForeignPtr (Myb.systemPtr s) $ \ps -> withArray deflections $ \pd -> withArray (replicate (2 * n) 0) $ \py ->
+      C.myb_system_pack_contact ps 0 (castPtr pd) py >>= \c -> (,) c . dd <$> peekArray (2 * n) py
+    expect tally "I: the springs packed bit for bit" (ok (fst rawPacked) && fmap bitsOf packed == Right (bitsOf (snd rawPacked)))
+    back <- either (pure . Left) (Myb.unpackContact s 0 2) packed
+    expect tally "I: the springs unpacked" (fmap vecsBits back == Right (vecsBits deflections))
+    noContact <- Myb.packContact s 3 deflections y
+    expect tally "I: no such contact" (failsWith Myb.Domain noContact)
+  slipping <- Myb.newSystem [4.9028e12, 1.0e-7]
+  onRight tally "I: a system with a smooth contact" slipping $ \s -> do
+    _ <- Myb.addContact s 1 0 surface smooth points
+    n <- Myb.systemCoordinates s
+    smoothPack <- Myb.packContact s 0 deflections (replicate (2 * n) 0)
+    expect tally "I: a smooth friction has no springs" (n == 6 && failsWith Myb.Domain smoothPack)
+  -- the new terms of a PN pair
+  expect tally "I: the PN orders by name" (Myb.pnOrders [Myb.PnSs3, Myb.PnTailx] == 4096 + 32768 && Myb.pnOrders [Myb.PnSorr5, Myb.PnSotail] == C.MYB_PN_SORR5 + C.MYB_PN_SOTAIL)
+  binary <- Myb.newSystem [1.3e20, 1.0e20]
+  onRight tally "I: a binary" binary $ \s -> do
+    pair <- Myb.addPnPair s 0 1 C.zero {C.myb_system_pn_pair'orders = Myb.pnOrders [Myb.Pn2, Myb.PnSs3], C.myb_system_pn_pair'c = 299792458}
+    n <- Myb.systemCoordinates s
+    expect tally "I: a pair with the spin-spin terms of 1/c^6 integrates the spins" (pair == Right () && n == 6 + 6)
+    unknown <- Myb.addPnPair s 0 1 C.zero {C.myb_system_pn_pair'orders = 65536, C.myb_system_pn_pair'c = 299792458}
+    expect tally "I: an unknown PN term" (failsWith Myb.Domain unknown)
 
 -- ---- Helpers -------------------------------------------------------------------------------
 

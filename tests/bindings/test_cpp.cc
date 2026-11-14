@@ -1866,6 +1866,259 @@ void test_array_forms() {
   }
 }
 
+// ---- Contact, breaks, the timescale of IAS15, the orders of a PN pair
+
+myb_status moon_gravity(void*, double, const double[3], const double[3], double a[3]) {
+  a[0] = 0.0;
+  a[1] = 0.0;
+  a[2] = -1.62;
+  return MYB_OK;
+}
+
+bool same_contact(const ::myb_contact_result& a, const ::myb_contact_result& b) {
+  return bits(a.force, b.force, sizeof a.force) && bits(a.torque, b.torque, sizeof a.torque) &&
+         bits(&a.energy, &b.energy, sizeof(double)) && bits(&a.gap, &b.gap, sizeof(double)) &&
+         a.touching == b.touching;
+}
+
+void test_contact_and_breaks() {
+  ::myb_contact_surface ground{};
+  ground.shape = MYB_CONTACT_PLANE;
+  ground.normal[2] = 1.0;
+  ::myb_contact_law law{};
+  law.stiffness = 1.0e6;
+  law.exponent = 1.5;
+  law.damping = 2.0;
+  // a ball dropped on the plane by IAS15 with the timescale of the jerk, its steps aimed at the
+  // touches (tests/unit/test_contact.c)
+  ::myb_orbit_options options{};
+  options.epsilon = 1e-10;
+  options.timescale = MYB_IAS15_TIMESCALE_JERK;
+  const double y0_c[6] = {0.0, 0.0, 0.3, 0.0, 0.0, 0.0};
+  ::myb_contact_term term_c{};
+  term_c.surface = ground;
+  term_c.law = law;
+  term_c.radius = 0.1;
+  ::myb_force_model* model_c = nullptr;
+  CHECK(::myb_force_model_create(nullptr, &model_c) == MYB_OK);
+  CHECK(::myb_force_model_add(model_c, "gravity", moon_gravity, nullptr, nullptr, nullptr) ==
+        MYB_OK);
+  CHECK(::myb_force_model_add(model_c, "contact", ::myb_term_contact, nullptr, &term_c,
+                              nullptr) == MYB_OK);
+  CHECK(::myb_force_model_add_break(model_c, ::myb_event_contact, &term_c) == MYB_OK);
+  ::myb_force_model_set_break_scheme(model_c, MYB_BREAKS_PREDICT);
+  ::myb_orbit* orbit_c = nullptr;
+  CHECK(::myb_orbit_create(model_c, &options, nullptr, &orbit_c) == MYB_OK);
+  CHECK(::myb_orbit_start(orbit_c, 0.0, y0_c, 2.0) == MYB_OK);
+  double end_c[6] = {};
+  CHECK(::myb_orbit_state(orbit_c, 2.0, end_c) == MYB_OK);
+  const std::int64_t steps_c = ::myb_orbit_steps(orbit_c);
+  const std::int64_t breaks_c = ::myb_orbit_breaks(orbit_c);
+  ::myb_orbit_destroy(orbit_c);
+  ::myb_force_model_destroy(model_c);
+  auto model = myb::share(myb::force_model::create());
+  CHECK(model.ok());
+  if (!model) {
+    return;
+  }
+  CHECK((*model)->break_scheme() == MYB_BREAKS_RETAKE);
+  CHECK((*model)
+            ->add_term("gravity",
+                       [](double, const myb::vec3&, const myb::vec3&, myb::vec3& a) {
+                         a = {0.0, 0.0, -1.62};
+                         return MYB_OK;
+                       })
+            .ok());
+  CHECK((*model)->add_contact("contact", nullptr, 0, ground, law, 0.1, true).ok());
+  CHECK((*model)->break_count() == 1);
+  (*model)->set_break_scheme(MYB_BREAKS_PREDICT);
+  CHECK((*model)->break_scheme() == MYB_BREAKS_PREDICT);
+  const myb::state y0{0.0, 0.0, 0.3, 0.0, 0.0, 0.0};
+  auto orbit = myb::orbit::create(*model, options);
+  CHECK(orbit.ok());
+  if (orbit) {
+    CHECK(orbit->start(0.0, y0, 2.0).ok());
+    const auto end = orbit->at(2.0);
+    CHECK(end.ok() && same_array(*end, end_c) && orbit->steps() == steps_c &&
+          orbit->breaks() == breaks_c && breaks_c > 0);
+    std::printf("a ball dropped on a plane through the class (IAS15, the jerk, aimed breaks): "
+                "%lld steps, %lld breaks, %s the C calls\n",
+                static_cast<long long>(orbit->steps()), static_cast<long long>(orbit->breaks()),
+                end.ok() && same_array(*end, end_c) ? "bit for bit with" : "NOT as");
+  }
+  // the timescale of a alone stalls at the touch; an unknown timescale is refused
+  ::myb_orbit_options plain{};
+  plain.epsilon = 1e-10;
+  auto stalled = myb::orbit::create(*model, plain);
+  CHECK(stalled.ok() && stalled->start(0.0, y0, 2.0).ok() &&
+        stalled->at(2.0).code() == MYB_E_STEP_MIN);
+  ::myb_orbit_options unknown = options;
+  const int seven = 7;
+  static_assert(sizeof unknown.timescale == sizeof seven, "an enum of C is an int here");
+  std::memcpy(&unknown.timescale, &seven, sizeof seven);
+  CHECK(myb::orbit::create(*model, unknown).code() == MYB_E_DOMAIN);
+  // the term with a friction that sticks needs its state: the model refuses it
+  ::myb_contact_law stick = law;
+  stick.friction = 0.6;
+  stick.kind = MYB_CONTACT_FRICTION_STICK;
+  stick.tangential_stiffness = 1.0e4;
+  stick.tangential_damping = 100.0;
+  auto refusing = myb::force_model::create();
+  CHECK(refusing.ok() && refusing->add_contact("contact", nullptr, 0, ground, stick, 0.1).ok());
+  if (refusing) {
+    CHECK(refusing->acceleration(0.0, {0.0, 0.0, 0.099}, {0.0, 0.0, 0.0}).code() == MYB_E_DOMAIN);
+  }
+
+  // the force of a surface, smooth and sticking
+  const std::vector<::myb_contact_point> points = {{{0.0, 0.0, 0.0}, 0.1}};
+  const myb::vec3 x{0.0, 0.0, 0.099};
+  const myb::vec3 v{0.01, 0.0, -0.001};
+  ::myb_contact_law smooth = law;
+  smooth.friction = 0.5;
+  smooth.slip = 1e-3;
+  ::myb_contact_result smooth_c{};
+  CHECK(::myb_contact_force(&ground, &smooth, points.data(), 1, x.data(), v.data(), nullptr,
+                            nullptr, &smooth_c) == MYB_OK);
+  const auto smooth_force = myb::contact_force(ground, smooth, points, x, v);
+  CHECK(smooth_force.ok() && same_contact(*smooth_force, smooth_c) && smooth_c.touching == 1);
+  CHECK(myb::contact_force(ground, stick, points, x, v).code() == MYB_E_DOMAIN);
+  const std::vector<double> deflection = {1.0e-5, -2.0e-6, 0.0};
+  double rate_c[3] = {};
+  ::myb_contact_result stick_c{};
+  CHECK(::myb_contact_force_stick(&ground, &stick, points.data(), 1, x.data(), v.data(), nullptr,
+                                  nullptr, deflection.data(), rate_c, &stick_c) == MYB_OK);
+  const auto stick_force = myb::contact_force_stick(ground, stick, points, x, v, deflection);
+  CHECK(stick_force.ok() && same_contact(stick_force->result, stick_c) &&
+        bits(stick_force->deflection_rate.data(), rate_c, sizeof rate_c));
+  CHECK(myb::contact_force_stick(ground, stick, points, x, v, {1.0}).code() == MYB_E_DOMAIN);
+  CHECK(myb::contact_force_stick(ground, stick, points, x, v, {}).code() == MYB_E_DOMAIN);
+  double restitution_c = 0.0;
+  CHECK(::myb_contact_restitution(2.0, 1.5, &restitution_c) == MYB_OK);
+  const auto restitution = myb::contact_restitution(2.0, 1.5);
+  CHECK(restitution.ok() && *restitution == restitution_c);
+  CHECK(myb::contact_restitution(-1.0, 1.0).code() == MYB_E_DOMAIN);
+  const auto nearest = myb::contact_surface_nearest(ground, {1.0, 2.0, 0.5});
+  CHECK(nearest.ok() && nearest->height == 0.5);
+
+  // a system with a contact that sticks: the deflections in the state
+  const double gms[2] = {0.0, 1.0};
+  ::myb_system* s_c = nullptr;
+  CHECK(::myb_system_create(2, gms, nullptr, &s_c) == MYB_OK);
+  const ::myb_contact_point legs[2] = {{{0.0, 0.0, -0.5}, 0.1}, {{0.3, 0.0, -0.5}, 0.1}};
+  ::myb_system_contact contact_c{};
+  contact_c.surface = ground;
+  contact_c.law = stick;
+  contact_c.points = legs;
+  contact_c.point_count = 2;
+  CHECK(::myb_system_add_contact(s_c, 1, 0, &contact_c) == MYB_OK);
+  const std::size_t n = ::myb_system_coordinates(s_c);
+  std::vector<double> y_c(2 * n, 0.0);
+  y_c[5] = 0.59;
+  y_c[n + 3] = 0.02;
+  const std::vector<double> springs = {1.0e-5, 0.0, 0.0, -1.0e-5, 2.0e-6, 0.0};
+  CHECK(::myb_system_pack_contact(s_c, 0, springs.data(), y_c.data()) == MYB_OK);
+  std::vector<double> a_c(n);
+  CHECK(::myb_system_acceleration(s_c, 0.0, y_c.data(), y_c.data() + n, a_c.data()) == MYB_OK);
+  ::myb_system_destroy(s_c);
+  auto s = myb::system::create({0.0, 1.0});
+  CHECK(s.ok() && s->add_contact(1, 0, ground, stick, {legs[0], legs[1]}).ok());
+  if (s) {
+    CHECK(s->coordinates() == n && n == 12);
+    std::vector<double> y(2 * n, 0.0);
+    y[5] = 0.59;
+    y[n + 3] = 0.02;
+    CHECK(s->pack_contact(0, springs, y).ok() && same_doubles(y, y_c));
+    const auto back = s->unpack_contact(0, y);
+    CHECK(back.ok() && same_doubles(*back, springs));
+    const auto a = s->acceleration(0.0, std::vector<double>(y.begin(), y.begin() + 12),
+                                   std::vector<double>(y.begin() + 12, y.end()));
+    CHECK(a.ok() && same_doubles(*a, a_c));
+    CHECK(s->pack_contact(1, springs, y).code() == MYB_E_DOMAIN);
+    CHECK(s->pack_contact(0, {1.0, 2.0, 3.0}, y).code() == MYB_E_DOMAIN);
+    CHECK(s->unpack_contact(0, std::vector<double>(3)).code() == MYB_E_DOMAIN);
+  }
+  auto smooth_system = myb::system::create({0.0, 1.0});
+  CHECK(smooth_system.ok() &&
+        smooth_system->add_contact(1, 0, ground, smooth, {legs[0], legs[1]}).ok());
+  if (smooth_system) {
+    std::vector<double> y(2 * smooth_system->coordinates(), 0.0);
+    CHECK(smooth_system->coordinates() == 6);
+    CHECK(smooth_system->pack_contact(0, springs, y).code() == MYB_E_DOMAIN); // no springs
+  }
+
+  // the integrator of a system with the timescale of the jerk, and an unknown one
+  ::myb_ias15_options jerk{};
+  jerk.epsilon = 1e-10;
+  jerk.timescale = MYB_IAS15_TIMESCALE_JERK;
+  const double pair_gm[2] = {4.0e5, 1.0e5};
+  const double start_c[12] = {-1000.0, 0.0, 0.0, 4000.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, -0.04, 0.0};
+  ::myb_system* p_c = nullptr;
+  CHECK(::myb_system_create(2, pair_gm, nullptr, &p_c) == MYB_OK);
+  ::myb_ias15* in_c = nullptr;
+  CHECK(::myb_system_integrator(p_c, &jerk, nullptr, &in_c) == MYB_OK);
+  CHECK(::myb_ias15_start(in_c, ::myb_system_acceleration, p_c, 0.0, start_c) == MYB_OK);
+  CHECK(::myb_ias15_integrate(in_c, 300.0) == MYB_OK);
+  const std::vector<double> after_c(::myb_ias15_state(in_c), ::myb_ias15_state(in_c) + 12);
+  ::myb_ias15_destroy(in_c);
+  ::myb_system_destroy(p_c);
+  auto p = myb::system::create({4.0e5, 1.0e5});
+  CHECK(p.ok());
+  if (p) {
+    auto in = p->integrator(&jerk);
+    CHECK(in.ok());
+    if (in) {
+      CHECK(p->start(*in, 0.0, std::vector<double>(start_c, start_c + 12)).ok() &&
+            in->integrate(300.0).ok() && same_doubles(in->current(), after_c));
+    }
+    ::myb_ias15_options wrong = jerk;
+    std::memcpy(&wrong.timescale, &seven, sizeof seven);
+    CHECK(p->integrator(&wrong).code() == MYB_E_DOMAIN);
+  }
+
+  // a pair beyond 1PN with the spin-spin terms of the next order: its spins in the state
+  const double binary_gm[2] = {1.3e20, 1.0e20};
+  ::myb_system_pn_pair pair{};
+  pair.orders = MYB_PN_2 | MYB_PN_SO | MYB_PN_SS3;
+  pair.c = 299792458.0;
+  pair.kappa1 = 1.0;
+  pair.kappa2 = 1.0;
+  const double chi1[3] = {0.0, 0.0, 0.5};
+  const double chi2[3] = {0.0, 0.3, 0.0};
+  ::myb_system* b_c = nullptr;
+  CHECK(::myb_system_create(2, binary_gm, nullptr, &b_c) == MYB_OK);
+  CHECK(::myb_system_add_pn_pair(b_c, 0, 1, &pair) == MYB_OK);
+  const std::size_t nb = ::myb_system_coordinates(b_c);
+  std::vector<double> yb_c(2 * nb, 0.0);
+  yb_c[0] = -4.0e8;
+  yb_c[3] = 6.0e8;
+  yb_c[nb + 1] = -2.0e5;
+  yb_c[nb + 4] = 2.6e5;
+  CHECK(::myb_system_pack_spins(b_c, 0, chi1, chi2, yb_c.data()) == MYB_OK);
+  std::vector<double> ab_c(nb);
+  CHECK(::myb_system_acceleration(b_c, 0.0, yb_c.data(), yb_c.data() + nb, ab_c.data()) == MYB_OK);
+  ::myb_system_destroy(b_c);
+  auto binary = myb::system::create({1.3e20, 1.0e20});
+  CHECK(binary.ok() && binary->add_pn_pair(0, 1, pair).ok());
+  if (binary) {
+    CHECK(binary->coordinates() == nb && nb == 12);
+    std::vector<double> yb(2 * nb, 0.0);
+    yb[0] = -4.0e8;
+    yb[3] = 6.0e8;
+    yb[nb + 1] = -2.0e5;
+    yb[nb + 4] = 2.6e5;
+    CHECK(binary->pack_spins(0, {chi1[0], chi1[1], chi1[2]}, {chi2[0], chi2[1], chi2[2]}, yb).ok());
+    const auto ab = binary->acceleration(0.0, std::vector<double>(yb.begin(), yb.begin() + 12),
+                                         std::vector<double>(yb.begin() + 12, yb.end()));
+    CHECK(ab.ok() && same_doubles(*ab, ab_c));
+    ::myb_system_pn_pair unknown_order = pair;
+    unknown_order.orders = 1u << 20;
+    CHECK(binary->add_pn_pair(0, 1, unknown_order).code() == MYB_E_DOMAIN);
+    std::printf("a pair with MYB_PN_SS3, a contact that sticks, IAS15 by the jerk through the "
+                "class: %s the C calls\n",
+                ab.ok() && same_doubles(*ab, ab_c) ? "bit for bit with" : "NOT as");
+  }
+}
+
 #if defined(MYB_CPP_TEST_SGP4)
 void test_two_line_elements() {
   const std::string line1 = "1 00005U 58002B   00179.78495062  .00000023  00000-0  28098-4 0  4753";
@@ -1920,6 +2173,7 @@ int main() {
   test_observables();
   test_files();
   test_array_forms();
+  test_contact_and_breaks();
 #if defined(MYB_CPP_TEST_SGP4)
   test_two_line_elements();
 #endif

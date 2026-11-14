@@ -946,6 +946,24 @@ impl ForceModel {
         true
     }
 
+    /// How the orbits of the model end their IAS15 steps at its breaks, from their next start.
+    pub fn set_break_scheme(&self, scheme: BreakScheme) {
+        let scheme = match scheme {
+            BreakScheme::Retake => sys::MYB_BREAKS_RETAKE,
+            BreakScheme::Predict => sys::MYB_BREAKS_PREDICT,
+        };
+        // SAFETY: the model is alive; the scheme is one of the library's
+        unsafe { sys::myb_force_model_set_break_scheme(self.raw.as_ptr(), scheme) }
+    }
+
+    pub fn break_scheme(&self) -> BreakScheme {
+        // SAFETY: the model is alive
+        match unsafe { sys::myb_force_model_break_scheme(self.raw.as_ptr()) } {
+            sys::MYB_BREAKS_PREDICT => BreakScheme::Predict,
+            _ => BreakScheme::Retake,
+        }
+    }
+
     pub fn as_ptr(&self) -> *mut sys::myb_force_model {
         self.raw.as_ptr()
     }
@@ -1006,6 +1024,38 @@ pub struct OrbitOptions {
     /// DOP853: the relative tolerance (0: 1e-12) and the absolute one (0: 1e-9).
     pub rtol: f64,
     pub atol: f64,
+    /// IAS15: the timescale of its step (Jerk for an acceleration that passes through zero,
+    /// a contact).
+    pub timescale: Ias15Timescale,
+}
+
+/// The timescale that sets the step of IAS15 (`myb/integ.h`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Ias15Timescale {
+    /// tau of the acceleration (Pham, Rein and Spiegel).
+    #[default]
+    Acceleration,
+    /// The larger of tau of the acceleration and tau_1 of its rate.
+    Jerk,
+}
+
+impl Ias15Timescale {
+    pub fn raw(self) -> sys::myb_ias15_timescale {
+        match self {
+            Ias15Timescale::Acceleration => sys::MYB_IAS15_TIMESCALE_ACCELERATION,
+            Ias15Timescale::Jerk => sys::MYB_IAS15_TIMESCALE_JERK,
+        }
+    }
+}
+
+/// How an orbit integrated by IAS15 ends its steps at the breaks of its model.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BreakScheme {
+    /// A step that contains a sign change is withdrawn and taken again up to it.
+    #[default]
+    Retake,
+    /// The breaks are predicted before a step and become its end.
+    Predict,
 }
 
 /// Which zeros of an event function count.
@@ -1036,7 +1086,7 @@ impl Orbit {
             },
             rtol: options.rtol,
             atol: options.atol,
-            timescale: sys::MYB_IAS15_TIMESCALE_ACCELERATION,
+            timescale: options.timescale.raw(),
         };
         let mut raw = ptr::null_mut();
         // SAFETY: the model is alive and kept alive by the orbit

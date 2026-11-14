@@ -15,9 +15,9 @@ from ._core import (Provider, _Calls, _check, _doubles, _flat, _optional, _orien
 from ._native import ffi, lib
 
 __all__ = [
-    "NBody", "NBodyInvariants", "NBodyPNInvariants", "Pool", "System", "SystemEvent",
-    "SystemIntegrator", "SystemMerger", "SystemView", "WisdomHolman", "WisdomHolmanStats",
-    "Ias15Stats",
+    "ContactResult", "NBody", "NBodyInvariants", "NBodyPNInvariants", "Pool", "System",
+    "SystemEvent", "SystemIntegrator", "SystemMerger", "SystemView", "WisdomHolman",
+    "WisdomHolmanStats", "Ias15Stats", "contact_force", "contact_force_stick", "pn_orders",
 ]
 
 NBodyInvariants = namedtuple("NBodyInvariants",
@@ -28,6 +28,7 @@ Ias15Stats = namedtuple("Ias15Stats", "accepted rejected evaluations iterations 
 SystemView = namedtuple("SystemView", "body bodies x v gm frame")
 SystemEvent = namedtuple("SystemEvent", "kind a b t distance")
 SystemMerger = namedtuple("SystemMerger", "energy angular_momentum spin")
+ContactResult = namedtuple("ContactResult", "force torque energy gap touching")
 
 _levels = {"none": lib.MYB_INTERACTION_NONE, "newton": lib.MYB_INTERACTION_NEWTON,
            "eih": lib.MYB_INTERACTION_EIH}
@@ -36,6 +37,106 @@ _schemes = {"dkd": lib.MYB_WH_DKD, "saba2": lib.MYB_WH_SABA2, "saba3": lib.MYB_W
             "sbab3": lib.MYB_WH_SBAB3, "sbab4": lib.MYB_WH_SBAB4}
 _shapes = {"plane": lib.MYB_CONTACT_PLANE, "ellipsoid": lib.MYB_CONTACT_ELLIPSOID,
            "mesh": lib.MYB_CONTACT_MESH}
+_frictions = {"smooth": lib.MYB_CONTACT_FRICTION_SMOOTH, "stick": lib.MYB_CONTACT_FRICTION_STICK}
+_timescales = {"acceleration": lib.MYB_IAS15_TIMESCALE_ACCELERATION,
+               "jerk": lib.MYB_IAS15_TIMESCALE_JERK}
+
+
+def _timescale(timescale):
+    """The timescale of the steps of IAS15: "acceleration" (the default) or "jerk" (an
+    acceleration that passes through zero: a contact), or lib.MYB_IAS15_TIMESCALE_*."""
+    return _timescales[timescale] if isinstance(timescale, str) else int(timescale)
+
+
+def pn_orders(orders):
+    """The bits of PN orders (myb/rel.h) from an int, or from a sequence of ints and of the
+    names after MYB_PN_: "1", "2", "25", "3", "35", "SO", "SS", "4", "4RR", "SO25", "SO35",
+    "SORR", "SS3", "SORR5", "SOTAIL", "TAILX"."""
+    if isinstance(orders, int):
+        return orders
+    bits = 0
+    for order in orders:
+        if isinstance(order, str):
+            if not hasattr(lib, "MYB_PN_" + order.upper()):
+                raise ValueError("no such PN order: %r" % (order,))
+            order = getattr(lib, "MYB_PN_" + order.upper())
+        bits |= int(order)
+    return bits
+
+
+# ---- Contact (myb/contact.h) ---------------------------------------------------------------------
+
+def _contact_surface(surface, out):
+    shape = surface.get("shape", "plane")
+    out.shape = _shapes[shape] if isinstance(shape, str) else int(shape)
+    out.point = list(_doubles(surface.get("point", (0.0, 0.0, 0.0)), 3, "point"))
+    out.normal = list(_doubles(surface.get("normal", (0.0, 0.0, 0.0)), 3, "normal"))
+    out.radii = list(_doubles(surface.get("radii", (0.0, 0.0, 0.0)), 3, "radii"))
+    mesh = surface.get("mesh")
+    if mesh is not None:
+        out.mesh = mesh.pointer
+    return mesh
+
+
+def _contact_law(law, out):
+    for key in ("stiffness", "exponent", "damping", "friction", "slip", "tangential_stiffness",
+                "tangential_damping"):
+        setattr(out, key, float(law.get(key, 0.0)))
+    kind = law.get("kind", "smooth")
+    out.kind = _frictions[kind] if isinstance(kind, str) else int(kind)
+
+
+def _contact_points(points):
+    points = list(points)
+    made = ffi.new("myb_contact_point[]", max(len(points), 1))
+    for k, (offset, radius) in enumerate(points):
+        made[k].offset = list(_doubles(offset, 3, "offset"))
+        made[k].radius = float(radius)
+    return made, len(points)
+
+
+def _contact(surface, law, points):
+    made_surface = ffi.new("myb_contact_surface*")
+    mesh = _contact_surface(surface, made_surface)
+    made_law = ffi.new("myb_contact_law*")
+    _contact_law(law, made_law)
+    made_points, count = _contact_points(points)
+    return made_surface, made_law, made_points, count, mesh
+
+
+def _contact_result(result):
+    return ContactResult(tuple(result.force), tuple(result.torque), result.energy, result.gap,
+                         result.touching)
+
+
+def contact_force(surface, law, points, x, v, attitude=None, omega=None):
+    """The force and torque of a surface on a body by its contact points
+    (myb_contact_force): surface, law and points as System.add_contact; x, v of the centre
+    in the frame of the surface; attitude (nine numbers, None: the same axes) and omega of
+    the body relative to the surface. A ContactResult."""
+    made_surface, made_law, made_points, count, mesh = _contact(surface, law, points)
+    result = ffi.new("myb_contact_result*")
+    _check(lib.myb_contact_force(made_surface, made_law, made_points, count,
+                                 _doubles(x, 3, "x"), _doubles(v, 3, "v"),
+                                 _optional(attitude, 9, "attitude"), _optional(omega, 3, "omega"),
+                                 result))
+    return _contact_result(result)
+
+
+def contact_force_stick(surface, law, points, x, v, deflection, attitude=None, omega=None):
+    """The same with the state of a friction that sticks (myb_contact_force_stick):
+    deflection three numbers a point (m, axes of the surface). (ContactResult, the rates of
+    the deflections)."""
+    made_surface, made_law, made_points, count, mesh = _contact(surface, law, points)
+    result = ffi.new("myb_contact_result*")
+    rate = ffi.new("double[]", max(3 * count, 1))
+    _check(lib.myb_contact_force_stick(made_surface, made_law, made_points, count,
+                                       _doubles(x, 3, "x"), _doubles(v, 3, "v"),
+                                       _optional(attitude, 9, "attitude"),
+                                       _optional(omega, 3, "omega"),
+                                       _doubles(deflection, 3 * count, "deflection"), rate,
+                                       result))
+    return _contact_result(result), _tuple(rate, 3 * count)
 
 
 def _nothing(pointer):
@@ -221,10 +322,12 @@ class WisdomHolman(_Owner):
 
 # ---- The system of bodies ------------------------------------------------------------------------
 
-def _ias15_options(epsilon=0.0, h_initial=0.0, h_max=0.0, h_min=0.0, max_steps=0):
+def _ias15_options(epsilon=0.0, h_initial=0.0, h_max=0.0, h_min=0.0, max_steps=0,
+                   timescale="acceleration"):
     return ffi.new("myb_ias15_options*", {"epsilon": float(epsilon),
                                           "h_initial": float(h_initial), "h_max": float(h_max),
-                                          "h_min": float(h_min), "max_steps": int(max_steps)})
+                                          "h_min": float(h_min), "max_steps": int(max_steps),
+                                          "timescale": _timescale(timescale)})
 
 
 class System(_Owner):
@@ -242,6 +345,7 @@ class System(_Owner):
         super().__init__(out[0])
         self._calls = _Calls()
         self._nbody = None
+        self._contacts = []  # (body, ground, points) of the contacts in place
 
     def _settle(self, status):
         _settle(status, self)
@@ -326,13 +430,9 @@ class System(_Owner):
         _check(lib.myb_system_add_distortion(self.pointer, int(body), int(raiser)))
 
     def add_pn_pair(self, a, b, orders, c=0.0, r0=0.0, kappa1=0.0, kappa2=0.0):
-        """The terms beyond 1PN of two bodies: orders lib.MYB_PN_2 | ... (or a sequence of
-        them)."""
-        if not isinstance(orders, int):
-            bits = 0
-            for order in orders:
-                bits |= int(order)
-            orders = bits
+        """The terms beyond 1PN of two bodies: orders lib.MYB_PN_2 | ..., or a sequence of
+        bits and names ("2", "SO", "SS3", "SORR5", "SOTAIL", "TAILX", ...: pn_orders)."""
+        orders = pn_orders(orders)
         pair = ffi.new("myb_system_pn_pair*", {"orders": int(orders), "c": float(c),
                                                "r0": float(r0), "kappa1": float(kappa1),
                                                "kappa2": float(kappa2)})
@@ -411,35 +511,26 @@ class System(_Owner):
     def add_contact(self, body, ground, surface, law, points):
         """`body` touches the surface of `ground`. surface: a mapping with shape ("plane",
         "ellipsoid", "mesh"), point and normal (plane), radii (ellipsoid), mesh (a
-        Polyhedron); law: stiffness, exponent, damping, friction, slip; points: pairs (offset,
-        radius) in the frame of the body."""
-        points = list(points)
-        made = ffi.new("myb_contact_point[]", max(len(points), 1))
-        for k, (offset, radius) in enumerate(points):
-            made[k].offset = list(_doubles(offset, 3, "offset"))
-            made[k].radius = float(radius)
+        Polyhedron); law: stiffness, exponent, damping, friction, slip and, for the friction
+        that sticks, kind ("smooth" or "stick"), tangential_stiffness, tangential_damping;
+        points: pairs (offset, radius) in the frame of the body. A friction that sticks adds
+        three coordinates a point (pack_contact)."""
+        made, count = _contact_points(points)
         contact = ffi.new("myb_system_contact*")
-        shape = surface.get("shape", "plane")
-        contact.surface.shape = _shapes[shape] if isinstance(shape, str) else int(shape)
-        contact.surface.point = list(_doubles(surface.get("point", (0.0, 0.0, 0.0)), 3, "point"))
-        contact.surface.normal = list(_doubles(surface.get("normal", (0.0, 0.0, 0.0)), 3,
-                                               "normal"))
-        contact.surface.radii = list(_doubles(surface.get("radii", (0.0, 0.0, 0.0)), 3, "radii"))
-        mesh = surface.get("mesh")
-        if mesh is not None:
-            contact.surface.mesh = mesh.pointer
-        for key in ("stiffness", "exponent", "damping", "friction", "slip"):
-            setattr(contact.law, key, float(law.get(key, 0.0)))
+        mesh = _contact_surface(surface, contact.surface)
+        _contact_law(law, contact.law)
         contact.points = made
-        contact.point_count = len(points)
+        contact.point_count = count
         _check(lib.myb_system_add_contact(self.pointer, int(body), int(ground), contact))
         self._kept += [made, mesh]
+        self._contacts.append((int(body), int(ground), count))
 
     # ---- the state
 
     @property
     def coordinates(self):
-        """n: 3 per body, 9 per integrated rotation, 6 per PN pair with spins."""
+        """n: 3 per body, 9 per integrated rotation, 6 per PN pair with spins, 3 per point
+        of a contact whose friction sticks."""
         return lib.myb_system_coordinates(self.pointer)
 
     def _state(self, y):
@@ -462,6 +553,28 @@ class System(_Owner):
                                               core))
         return tuple(q), tuple(omega), tuple(core)
 
+    def _contact_size(self, contact):
+        if not 0 <= int(contact) < len(self._contacts):
+            raise IndexError("no contact %d among the %d in place" % (contact,
+                                                                      len(self._contacts)))
+        return 3 * self._contacts[int(contact)][2]
+
+    def pack_contact(self, y, contact, deflection):
+        """The state y with the deflections of the springs of a contact (three numbers a
+        point, in the axes of its surface) put in: a new tuple (myb_system_pack_contact)."""
+        made = self._state(y)
+        count = self._contact_size(contact)
+        _check(lib.myb_system_pack_contact(self.pointer, int(contact),
+                                           _doubles(deflection, count, "deflection"), made))
+        return _tuple(made, 2 * self.coordinates)
+
+    def unpack_contact(self, y, contact):
+        """The deflections of the springs of a contact in the state y."""
+        count = self._contact_size(contact)
+        out = ffi.new("double[]", max(count, 1))
+        _check(lib.myb_system_unpack_contact(self.pointer, int(contact), self._state(y), out))
+        return _tuple(out, count)
+
     def pack_spins(self, y, pair, chi1, chi2):
         made = self._state(y)
         _check(lib.myb_system_pack_spins(self.pointer, int(pair), _doubles(chi1, 3, "chi1"),
@@ -474,10 +587,12 @@ class System(_Owner):
         _check(lib.myb_system_unpack_spins(self.pointer, int(pair), self._state(y), chi1, chi2))
         return tuple(chi1), tuple(chi2)
 
-    def integrator(self, epsilon=0.0, h_initial=0.0, h_max=0.0, h_min=0.0, max_steps=0):
-        """An IAS15 integrator of the system as it stands (myb_system_integrator)."""
+    def integrator(self, epsilon=0.0, h_initial=0.0, h_max=0.0, h_min=0.0, max_steps=0,
+                   timescale="acceleration"):
+        """An IAS15 integrator of the system as it stands (myb_system_integrator); timescale
+        "acceleration" or "jerk" (contacts)."""
         return SystemIntegrator(self, _ias15_options(epsilon, h_initial, h_max, h_min,
-                                                     max_steps))
+                                                     max_steps, timescale))
 
     def acceleration(self, t, x, v):
         """The second derivatives of the n coordinates (myb_system_acceleration): a tuple."""
@@ -495,7 +610,7 @@ class System(_Owner):
         return tuple(out)
 
     def partials(self, t0, y0, t1, bodies=(), epsilon=0.0, h_initial=0.0, h_max=0.0, h_min=0.0,
-                 max_steps=0):
+                 max_steps=0, timescale="acceleration"):
         """(y1, phi, sensitivity): the state at t1, d y1 / d y0 (2 n rows of 2 n) and
         d y1 / d gm of the bodies given (2 n rows of len(bodies)), by central differences of
         whole propagations (myb_system_partials)."""
@@ -507,7 +622,8 @@ class System(_Owner):
         sensitivity = ffi.new("double[]", max(n2 * len(bodies), 1))
         self._settle(lib.myb_system_partials(self.pointer, _ias15_options(epsilon, h_initial,
                                                                           h_max, h_min,
-                                                                          max_steps),
+                                                                          max_steps,
+                                                                          timescale),
                                              float(t0), self._state(y0), float(t1), chosen,
                                              len(bodies), y1, phi,
                                              sensitivity if bodies else ffi.NULL))
@@ -529,6 +645,8 @@ class System(_Owner):
         merger = ffi.new("myb_system_merger*")
         self._settle(lib.myb_system_merge(self.pointer, integrator.pointer, int(a), int(b),
                                           merger))
+        # every level that names b is dropped: the contacts in place are numbered without it
+        self._contacts = [c for c in self._contacts if int(b) not in c[:2]]
         return SystemMerger(merger.energy, tuple(merger.angular_momentum), tuple(merger.spin))
 
     def bounce(self, integrator, a, b, restitution):

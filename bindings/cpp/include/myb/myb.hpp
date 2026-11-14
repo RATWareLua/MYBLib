@@ -18,7 +18,7 @@
 // function, so an exception leaving it ends the program (std::terminate).
 //
 // The areas: kernels and time, frames and ephemerides, the environment and the force model,
-// propagation and events, N bodies and systems of bodies, estimation, uncertainty, the
+// propagation and events, contact, N bodies and systems of bodies, estimation, uncertainty, the
 // circular restricted three-body problem, transfers and optimal control, low thrust,
 // conjunctions, attitude, observables, the readers and writers of files (with the two-line
 // elements of ext/sgp4 when its header is included before this one), and the array forms of
@@ -1572,6 +1572,21 @@ class environment {
 
 // ---- The force model ----------------------------------------------------------------------------
 
+// A function of the state whose zeros are looked for (an event of an orbit, a break of a force
+// model): g(t, y). It must not throw.
+using event_function = std::function<double(double t, const state& y)>;
+
+namespace detail {
+// What C calls for it; noexcept for the same reason as call_term.
+inline double call_event(void* context, double t, const double* y) noexcept {
+  const auto& g = *static_cast<const event_function*>(context);
+  const state now{y[0], y[1], y[2], y[3], y[4], y[5]};
+  return g(t, now);
+}
+static_assert(noexcept(call_event(nullptr, 0.0, nullptr)),
+              "a function called from C must not let an exception through");
+} // namespace detail
+
 // A force on the object, as a callable: it writes into a (zeros when it is called) the
 // acceleration of the term at the model time t and the state (x, v) relative to the origin of
 // the model, and returns MYB_OK — or the status that stops the evaluation. It must not throw.
@@ -1761,6 +1776,51 @@ class force_model {
     return ::myb_force_model_parameter_count(model_.get());
   }
 
+  // A sphere of `radius` on the surface of a body of the environment (env empty: a surface
+  // fixed at the origin, in the axes of the model): myb_term_contact, the structure copied;
+  // with touches_as_breaks its touches and partings are breaks of the model (myb_event_contact).
+  result<std::size_t> add_contact(const std::string& name, std::shared_ptr<environment> env,
+                                  std::size_t body, const ::myb_contact_surface& surface,
+                                  const ::myb_contact_law& law, double radius,
+                                  bool touches_as_breaks = false) {
+    ::myb_contact_term made{};
+    made.env = env ? env->get() : nullptr;
+    made.body = body;
+    made.surface = surface;
+    made.law = law;
+    made.radius = radius;
+    auto& term = keep(made);
+    kept_.push_back(std::move(env));
+    const result<std::size_t> index = add_raw(name, ::myb_term_contact, nullptr, &term);
+    if (!index || !touches_as_breaks) {
+      return index;
+    }
+    const result<void> added = add_break_raw(::myb_event_contact, &term);
+    if (!added) {
+      return added.code();
+    }
+    return index;
+  }
+
+  // Where the force is continuous but not smooth: a function whose sign changes there.
+  result<void> add_break(event_function g) {
+    auto& stored = keep(std::move(g));
+    return add_break_raw(&detail::call_event, &stored);
+  }
+  // Any break function of the C interface; the context must live as long as the model.
+  result<void> add_break_raw(::myb_break_function g, void* context) {
+    return detail::outcome(::myb_force_model_add_break(model_.get(), g, context));
+  }
+  std::size_t break_count() const noexcept { return ::myb_force_model_break_count(model_.get()); }
+
+  // How an orbit by IAS15 ends its steps at the breaks (from its next start).
+  void set_break_scheme(::myb_break_scheme scheme) noexcept {
+    ::myb_force_model_set_break_scheme(model_.get(), scheme);
+  }
+  ::myb_break_scheme break_scheme() const noexcept {
+    return ::myb_force_model_break_scheme(model_.get());
+  }
+
   // The acceleration of the object at the model time t and the state (x, v).
   result<vec3> acceleration(double t, const vec3& x, const vec3& v) {
     vec3 a{};
@@ -1793,20 +1853,6 @@ class force_model {
 };
 
 // ---- Propagation --------------------------------------------------------------------------------
-
-// A function of the state whose zeros are looked for: g(t, y). It must not throw.
-using event_function = std::function<double(double t, const state& y)>;
-
-namespace detail {
-// What C calls for it; noexcept for the same reason as call_term.
-inline double call_event(void* context, double t, const double* y) noexcept {
-  const auto& g = *static_cast<const event_function*>(context);
-  const state now{y[0], y[1], y[2], y[3], y[4], y[5]};
-  return g(t, now);
-}
-static_assert(noexcept(call_event(nullptr, 0.0, nullptr)),
-              "a function called from C must not let an exception through");
-} // namespace detail
 
 // One object under a force model (myb/orbit.h): states at the times asked for, events.
 class orbit {
@@ -2132,6 +2178,74 @@ inline result<std::string> ocm_format_line(const std::optional<::myb_calendar>& 
     return ::myb_ocm_format_line(epoch ? &*epoch : nullptr, offset, detail::data_or_null(values),
                                  values.size(), buffer, size, length);
   });
+}
+
+// ---- Contact --------------------------------------------------------------------------------------
+
+// The point of a contact surface nearest to a position, the outward normal there and the height
+// of the position over it (myb/contact.h).
+struct surface_point {
+  vec3 point;
+  vec3 normal;
+  double height; // m, negative inside
+};
+inline result<surface_point> contact_surface_nearest(const ::myb_contact_surface& surface,
+                                                     const vec3& position) {
+  surface_point out{};
+  const status code = ::myb_contact_surface_nearest(&surface, position.data(), out.point.data(),
+                                                    out.normal.data(), &out.height);
+  return detail::give(code, out);
+}
+
+// The force and torque of the surface on a body with its contact points: x, v of its centre in
+// the frame of the surface, attitude from the axes of the surface to the body (none: the same),
+// omega its angular velocity relative to the surface in the body axes (none: zero).
+inline result<::myb_contact_result> contact_force(const ::myb_contact_surface& surface,
+                                                  const ::myb_contact_law& law,
+                                                  const std::vector<::myb_contact_point>& points,
+                                                  const vec3& x, const vec3& v,
+                                                  const std::optional<mat3>& attitude = std::nullopt,
+                                                  const std::optional<vec3>& omega = std::nullopt) {
+  ::myb_contact_result out{};
+  const status code = ::myb_contact_force(&surface, &law, detail::data_or_null(points),
+                                          points.size(), x.data(), v.data(),
+                                          attitude ? attitude->data() : nullptr,
+                                          omega ? omega->data() : nullptr, &out);
+  return detail::give(code, out);
+}
+
+// The same with the state of a friction that sticks: the deflections of the springs, 3 a point
+// in the axes of the surface (empty: none, for the smooth friction), and their rates.
+struct contact_stick_result {
+  ::myb_contact_result result;
+  std::vector<double> deflection_rate; // 3 a point; empty without deflections
+};
+inline result<contact_stick_result> contact_force_stick(
+    const ::myb_contact_surface& surface, const ::myb_contact_law& law,
+    const std::vector<::myb_contact_point>& points, const vec3& x, const vec3& v,
+    const std::vector<double>& deflection, const std::optional<mat3>& attitude = std::nullopt,
+    const std::optional<vec3>& omega = std::nullopt) {
+  if (!deflection.empty() && deflection.size() != 3 * points.size()) {
+    return MYB_E_DOMAIN;
+  }
+  contact_stick_result out{::myb_contact_result{}, std::vector<double>(deflection.size())};
+  const status code = ::myb_contact_force_stick(
+      &surface, &law, detail::data_or_null(points), points.size(), x.data(), v.data(),
+      attitude ? attitude->data() : nullptr, omega ? omega->data() : nullptr,
+      detail::data_or_null(deflection), out.deflection_rate.empty() ? nullptr : out.deflection_rate.data(),
+      &out.result);
+  return detail::give(code, std::move(out));
+}
+
+inline result<double> contact_restitution(double damping, double speed) {
+  double restitution = 0.0;
+  const status code = ::myb_contact_restitution(damping, speed, &restitution);
+  return detail::give(code, restitution);
+}
+inline result<double> contact_damping(double restitution, double speed) {
+  double damping = 0.0;
+  const status code = ::myb_contact_damping(restitution, speed, &damping);
+  return detail::give(code, damping);
 }
 
 // ---- N bodies -----------------------------------------------------------------------------------
@@ -2475,6 +2589,9 @@ class system {
     contact.points = detail::data_or_null(*stored);
     contact.point_count = stored->size();
     const status code = ::myb_system_add_contact(core_->object, body, ground, &contact);
+    if (code == MYB_OK) {
+      contacts_->push_back(contact_record{body, ground, stored->size()});
+    }
     return kept_if(code, std::move(stored));
   }
 
@@ -2529,10 +2646,31 @@ class system {
         ::myb_system_unpack_spins(core_->object, pair, y.data(), out.chi1.data(), out.chi2.data());
     return detail::give(code, out);
   }
+  // The deflections of the springs of a contact whose friction sticks (the contacts in place,
+  // in the order they were added): 3 a point, in the axes of its surface (m).
+  result<void> pack_contact(std::size_t contact, const std::vector<double>& deflection,
+                            std::vector<double>& y) const {
+    if (contact >= contacts_->size() || deflection.size() != 3 * (*contacts_)[contact].points ||
+        y.size() != 2 * coordinates()) {
+      return MYB_E_DOMAIN;
+    }
+    return detail::outcome(
+        ::myb_system_pack_contact(core_->object, contact, deflection.data(), y.data()));
+  }
+  result<std::vector<double>> unpack_contact(std::size_t contact,
+                                             const std::vector<double>& y) const {
+    if (contact >= contacts_->size() || y.size() != 2 * coordinates()) {
+      return MYB_E_DOMAIN;
+    }
+    std::vector<double> deflection(3 * (*contacts_)[contact].points);
+    const status code =
+        ::myb_system_unpack_contact(core_->object, contact, y.data(), deflection.data());
+    return detail::give(code, std::move(deflection));
+  }
 
   // ---- integration
   // An IAS15 integrator for the system as it stands (of the options the precision, the step
-  // limits and the budget are used); start it with start().
+  // limits, the budget and the timescale are used); start it with start().
   result<ias15> integrator(const ::myb_ias15_options* options = nullptr) const {
     ::myb_ias15* made = nullptr;
     const status code = ::myb_system_integrator(core_->object, options, nullptr, &made);
@@ -2608,6 +2746,15 @@ class system {
   result<::myb_system_merger> merge(ias15& ias, std::size_t a, std::size_t b) {
     ::myb_system_merger merger{};
     const status code = ::myb_system_merge(core_->object, ias.get(), a, b, &merger);
+    if (code == MYB_OK) { // the system drops every contact that names b, the others keep order
+      std::vector<contact_record> kept;
+      for (const contact_record& record : *contacts_) {
+        if (record.body != b && record.ground != b) {
+          kept.push_back(record);
+        }
+      }
+      *contacts_ = std::move(kept);
+    }
     return detail::give(code, merger);
   }
   result<void> bounce(ias15& ias, std::size_t a, std::size_t b, double restitution) {
@@ -2623,7 +2770,14 @@ class system {
 
  private:
   using system_core = detail::core<::myb_system, detail::system_deleter>;
-  explicit system(std::shared_ptr<system_core> made) noexcept : core_(std::move(made)) {}
+  // A contact in place: what sizes the deflections of its points.
+  struct contact_record {
+    std::size_t body;
+    std::size_t ground;
+    std::size_t points;
+  };
+  explicit system(std::shared_ptr<system_core> made)
+      : core_(std::move(made)), contacts_(std::make_shared<std::vector<contact_record>>()) {}
 
   result<void> kept_if(status code, std::shared_ptr<const void> owner) {
     if (code == MYB_OK) {
@@ -2633,6 +2787,7 @@ class system {
   }
 
   std::shared_ptr<system_core> core_;
+  std::shared_ptr<std::vector<contact_record>> contacts_; // shared by the copies, as the system
 };
 
 // ---- Estimation ---------------------------------------------------------------------------------

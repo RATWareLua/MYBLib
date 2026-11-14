@@ -69,6 +69,7 @@ module Myb
   , module Myb.Conjunction
   , module Myb.Uncertainty
   , module Myb.Attitude
+  , module Myb.Contact
   , module Myb.Observe
   , module Myb.Files
   , module Myb.Ck
@@ -76,6 +77,7 @@ module Myb
   ) where
 
 import Myb.Attitude
+import Myb.Contact
 import Myb.Ck
 import Myb.Conjunction
 import Myb.Cr3bp

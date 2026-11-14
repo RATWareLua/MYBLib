@@ -746,6 +746,46 @@ class ForceModel(_Owner):
     def enabled(self, index):
         return lib.myb_force_model_enabled(self.pointer, int(index)) != 0
 
+    _break_schemes = {"retake": lib.MYB_BREAKS_RETAKE, "predict": lib.MYB_BREAKS_PREDICT}
+
+    def add_break(self, g):
+        """A break of the force (myb_force_model_add_break): where g(t, y) changes sign the
+        force is continuous but not smooth, and no step of an integrator straddles it. g: a
+        callable g(t, state) -> float, or a Provider of a myb_break_function."""
+        if isinstance(g, Provider):
+            provider = g
+        else:
+            calls = self._calls
+
+            @ffi.callback("double(void*, double, const double*)")
+            def function(context, t, y):
+                try:
+                    return float(g(t, tuple(y[0:6])))
+                except BaseException as error:  # noqa: B902 - nothing may cross the C code
+                    calls.failed(error)
+                    return float("nan")
+
+            provider = Provider(function, ffi.NULL, g)
+        _check(lib.myb_force_model_add_break(self.pointer, provider.function, provider.context))
+        self._kept.append(provider)
+
+    @property
+    def break_count(self):
+        return lib.myb_force_model_break_count(self.pointer)
+
+    def set_break_scheme(self, scheme):
+        """How the integrators of an Orbit meet the breaks: "retake" (the default) or
+        "predict" (lib.MYB_BREAKS_RETAKE, lib.MYB_BREAKS_PREDICT)."""
+        value = self._break_schemes[scheme] if isinstance(scheme, str) else int(scheme)
+        if value not in self._break_schemes.values():
+            raise ValueError("no such scheme of breaks: %r" % (scheme,))
+        lib.myb_force_model_set_break_scheme(self.pointer, value)
+
+    @property
+    def break_scheme(self):
+        """lib.MYB_BREAKS_RETAKE or lib.MYB_BREAKS_PREDICT."""
+        return lib.myb_force_model_break_scheme(self.pointer)
+
     def add_parameter(self, name, value, step, *kept):
         """A parameter for the variational equations and the estimators: value is a double*
         (cdata: ffi.new("double*", x), or ffi.addressof(model.term_context(k), "member"))
@@ -775,13 +815,17 @@ class Orbit(_Owner):
     """One object under a force model (myb/orbit.h): states at the times asked for, events.
 
     epsilon: the precision of IAS15 (0: 1e-10); variational: also integrate the transition
-    matrix, for partials(); integrator: "ias15" or "dop853" (with rtol, atol)."""
+    matrix, for partials(); integrator: "ias15" or "dop853" (with rtol, atol); timescale: of
+    the steps of IAS15, "acceleration" (the default) or "jerk" (an acceleration that passes
+    through zero: a contact), or lib.MYB_IAS15_TIMESCALE_*."""
 
     _destroy = staticmethod(lib.myb_orbit_destroy)
     _integrators = {"ias15": lib.MYB_ORBIT_IAS15, "dop853": lib.MYB_ORBIT_DOP853}
+    _timescales = {"acceleration": lib.MYB_IAS15_TIMESCALE_ACCELERATION,
+                   "jerk": lib.MYB_IAS15_TIMESCALE_JERK}
 
     def __init__(self, model, epsilon=0.0, h_max=0.0, max_steps=0, variational=False,
-                 integrator="ias15", rtol=0.0, atol=0.0):
+                 integrator="ias15", rtol=0.0, atol=0.0, timescale="acceleration"):
         options = ffi.new("myb_orbit_options*")
         options.epsilon = float(epsilon)
         options.h_max = float(h_max)
@@ -790,6 +834,8 @@ class Orbit(_Owner):
         options.integrator = self._integrators[integrator]
         options.rtol = float(rtol)
         options.atol = float(atol)
+        options.timescale = (self._timescales[timescale] if isinstance(timescale, str)
+                             else int(timescale))
         out = ffi.new("myb_orbit**")
         _check(lib.myb_orbit_create(model.pointer, options, ffi.NULL, out))
         super().__init__(out[0])

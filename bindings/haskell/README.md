@@ -109,12 +109,12 @@ needs only `base`. `ExceptT` only carries the `Either` of each call: nothing is 
 | `Myb.Ephemeris` | `Ephemeris`: `loadEphemerisFile`, `ephemerisState`, `segments` |
 | `Myb.Gravity` | `GravityField`: `newGravityField`, `loadIcgemFile` |
 | `Myb.Environment` | `Environment`, `Body`: `addOrigin`, `addFromEphemeris`, `addWith` (a Haskell provider), `bodyState` |
-| `Myb.Force` | `ForceModel`: `addPointMass`, `addThirdBody`, `addField`, `addRadiation`, `addDrag`, `addSchwarzschild`, `addTerm` (a Haskell term), `addRaw`, `acceleration` |
-| `Myb.Orbit` | `Orbit`: `start`, `stateAt`, `statesAt`, `nextEvent` (a Haskell event), `kick`, `partials` |
+| `Myb.Force` | `ForceModel`: `addPointMass`, `addThirdBody`, `addField`, `addRadiation`, `addDrag`, `addSchwarzschild`, `addTerm` (a Haskell term), `addRaw`, `acceleration`, `setBreakScheme` (`BreaksRetake`, `BreaksPredict`) |
+| `Myb.Orbit` | `Orbit`: `start`, `stateAt`, `statesAt`, `nextEvent` (a Haskell event), `kick`, `partials`; `OrbitOptions` with the `timescale` of IAS15 (`TimescaleJerk` for a contact) |
 | `Myb.Message` | OEM written (with covariances) and read (header, states, accelerations, covariances, from text or a file); OPM and OMM parsed and written (`parseOpm`, `opmText`, `parseOmm`, `ommText`); OCM read (blocks, values, lines, trajectory states) and written (`writeOcm`, `ocmFormatLine`) |
 | `Myb.Source` | providers: `fromEphemeris` (a body of an SPK set, passed as its own provider of C), `fromFunction` (a Haskell function), `fromC`; `orientationFunction`, `orientationC` |
 | `Myb.NBody` | `NBody`: `accelerations`, `accelerationsXV`, `setInteraction`, `setRelativity`, `invariants`, `pnInvariants`, `setApproximation` (FMM), `setPool`; `Wh` (Wisdom-Holman): `whStart`, `whStep`, `whIntegrate`, `whState`, `whDense`, `whStatistics` |
-| `Myb.System` | `System`: `setOrientation`, `setField`, `setRotation`, `setTide`, `addFieldPair`, `addFigures`, `addTide`, `addDistortion`, `addPnPair`, `addAction` (a Haskell action), `addLightAction`, `addFrameDragging`, `setMassRate`, `addGuided`, `addContact`, `systemAcceleration`, `systemInertia`, `systemPartials`, the (un)packing of rotations and spins; `SystemIntegrator` (IAS15); `advance`, `merge`, `bounce` |
+| `Myb.System` | `System`: `setOrientation`, `setField`, `setRotation`, `setTide`, `addFieldPair`, `addFigures`, `addTide`, `addDistortion`, `addPnPair`, `addAction` (a Haskell action), `addLightAction`, `addFrameDragging`, `setMassRate`, `addGuided`, `addContact`, `systemAcceleration`, `systemInertia`, `systemPartials`, the (un)packing of rotations, spins and the springs of a friction that sticks (`packContact`, `unpackContact`); `pnOrders` (the terms of a PN pair by name, `PnSs3`, `PnSorr5`, `PnSotail`, `PnTailx` among them); `SystemIntegrator` (IAS15); `advance`, `merge`, `bounce` |
 | `Myb.Estimation` | `Station`, `Measure` (ready-made, with the light time, off the centre of mass, or a Haskell function), `evaluateMeasure`, `Observation`, `fitOrbit`, `Filter` (`filterStart`, `filterUpdate`, `filterPredict`, `filterSmooth`, `filterStep`, the shifts) |
 | `Myb.Cr3bp` | Lagrange points, Jacobi, `correct`, `monodromy`, `stability`, `manifold`, `richardson`, the families (`orbitCorrect`, `orbitContinue`), tori (`torusFromOrbit`, `torusContinue`, `torusState`, `torusStability`, `torusManifold`), `propagate` to a section, the frames of real bodies, `addCr3bp` (the term) |
 | `Myb.Transfer` | `bplane`, the patched conics, `shoot` (a Haskell residual), `lambert` |
@@ -124,6 +124,7 @@ needs only `base`. `ExceptT` only carries the `Either` of each call: nothing is 
 | `Myb.Relative` | relative states, their transition matrices, `rendezvous`, relative orbital elements |
 | `Myb.Conjunction` | `approachFind` (two providers), `approachOrbits`, the plane of the encounter, the probabilities, `conjunctionFind`, long encounters |
 | `Myb.Uncertainty` | `Variational`, `covarianceTransform`, `covarianceRtn`, `Rng`, `sampleStatistics` |
+| `Myb.Contact` | the nearest point of a surface, `contactForce`, `contactForceStick` (the friction that sticks: deflections in, their rates out), restitution and damping; `Friction` for the field `kind` of a law |
 | `Myb.Attitude` | quaternions, Euler angles, principal axes, rigid and core-mantle rates, torques, the exact free rotation, `rotationSplit` (a Haskell torque) |
 | `Myb.Observe` | `lightTime`, `roundTrip`, the Shapiro delay, aberration, deflection, directions, plasma |
 | `Myb.Files` | numbers read and printed, tables, `SpkWriter` (types 2, 3, 9, 13, raw), SP3 read and written |
@@ -154,7 +155,7 @@ meant to be (the measurements, `myb_cr3bp_term`, `myb_thrust_acceleration`, `myb
 `myb_system_light_action`, `myb_orientation_ck`, `myb_spk_body_state`). What has no upper layer
 is taken through `Myb.C`: the headers outside these (the objects of myb/frames.h — CIP, EOP,
 equinox, WGCCRE, PCK, the graph of frames — whose array forms take them as `ForeignPtr`s; the
-surface models and meshes of surface.h; the force functions of force.h; contact.h, site.h,
+surface models and meshes of surface.h; the force functions of force.h; the contact term of contact.h, site.h,
 weather.h, events.h, integ.h beyond the integrator of a system, grav.h and env.h beyond the
 path above), the libraries of ext/ other than sgp4, and the allocators: the upper layer always
 takes the default one.
@@ -233,7 +234,7 @@ then the example. Everything cabal writes, its configuration, store and logs and
 on Windows) chooses the library; it is copied alone into `build/<preset>/haskell/lib`, and what
 the test writes (an SPK file read back) goes to `build/<preset>/haskell/output`.
 
-The test suite (309 checks) holds: the low orbit of the example bit for bit with the C calls;
+The test suite (333 checks) holds: the low orbit of the example bit for bit with the C calls;
 failures as values with the status and the line of a parser; terms, providers and events as
 Haskell functions, and their failures; the radiation and relativity terms; that a model keeps
 its environment alive and both are finalized once dropped (watched through their finalizers);
@@ -252,4 +253,6 @@ Haskell providers, random numbers, sample statistics; quaternions, Euler angles,
 rotation, the splitting integrator; aberration, a direction, a light time to an SPK body;
 numbers, a table, SPK and CK files written byte for byte and read back, SP3, OPM, OCM, an OEM
 with a covariance, a CK pointing, a clock, the variables of a pool, SGP4, a TLE through an OMM;
-the array forms against their single forms, and the element that failed.
+the array forms against their single forms, and the element that failed; the scheme of the
+breaks and an orbit with the timescale of the jerk, the force of a friction that sticks and of
+the smooth one, the springs of a contact packed and unpacked in a system, the new PN terms.

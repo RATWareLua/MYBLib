@@ -6,6 +6,8 @@ module Myb.Orbit
   , Integrator (..)
   , OrbitOptions (..)
   , defaultOrbitOptions
+  , Timescale (..)
+  , timescaleCode
   , Direction (..)
   , newOrbit
   , start
@@ -54,11 +56,27 @@ data OrbitOptions = OrbitOptions
   , -- | DOP853: the relative tolerance (0: 1e-12) and the absolute one (0: 1e-9).
     rtol :: !Double
   , atol :: !Double
+  , -- | IAS15: the timescale of its step; TimescaleJerk for an acceleration that passes
+    -- through zero (a contact)
+    timescale :: !Timescale
   }
   deriving (Eq, Show)
 
 defaultOrbitOptions :: OrbitOptions
-defaultOrbitOptions = OrbitOptions 0 0 0 False Ias15 0 0
+defaultOrbitOptions = OrbitOptions 0 0 0 False Ias15 0 0 TimescaleAcceleration
+
+-- | The timescale that sets the step of IAS15 (myb/integ.h).
+data Timescale
+  = -- | tau of the acceleration (Pham, Rein and Spiegel; the default)
+    TimescaleAcceleration
+  | -- | the larger of tau of the acceleration and tau_1 of its rate
+    TimescaleJerk
+  deriving (Eq, Show)
+
+-- | The value of the field `timescale` of myb_ias15_options and myb_orbit_options.
+timescaleCode :: Timescale -> C.Myb_ias15_timescale
+timescaleCode TimescaleAcceleration = C.MYB_IAS15_TIMESCALE_ACCELERATION
+timescaleCode TimescaleJerk = C.MYB_IAS15_TIMESCALE_JERK
 
 -- | Which zeros of an event function count.
 data Direction = Any | Rising | Falling
@@ -86,6 +104,7 @@ newOrbit model options = do
             Rkn12 -> C.MYB_ORBIT_RKN12
         , C.myb_orbit_options'rtol = coerce (rtol options)
         , C.myb_orbit_options'atol = coerce (atol options)
+        , C.myb_orbit_options'timescale = timescaleCode (timescale options)
         }
 
 -- | The object is at the state at t0 and will be asked about up to tEnd (before t0: backwards).

@@ -26,6 +26,8 @@ module Myb.System
   , addDistortion
   , addPnPair
   , C.Myb_system_pn_pair (..)
+  , PnOrder (..)
+  , pnOrders
   , SystemView (..)
   , addAction
   , addLightAction
@@ -41,6 +43,8 @@ module Myb.System
   , unpackRotation
   , packSpins
   , unpackSpins
+  , packContact
+  , unpackContact
   , systemAcceleration
   , systemInertia
   , SystemPartials (..)
@@ -72,8 +76,9 @@ module Myb.System
   , integratorPtr
   ) where
 
+import Data.Bits ((.|.))
 import Data.Coerce (coerce)
-import Foreign.C.Types (CDouble (..), CSize)
+import Foreign.C.Types (CDouble (..), CSize, CUInt)
 import Foreign.ForeignPtr (ForeignPtr, mallocForeignPtrArray, withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (allocaArray, peekArray, pokeArray, withArray)
@@ -157,6 +162,52 @@ addTide system body raiser point = call system $ \s -> C.myb_system_add_tide s (
 -- | The raiser distorts the body, whose rotation is integrated.
 addDistortion :: System -> Int -> Int -> IO (Result ())
 addDistortion system body raiser = call system $ \s -> C.myb_system_add_distortion s (index body) (index raiser)
+
+-- | The terms of a PN pair (MYB_PN_* of myb/rel.h), by name.
+data PnOrder
+  = Pn1
+  | Pn2
+  | Pn25
+  | Pn3
+  | Pn35
+  | PnSo
+  | PnSs
+  | Pn4
+  | Pn4rr
+  | PnSo25
+  | PnSo35
+  | PnSorr
+  | -- | spin-spin at next-to-leading order (1/c^6), with its precession
+    PnSs3
+  | -- | spin-orbit radiation reaction at next-to-leading order (1/c^10)
+    PnSorr5
+  | -- | the spin-orbit part of the dissipative tail, quasi-circular orbits
+    PnSotail
+  | -- | the tails of Pn4 and Pn4rr on any osculating conic
+    PnTailx
+  deriving (Eq, Show, Enum, Bounded)
+
+-- | The field `orders` of a PN pair: @zero {myb_system_pn_pair'orders = pnOrders [Pn2, Pn25]}@.
+pnOrders :: [PnOrder] -> CUInt
+pnOrders = foldr ((.|.) . bit') 0
+  where
+    bit' o = case o of
+      Pn1 -> C.MYB_PN_1
+      Pn2 -> C.MYB_PN_2
+      Pn25 -> C.MYB_PN_25
+      Pn3 -> C.MYB_PN_3
+      Pn35 -> C.MYB_PN_35
+      PnSo -> C.MYB_PN_SO
+      PnSs -> C.MYB_PN_SS
+      Pn4 -> C.MYB_PN_4
+      Pn4rr -> C.MYB_PN_4RR
+      PnSo25 -> C.MYB_PN_SO25
+      PnSo35 -> C.MYB_PN_SO35
+      PnSorr -> C.MYB_PN_SORR
+      PnSs3 -> C.MYB_PN_SS3
+      PnSorr5 -> C.MYB_PN_SORR5
+      PnSotail -> C.MYB_PN_SOTAIL
+      PnTailx -> C.MYB_PN_TAILX
 
 -- | The terms beyond 1PN of two bodies.
 addPnPair :: System -> Int -> Int -> C.Myb_system_pn_pair -> IO (Result ())
@@ -280,6 +331,22 @@ unpackSpins system@(System p _) pair y = do
   n <- systemCoordinates system
   requireLength (2 * n) y $ withForeignPtr p $ \s -> withDoubles y $ \py ->
     fill2 (\p1 p2 -> C.myb_system_unpack_spins s (index pair) py (castPtr p1) (castPtr p2))
+
+-- | The deflections of the springs of a contact with the friction that sticks (in the order of
+-- 'addContact'; one per point, axes of its surface) into a state. Returns the state changed.
+packContact :: System -> Int -> [Vec3] -> [Double] -> IO (Result [Double])
+packContact system@(System p _) contact deflections y = do
+  n <- systemCoordinates system
+  requireLength (2 * n) y $ withForeignPtr p $ \s -> withVecs deflections $ \pd -> withDoubles y $ \py -> do
+    code <- C.myb_system_pack_contact s (index contact) pd py
+    andThen code (Right <$> peekDoubles (2 * n) py)
+
+-- | The deflections of the springs of a contact (of the number of points given) out of a state.
+unpackContact :: System -> Int -> Int -> [Double] -> IO (Result [Vec3])
+unpackContact system@(System p _) contact points y = do
+  n <- systemCoordinates system
+  requireLength (2 * n) y $ withForeignPtr p $ \s -> withDoubles y $ \py ->
+    fillArray points (C.myb_system_unpack_contact s (index contact) py . castPtr)
 
 -- | The second derivatives of the coordinates at t for the coordinates and their rates.
 systemAcceleration :: System -> Double -> [Double] -> [Double] -> IO (Result [Double])

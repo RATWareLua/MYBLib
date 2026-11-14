@@ -35,6 +35,7 @@ library
     Myb.Attitude
     Myb.Ck
     Myb.Conjunction
+    Myb.Contact
     Myb.Cr3bp
     Myb.Environment
     Myb.Ephemeris
