@@ -575,18 +575,64 @@ static myb_status fail(myb_diag* diag, long number, const char* what) {
 
 /* ---- Values ---------------------------------------------------------------------------------- */
 
-/* A number, with an optional unit in brackets after it. */
-static myb_status number_of(const char* s, size_t n, double* value) {
-  if (n > 0 && s[n - 1] == ']') {
-    size_t open = n;
-    /* bound: the characters of the value */
-    while (open > 0 && s[open - 1] != '[') {
-      --open;
+/* The units a value may state in brackets after its number, as the standard spells them
+ * (CCSDS 502.0-B-2, tables 3-3 and 4-3; 502.0-B-3 for the drag term), compared without regard
+ * to case; a list ends with NULL. The numbers of a line of data state none. */
+static const char* const unit_km[] = {"km", NULL};
+static const char* const unit_km_s[] = {"km/s", NULL};
+static const char* const unit_km2[] = {"km**2", NULL};
+static const char* const unit_km2_s[] = {"km**2/s", NULL};
+static const char* const unit_km2_s2[] = {"km**2/s**2", NULL};
+static const char* const unit_gm[] = {"km**3/s**2", NULL};
+static const char* const unit_deg[] = {"deg", NULL};
+static const char* const unit_kg[] = {"kg", NULL};
+static const char* const unit_m2[] = {"m**2", NULL};
+static const char* const unit_s[] = {"s", NULL};
+static const char* const unit_rev_day[] = {"rev/day", NULL};
+static const char* const unit_rev_day2[] = {"rev/day**2", NULL};
+static const char* const unit_rev_day3[] = {"rev/day**3", NULL};
+static const char* const unit_bstar[] = {"1/ER", "1/[Earth radii]", NULL};
+static const char* const unit_none[] = {"n/a", NULL};
+
+/* Whether s[0 .. n), blanks at its ends trimmed, is one of the units. */
+static int unit_listed(const char* s, size_t n, const char* const* units) {
+  while (n > 0 && blank(s[0])) {
+    ++s;
+    --n;
+  }
+  while (n > 0 && blank(s[n - 1])) {
+    --n;
+  }
+  /* bound: the units of a list (two at most) */
+  for (size_t k = 0; units != NULL && units[k] != NULL; ++k) {
+    int same = strlen(units[k]) == n;
+    for (size_t i = 0; i < n && same; ++i) {
+      const char a = s[i] >= 'A' && s[i] <= 'Z' ? (char)(s[i] - 'A' + 'a') : s[i];
+      const char b = units[k][i] >= 'A' && units[k][i] <= 'Z' ? (char)(units[k][i] - 'A' + 'a')
+                                                               : units[k][i];
+      same = a == b;
     }
-    if (open == 0) {
+    if (same) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* A number, with a unit in brackets after it that is one of `units` (NULL: no unit may be
+ * stated). A unit other than the keyword's is refused, never converted: "7000 [m]" read as
+ * 7000 km was a thousand times wrong. */
+static myb_status number_of(const char* s, size_t n, const char* const* units, double* value) {
+  if (n > 0 && s[n - 1] == ']') {
+    size_t open = 0;
+    /* the unit from the first bracket: 1/[Earth radii] holds one */
+    while (open < n && s[open] != '[') { /* bound: the characters of the value */
+      ++open;
+    }
+    if (open + 1 >= n || !unit_listed(s + open + 1, n - open - 2, units)) {
       return MYB_E_FORMAT;
     }
-    n = open - 1;
+    n = open;
     while (n > 0 && blank(s[n - 1])) {
       --n;
     }
@@ -613,7 +659,7 @@ static int to_si(double value, double scale, double* out) {
 
 static myb_status integer_of(const char* s, size_t n, long* value) {
   double v = 0.0;
-  if (number_of(s, n, &v) != MYB_OK || v != floor(v) || fabs(v) > 2.0e9) {
+  if (number_of(s, n, unit_none, &v) != MYB_OK || v != floor(v) || fabs(v) > 2.0e9) {
     return MYB_E_FORMAT;
   }
   *value = (long)v;
@@ -1054,7 +1100,7 @@ static myb_status data_line(const char* s, size_t n, myb_calendar* epoch, double
   *count = 0;
   /* bound: the words of the line */
   while (next_word(s, n, &at, &start, &length)) {
-    if (*count == 9 || number_of(s + start, length, &values[*count]) != MYB_OK) {
+    if (*count == 9 || number_of(s + start, length, NULL, &values[*count]) != MYB_OK) {
       return MYB_E_FORMAT;
     }
     ++*count;
@@ -1147,7 +1193,7 @@ static myb_status oem_pass(myb_oem* oem, size_t size, int fill, myb_diag* diag) 
       while (next_word(oem->text + from, extent, &at, &start, &length)) {
         double v = 0.0;
         double si = 0.0;
-        if (filled == 21 || number_of(oem->text + from + start, length, &v) != MYB_OK ||
+        if (filled == 21 || number_of(oem->text + from + start, length, NULL, &v) != MYB_OK ||
             !to_si(v, covariance_unit, &si)) {
           return fail(diag, l.number, "OEM: not the numbers of a covariance matrix");
         }
@@ -1511,12 +1557,15 @@ myb_status myb_oem_write(const myb_oem_data* data, char* buffer, size_t size, si
 
 /* ---- OPM ------------------------------------------------------------------------------------- */
 
-/* A number of a parameter message, scaled to SI. */
-static myb_status scaled(const cursor* c, const line* l, double scale, double* out,
-                         myb_diag* diag) {
+/* A number of a parameter message in the unit of its keyword (any unit it states must be one
+ * of `units`), scaled to SI. */
+static myb_status scaled(const cursor* c, const line* l, double scale, const char* const* units,
+                         double* out, myb_diag* diag) {
   double v = 0.0;
-  if (number_of(c->text + l->value, l->value_length, &v) != MYB_OK) {
-    return fail(diag, l->number, "not a number");
+  if (number_of(c->text + l->value, l->value_length, units, &v) != MYB_OK) {
+    const int bracket = memchr(c->text + l->value, '[', l->value_length) != NULL;
+    return fail(diag, l->number,
+                bracket ? "not a number in the unit of its keyword" : "not a number");
   }
   if (!to_si(v, scale, out)) {
     return fail(diag, l->number, "a number beyond the range of its quantity in SI");
@@ -1562,8 +1611,12 @@ static int covariance_keyword(const cursor* c, const line* l, double unit,
   }
   for (int k = 0; k < 21; ++k) {
     if (key_is(c, l, covariance_keys[k])) {
+      /* km**2, km**2/s or km**2/s**2: a position, one, or two velocities in the keyword */
+      const char* first = strstr(covariance_keys[k], "_DOT");
+      const int velocities = first == NULL ? 0 : strstr(first + 4, "_DOT") == NULL ? 1 : 2;
+      const char* const* units[3] = {unit_km2, unit_km2_s, unit_km2_s2};
       double v = 0.0;
-      *status = scaled(c, l, unit, &v, diag);
+      *status = scaled(c, l, unit, units[velocities], &v, diag);
       covariance_set(covariance, k, v);
       *seen |= 1u << (unsigned)k;
       return 1;
@@ -1630,41 +1683,41 @@ myb_status myb_opm_parse(const char* text, size_t size, myb_opm* opm, myb_diag* 
       status = dated(&c, &l, &o.epoch, diag);
       seen |= S_EPOCH;
     } else if (key_is(&c, &l, "SEMI_MAJOR_AXIS")) {
-      status = scaled(&c, &l, metres_per_km, &o.semi_major_axis, diag);
+      status = scaled(&c, &l, metres_per_km, unit_km, &o.semi_major_axis, diag);
       seen |= S_ELEMENTS;
     } else if (key_is(&c, &l, "ECCENTRICITY")) {
-      status = scaled(&c, &l, 1.0, &o.eccentricity, diag);
+      status = scaled(&c, &l, 1.0, unit_none, &o.eccentricity, diag);
       seen |= S_ELEMENTS << 1;
     } else if (key_is(&c, &l, "INCLINATION")) {
-      status = scaled(&c, &l, degree, &o.inclination, diag);
+      status = scaled(&c, &l, degree, unit_deg, &o.inclination, diag);
       seen |= S_ELEMENTS << 2;
     } else if (key_is(&c, &l, "RA_OF_ASC_NODE")) {
-      status = scaled(&c, &l, degree, &o.ra_of_asc_node, diag);
+      status = scaled(&c, &l, degree, unit_deg, &o.ra_of_asc_node, diag);
       seen |= S_ELEMENTS << 3;
     } else if (key_is(&c, &l, "ARG_OF_PERICENTER")) {
-      status = scaled(&c, &l, degree, &o.arg_of_pericenter, diag);
+      status = scaled(&c, &l, degree, unit_deg, &o.arg_of_pericenter, diag);
       seen |= S_ELEMENTS << 4;
     } else if (key_is(&c, &l, "TRUE_ANOMALY") || key_is(&c, &l, "MEAN_ANOMALY")) {
-      status = scaled(&c, &l, degree, &o.anomaly, diag);
+      status = scaled(&c, &l, degree, unit_deg, &o.anomaly, diag);
       o.anomaly_is_mean = key_is(&c, &l, "MEAN_ANOMALY");
       seen |= S_ELEMENTS << 5;
     } else if (key_is(&c, &l, "GM")) {
-      status = scaled(&c, &l, gm_unit, &o.gm, diag);
+      status = scaled(&c, &l, gm_unit, unit_gm, &o.gm, diag);
       seen |= S_ELEMENTS << 6;
     } else if (key_is(&c, &l, "MASS")) {
-      status = scaled(&c, &l, 1.0, &o.mass, diag);
+      status = scaled(&c, &l, 1.0, unit_kg, &o.mass, diag);
       o.has_spacecraft = 1;
     } else if (key_is(&c, &l, "SOLAR_RAD_AREA")) {
-      status = scaled(&c, &l, 1.0, &o.solar_rad_area, diag);
+      status = scaled(&c, &l, 1.0, unit_m2, &o.solar_rad_area, diag);
       o.has_spacecraft = 1;
     } else if (key_is(&c, &l, "SOLAR_RAD_COEFF")) {
-      status = scaled(&c, &l, 1.0, &o.solar_rad_coeff, diag);
+      status = scaled(&c, &l, 1.0, unit_none, &o.solar_rad_coeff, diag);
       o.has_spacecraft = 1;
     } else if (key_is(&c, &l, "DRAG_AREA")) {
-      status = scaled(&c, &l, 1.0, &o.drag_area, diag);
+      status = scaled(&c, &l, 1.0, unit_m2, &o.drag_area, diag);
       o.has_spacecraft = 1;
     } else if (key_is(&c, &l, "DRAG_COEFF")) {
-      status = scaled(&c, &l, 1.0, &o.drag_coeff, diag);
+      status = scaled(&c, &l, 1.0, unit_none, &o.drag_coeff, diag);
       o.has_spacecraft = 1;
     } else if (key_is(&c, &l, "MAN_EPOCH_IGNITION")) {
       if (o.maneuver_count == MYB_OPM_MAX_MANEUVERS) {
@@ -1677,23 +1730,24 @@ myb_status myb_opm_parse(const char* text, size_t size, myb_opm* opm, myb_diag* 
         return fail(diag, l.number, "OPM: a manoeuvre must start with MAN_EPOCH_IGNITION");
       }
       if (key_is(&c, &l, "MAN_DURATION")) {
-        status = scaled(&c, &l, 1.0, &man->duration, diag);
+        status = scaled(&c, &l, 1.0, unit_s, &man->duration, diag);
       } else if (key_is(&c, &l, "MAN_DELTA_MASS")) {
-        status = scaled(&c, &l, 1.0, &man->delta_mass, diag);
+        status = scaled(&c, &l, 1.0, unit_kg, &man->delta_mass, diag);
       } else if (key_is(&c, &l, "MAN_REF_FRAME")) {
         status = named(&c, &l, man->ref_frame, diag);
       } else if (key_is(&c, &l, "MAN_DV_1")) {
-        status = scaled(&c, &l, metres_per_km, &man->dv[0], diag);
+        status = scaled(&c, &l, metres_per_km, unit_km_s, &man->dv[0], diag);
       } else if (key_is(&c, &l, "MAN_DV_2")) {
-        status = scaled(&c, &l, metres_per_km, &man->dv[1], diag);
+        status = scaled(&c, &l, metres_per_km, unit_km_s, &man->dv[1], diag);
       } else if (key_is(&c, &l, "MAN_DV_3")) {
-        status = scaled(&c, &l, metres_per_km, &man->dv[2], diag);
+        status = scaled(&c, &l, metres_per_km, unit_km_s, &man->dv[2], diag);
       }
     } else if (!covariance_keyword(&c, &l, covariance_unit, o.cov_ref_frame, o.covariance,
                                    &covariance_seen, &status, diag)) {
       for (int i = 0; i < 6; ++i) {
         if (key_is(&c, &l, state_keys[i])) {
-          status = scaled(&c, &l, metres_per_km, &o.state[i], diag);
+          status = scaled(&c, &l, metres_per_km, i < 3 ? unit_km : unit_km_s, &o.state[i],
+                          diag);
           seen |= (unsigned)S_STATE << (unsigned)i;
         }
       }
@@ -1899,29 +1953,29 @@ myb_status myb_omm_parse(const char* text, size_t size, myb_omm* omm, myb_diag* 
       status = dated(&c, &l, &o.epoch, diag);
       seen |= M_EPOCH;
     } else if (key_is(&c, &l, "MEAN_MOTION")) {
-      status = scaled(&c, &l, 1.0, &o.mean_motion, diag);
+      status = scaled(&c, &l, 1.0, unit_rev_day, &o.mean_motion, diag);
       o.has_mean_motion = 1;
       seen |= M_MOTION;
     } else if (key_is(&c, &l, "SEMI_MAJOR_AXIS")) {
-      status = scaled(&c, &l, 1.0, &o.semi_major_axis, diag);
+      status = scaled(&c, &l, 1.0, unit_km, &o.semi_major_axis, diag);
       seen |= M_AXIS;
     } else if (key_is(&c, &l, "ECCENTRICITY")) {
-      status = scaled(&c, &l, 1.0, &o.eccentricity, diag);
+      status = scaled(&c, &l, 1.0, unit_none, &o.eccentricity, diag);
       seen |= M_ECC;
     } else if (key_is(&c, &l, "INCLINATION")) {
-      status = scaled(&c, &l, 1.0, &o.inclination, diag);
+      status = scaled(&c, &l, 1.0, unit_deg, &o.inclination, diag);
       seen |= M_INC;
     } else if (key_is(&c, &l, "RA_OF_ASC_NODE")) {
-      status = scaled(&c, &l, 1.0, &o.ra_of_asc_node, diag);
+      status = scaled(&c, &l, 1.0, unit_deg, &o.ra_of_asc_node, diag);
       seen |= M_NODE;
     } else if (key_is(&c, &l, "ARG_OF_PERICENTER")) {
-      status = scaled(&c, &l, 1.0, &o.arg_of_pericenter, diag);
+      status = scaled(&c, &l, 1.0, unit_deg, &o.arg_of_pericenter, diag);
       seen |= M_ARG;
     } else if (key_is(&c, &l, "MEAN_ANOMALY")) {
-      status = scaled(&c, &l, 1.0, &o.mean_anomaly, diag);
+      status = scaled(&c, &l, 1.0, unit_deg, &o.mean_anomaly, diag);
       seen |= M_ANOMALY;
     } else if (key_is(&c, &l, "GM")) {
-      status = scaled(&c, &l, 1.0, &o.gm, diag);
+      status = scaled(&c, &l, 1.0, unit_gm, &o.gm, diag);
       o.has_gm = 1;
     } else if (key_is(&c, &l, "EPHEMERIS_TYPE")) {
       long v = 0;
@@ -1956,13 +2010,13 @@ myb_status myb_omm_parse(const char* text, size_t size, myb_omm* omm, myb_diag* 
       }
       o.has_tle = 1;
     } else if (key_is(&c, &l, "BSTAR")) {
-      status = scaled(&c, &l, 1.0, &o.bstar, diag);
+      status = scaled(&c, &l, 1.0, unit_bstar, &o.bstar, diag);
       o.has_tle = 1;
     } else if (key_is(&c, &l, "MEAN_MOTION_DOT")) {
-      status = scaled(&c, &l, 1.0, &o.mean_motion_dot, diag);
+      status = scaled(&c, &l, 1.0, unit_rev_day2, &o.mean_motion_dot, diag);
       o.has_tle = 1;
     } else if (key_is(&c, &l, "MEAN_MOTION_DDOT")) {
-      status = scaled(&c, &l, 1.0, &o.mean_motion_ddot, diag);
+      status = scaled(&c, &l, 1.0, unit_rev_day3, &o.mean_motion_ddot, diag);
       o.has_tle = 1;
     } else {
       (void)covariance_keyword(&c, &l, 1.0, o.cov_ref_frame, o.covariance, &covariance_seen,
@@ -2376,14 +2430,14 @@ myb_status myb_ocm_line(const myb_ocm* ocm, myb_ocm_kind kind, size_t index, siz
   myb_calendar label = {0};
   double seconds = 0.0;
   const int dated_line = calendar_of(s + start, length, &label) == MYB_OK;
-  if (!dated_line && number_of(s + start, length, &seconds) != MYB_OK) {
+  if (!dated_line && number_of(s + start, length, NULL, &seconds) != MYB_OK) {
     return MYB_E_FORMAT;
   }
   size_t found = 0;
   /* bound: the words of the line */
   while (next_word(s, n, &at, &start, &length)) {
     double v = 0.0;
-    if (number_of(s + start, length, &v) != MYB_OK) {
+    if (number_of(s + start, length, NULL, &v) != MYB_OK) {
       return MYB_E_FORMAT;
     }
     if (found < max) {

@@ -68,7 +68,10 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tle_parse(const char* line1, const char
                                                unsigned flags, myb_tle* tle, myb_diag* diag);
 
 /* The epoch as a UTC calendar date (the fraction of the day converted to seconds with one
- * rounding; the theory itself counts days since 1949 December 31 0h UTC). */
+ * rounding; the theory itself counts days since 1949 December 31 0h UTC). An epoch_day that
+ * is no moment of its year — below 1, from 366 (367 in a leap year), NaN; myb_tle_parse never
+ * gives one — is taken as the first instant of the year (below 1, NaN) or its last (above),
+ * so that the date is one of the calendar. */
 MYB_EXT_API void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc);
 
 /* The two lines of an element set, 69 characters each and a NUL, with their checksums: the
@@ -143,7 +146,9 @@ typedef struct myb_sgp4 {
 } myb_sgp4;
 
 /* Initialises from a parsed TLE. Errors: MYB_E_DOMAIN (eccentricity outside [0, 1), mean motion
- * <= 0, perigee below the surface). */
+ * <= 0, elements that are not finite, an epoch day that is no moment of its year; a perigee
+ * radius that is not positive). A perigee below the surface is no error: Vallado's revision
+ * removed that check of sgp4init (2006), and myb_sgp4_propagate reports the decay (code 6). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_init(const myb_tle* tle, myb_sgp4_gravity gravity,
                                                myb_sgp4_mode mode, myb_sgp4* sgp4);
 

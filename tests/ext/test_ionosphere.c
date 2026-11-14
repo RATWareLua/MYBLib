@@ -721,6 +721,31 @@ static void test_reviewed_edges(void) {
   printf("IONEX: reviewed edges of the reader and of the interpolation\n");
 }
 
+/* Reviewed: a header of a few lines asked for a grid of billions of values (here 87 501 x
+ * 90 001, 63 GB of densities) that the text, a character at least for each, cannot hold: the
+ * reader allocated it (or failed for want of memory) before it read a value. Refused. */
+static void test_counts(void) {
+  static char text[4096];
+  small_ionex(text, sizeof text, NULL, NULL, NULL, NULL, NULL, NULL);
+  char* latitudes = strstr(text, "    10.0 -10.0 -10.0");
+  char* longitudes = strstr(text, "  -180.0 180.0 180.0");
+  MT_CHECK(latitudes != NULL && longitudes != NULL);
+  if (latitudes == NULL || longitudes == NULL) {
+    return;
+  }
+  memcpy(latitudes, "    87.5 -87.5-0.002", 20);
+  memcpy(longitudes, "  -180.0 180.0 0.004", 20);
+  myb_ionex* maps = NULL;
+  myb_diag diag = {0};
+  const myb_status status = myb_ionex_load(text, strlen(text), NULL, &maps, &diag);
+  MT_CHECK(status == MYB_E_FORMAT && maps == NULL);
+  if (status != MYB_E_FORMAT) {
+    printf("  a grid larger than the text: status %d\n", (int)status);
+  }
+  myb_ionex_destroy(maps);
+  printf("IONEX: a grid larger than the file refused\n");
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_ionex();
@@ -728,5 +753,6 @@ int main(void) {
   test_orders();
   test_pierce_point();
   test_reviewed_edges();
+  test_counts();
   return mt_finish("test_ionosphere");
 }

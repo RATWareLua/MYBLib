@@ -459,12 +459,12 @@ static void test_clocks(void) {
          lines, different);
   MT_CHECK(lines == 37 && different == 0 && *a == '\0' && *b == '\0');
 
-  /* a sigma between two codes goes to the nearer; one too large for the field to its end */
+  /* a sigma between two codes goes to the nearer; the ends of the codes are written */
   sigmas[0] = 1e-3 * pow(1.25, 18.4);
   sigmas[1] = 1e-3 * pow(1.25, 18.6);
-  sigmas[2] = 1.0e9;
-  sigmas[3] = 0.4e-12;
-  accuracy[2] = 0.0005; /* less than the least the header can state: 2 mm */
+  sigmas[2] = 1e-3 * pow(1.25, 99.0);
+  sigmas[3] = 1e-12;
+  accuracy[2] = 0.002; /* the least the header states: 2 mm (0 is unknown) */
   MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_OK);
   myb_sp3* again = NULL;
   MT_CHECK(myb_sp3_load(text, length, NULL, &again, &diag) == MYB_OK);
@@ -477,6 +477,23 @@ static void test_clocks(void) {
     MT_CHECK(fabs(myb_sp3_accuracy(again, 2) - 0.002) < 1e-17);
     myb_sp3_destroy(again);
   }
+  /* reviewed: beyond the codes the writer wrote the end of them (1e9 m as 1.25^99 mm, 0.4 ps
+   * as 1 ps, 0.5 mm in the header as 2 mm): something else than it was given; refused */
+  sigmas[2] = 1.0e9;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  sigmas[2] = 1e-3 * pow(1.25, 99.0);
+  sigmas[3] = 0.4e-12;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  sigmas[3] = 1e-12;
+  sigmas[7] = 1e300;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  sigmas[7] = 0.0;
+  accuracy[2] = 0.0005;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  accuracy[2] = 1e300; /* 2^999 mm is the most */
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  accuracy[2] = 0.0;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_OK);
   /* what the fields cannot hold */
   clocks[0] = 1.0;
   MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);

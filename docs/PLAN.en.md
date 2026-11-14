@@ -537,6 +537,29 @@ those are the known limits of the release, each written in the passport of its m
   `0x22590af49224a138`); the prefix 18 and everything before phase 19 are unchanged. The
   derivatives of the system that the workload of phase 22 hashes stay those of the differences
   of propagations (an internal function keeps them).
+- **A review and an audit of the readers and writers.** The user reviewed `ck.c` and
+  `spk_writer.c` and found four defects — a type-5 window one tick past the end of its ticks, a
+  type-4 packet offset of zero that pointed before the segment, infinite ends of type-2
+  intervals accepted, duplicate interval starts accepted by the writer of type 5 — and then two
+  tails of the third (seconds per tick that the writer took and the reader refused; a speed whose
+  squares overflowed into a NaN turn with `MYB_OK`). They are instances of classes: addresses from
+  the content of a file not bounded by their segment; off-by-one at the edges of windows and
+  searches; values that must be finite or positive taken when they are not, and results with
+  `MYB_OK` that are not numbers; writers that take what their own readers refuse; and garbage
+  that reaches a `MYB_CHECK`. An audit of every reader and writer for these classes, file group
+  by file group, found and fixed 71 more: 15 in CK and SCLK, 31 in the message and data formats
+  (CCSDS, SP3, TLE and SGP4, IONEX, GPT3, the site files), 18 in the text kernels and small
+  parsers (numbers, tables, time scales, EOP, Poisson series, CIP, WGCCRE, TK frames, ICGEM, tides,
+  IGRF, space weather) and 7 groups in SPK and binary PCK; JB2008's readers had none. Each has a
+  regression case that fails without its fix; damaged inputs went into the corpora of the
+  harnesses, and the harnesses now require that what returns `MYB_OK` is finite and reads back.
+  As a safety net a word of a DAF outside the file is NaN in a release build (a debug build
+  stops), which every reader refuses. The directory sizes of SPK types 5, 8, 9, 12 and 13 at
+  multiples of 100 were checked against files written by CSPICE (`tests/data/spk/directory.bsp`):
+  the reader was right. Two behaviours are new: a query of SPK type 10 more than 2³² s from its
+  element set is `MYB_E_RANGE` (a damaged coverage made the deep-space resonance integrate for
+  days), and SGP4 elements far outside the catalogue are `MYB_E_DOMAIN` (they gave NaN). The
+  golden value and the comparisons with CSPICE are unchanged.
 
 Not done in the phase — and, the phase being the last, left as known limits of the release,
 each written in the passport of its model (by the rule of 2026-11-11 nothing is dropped): the
@@ -546,8 +569,12 @@ on quasi-circular orbits only (on an eccentric orbit it is a model, an error of 
 term); contact under RKN12(10) is not tested (DOP853 and IAS15 are); `myb_collision_rate` is
 costly when the covariance of the relative velocity is narrow — up to about a second a rate,
 and the integral of a long encounter up to minutes; contacts in a system of bodies go with
-DOP853 only, since the system does not end its steps at the touches, which IAS15 needs. macOS
-and Linux on ARM64 are built and tested only by CI, which runs at the tag.
+DOP853 only, since the system does not end its steps at the touches, which IAS15 needs. From the
+audit: `myb_cip_c2i` and `myb_cip_terrestrial` return no status and give NaN for |X| or |Y| above
+1 (a damaged kernel; an API change to report it); SCLK counts beyond 2⁵³ ticks are split into
+fields inexactly; the writers of CK types 5 and 6 and of SPK types 9 and 13 cannot foresee that
+interpolating finite data overflows (the reader then answers `MYB_E_FORMAT`, never NaN with
+`MYB_OK`). macOS and Linux on ARM64 are built and tested only by CI, which runs at the tag.
 
 ### Phase 22 decisions
 

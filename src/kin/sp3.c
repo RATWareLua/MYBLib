@@ -142,13 +142,18 @@ static int from_code(const char* s, size_t n, size_t from, size_t width, double 
   return 1;
 }
 
-/* The code nearest to a value: -1 if there is none to write. */
+/* The code nearest to a value: -1 for 0 (none given, a blank field), -2 for a value that no
+ * code of [lowest, highest] is the nearest to, or that is negative or not a number — the
+ * writer refuses those rather than write the end of the codes in their place. */
 static int to_code(double value, double unit, double base, int lowest, int highest) {
-  if (!(value > 0.0) || !isfinite(value)) {
+  if (value == 0.0) {
     return -1;
   }
+  if (!(value > 0.0) || !isfinite(value)) {
+    return -2;
+  }
   const double n = floor(myb_log(value / unit) / myb_log(base) + 0.5);
-  return n < (double)lowest ? lowest : n > (double)highest ? highest : (int)n;
+  return n < (double)lowest || n > (double)highest ? -2 : (int)n;
 }
 
 void myb_sp3_destroy(myb_sp3* sp3) {
@@ -728,6 +733,24 @@ myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer, size_t size, si
       return MYB_E_DOMAIN;
     }
     if (d->flags != NULL && (d->flags[k] & ~15u) != 0) {
+      return MYB_E_DOMAIN;
+    }
+    /* the standard deviations of the records written: each 0 (none) or the nearest of a code
+     * of its field (1.25^0 .. 1.25^99 mm, 1.025^0 .. 1.025^999 ps; the same of 1e-4 per
+     * second), not the end of the codes in place of one beyond them */
+    const double* sigma = d->sigmas != NULL ? d->sigmas + 8 * k : NULL;
+    for (int i = 0; sigma != NULL && i < (d->velocities != NULL ? 8 : 4); ++i) {
+      const int position = i < 4;
+      const int clock = i % 4 == 3;
+      const double unit = clock ? (position ? 1e-12 : 1e-16) : (position ? 1e-3 : 1e-7);
+      if (to_code(sigma[i], unit, clock ? 1.025 : 1.25, 0, clock ? 999 : 99) == -2) {
+        return MYB_E_DOMAIN;
+      }
+    }
+  }
+  /* the accuracies of the header: 0 (unknown) or the nearest of 2^1 .. 2^999 mm */
+  for (size_t s = 0; d->accuracy != NULL && s < d->satellite_count; ++s) {
+    if (to_code(d->accuracy[s], 1e-3, 2.0, 1, 999) == -2) {
       return MYB_E_DOMAIN;
     }
   }

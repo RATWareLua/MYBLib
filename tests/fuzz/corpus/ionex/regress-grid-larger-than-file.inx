@@ -1,0 +1,16 @@
+     1.0            IONOSPHERE MAPS     GNS                 IONEX VERSION / TYPE
+A grid of 87501 x 90001 values in a file of 2 KB: 63 GB.    COMMENT
+     1                                                      # OF MAPS IN FILE
+  6371.0                                                    BASE RADIUS
+     2                                                      MAP DIMENSION
+   450.0 450.0   0.0                                        HGT1 / HGT2 / DHGT
+    87.5 -87.5-0.002                                        LAT1 / LAT2 / DLAT
+  -180.0 180.0 0.004                                        LON1 / LON2 / DLON
+    -1                                                      EXPONENT
+                                                            END OF HEADER
+     1                                                      START OF TEC MAP
+  2024     1     1     0     0     0                        EPOCH OF CURRENT MAP
+    87.5-180.0 180.0 0.004 450.0                            LAT/LON1/LON2/DLON/H
+  100  110  100
+     1                                                      END OF TEC MAP
+                                                            END OF FILE

@@ -333,6 +333,33 @@ version the API only grows. Details, checks and measured accuracies of every pha
   Lambert); no behaviour changes.
 
 ### Fixed
+- Phase 21, found by review and by the audit that followed (every case has a regression test
+  that fails without its fix). Reading DAF: a word outside the file is NaN in a release build
+  instead of a read beyond the image. CK: a type-5 window that took one tick past the end
+  (an instant moved onto a tick between intervals, a segment of one packet); a type-4 packet
+  offset of zero before the segment; infinite ends of type-2 intervals, seconds per tick not
+  required positive and a turn |w| t that overflowed (NaN with `MYB_OK`); type-3 interval starts
+  not among the ticks; rates and quaternions whose norms overflow; a Clenshaw recurrence of type 4
+  that overflowed on the way to a finite value; type-6 boundaries short of the coverage;
+  `myb_ck_pointing_at` refuses an answer that is not finite and gives no rate for a segment
+  without angular velocities. SCLK: partitions summing beyond the doubles, a table at negative
+  ticks, negative fields decode wrote and encode could not read. SPK and PCK: states that overflow
+  in metres or along a chain, PCK rotations whose derivative overflows, type-15 poles of long or
+  short vectors, a NaN reference epoch of type 10, and type-10 queries more than 2³² s from their
+  element set (now `MYB_E_RANGE`; a damaged coverage integrated the deep-space resonance for
+  days). Text kernels and parsers: long mantissas whose exponent saturated, TAI−UTC beyond half a
+  day and labels past the end of the table, EOP and tide values that reached a `MYB_CHECK` or
+  overflowed, Poisson series, CIP, WGCCRE and ICGEM values that overflow, a TK-frame quaternion of
+  huge or tiny components, IGRF tables with equal epochs or more than 64, space weather outside
+  physical ranges. Formats: CCSDS SI values that overflow, covariance keywords out of order,
+  entities of COV_REF_FRAME and of the OMM classification; SP3 epochs past EOF returned
+  uninitialised, a satellite listed twice, a trim loop before its buffer; TLE day 366 of a common
+  year; IONEX fields cast before any check, a missing neighbour of zero weight that failed a valid
+  query; GPT3 and the S1/S2 grid read before their nodes for longitudes of extreme size. SGP4
+  elements far outside the catalogue give `MYB_E_DOMAIN` (they gave NaN). Writers of CK, SPK, PCK,
+  SPK type 10, CCSDS, SP3, TLE and tables refuse what their readers refuse or cannot read back:
+  duplicate interval starts, names with blanks at the end, values that do not print back, epochs
+  and intervals out of range.
 - Phase 21. Readers, found by fuzzing: `myb_sclk_decode` could overflow its text; times out of
   range from the kernels of time scales; WGCCRE epochs; SPK and PCK epochs beyond 2⁵¹ s and
   SPK type 10 packets; unchecked casts in the EOP reader; the length of CCSDS XML names was

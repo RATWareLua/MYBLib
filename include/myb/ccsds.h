@@ -40,7 +40,8 @@ typedef enum myb_odm_notation {
 
 typedef struct myb_oem myb_oem;
 
-/* Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
+/* Errors: MYB_E_FORMAT (diag gives the line; among others a unit in brackets in a line of
+ * data, which states none), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
 MYB_API MYB_NODISCARD myb_status myb_oem_load(const char* text, size_t size,
                                               const myb_allocator* allocator, myb_oem** oem,
                                               myb_diag* diag);
@@ -159,8 +160,11 @@ typedef struct myb_opm {
 } myb_opm;
 
 /* Errors: MYB_E_FORMAT (diag gives the line: not an OPM, a missing mandatory keyword, a value
- * that is not a number or a date, a number that is not finite in SI — 1e306 km —, more than
- * MYB_OPM_MAX_MANEUVERS manoeuvres); the structure is then unspecified. */
+ * that is not a number or a date, a number that is not finite in SI — 1e306 km —, a unit in
+ * brackets other than the keyword's as the standard spells it — km, km/s, deg, km**3/s**2,
+ * kg, m**2, s, km**2, km**2/s, km**2/s**2, n/a; compared without regard to case, never
+ * converted —, more than MYB_OPM_MAX_MANEUVERS manoeuvres); the structure is then
+ * unspecified. */
 MYB_API MYB_NODISCARD myb_status myb_opm_parse(const char* text, size_t size, myb_opm* opm,
                                                myb_diag* diag);
 /* As myb_oem_write and myb_oem_write_as. */
@@ -209,6 +213,8 @@ typedef struct myb_omm {
   double covariance[36]; /* by rows, in the units of the message: km^2, km^2/s, km^2/s^2 */
 } myb_omm;
 
+/* Errors: as myb_opm_parse; the units of the mean elements are rev/day, km, deg, km**3/s**2,
+ * those of the element set 1/ER (or 1/[Earth radii]), rev/day**2, rev/day**3, n/a. */
 MYB_API MYB_NODISCARD myb_status myb_omm_parse(const char* text, size_t size, myb_omm* omm,
                                                myb_diag* diag);
 MYB_API MYB_NODISCARD myb_status myb_omm_write(const myb_omm* omm, char* buffer, size_t size,

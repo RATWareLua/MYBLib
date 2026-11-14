@@ -213,6 +213,13 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
           st = MYB_E_OVERFLOW;
           goto fail;
         }
+        /* every value takes a character of the text at least: a grid that the file cannot
+         * hold is a damaged header, not gigabytes to allocate */
+        if (cells > size) {
+          myb_internal_diag(diag, line_number, "a grid of more values than the file can hold");
+          st = MYB_E_FORMAT;
+          goto fail;
+        }
         void* e = NULL;
         st = myb_internal_alloc_array(&a, (size_t)x->nmaps, sizeof(double), &e);
         if (st != MYB_OK) {

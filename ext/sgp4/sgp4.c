@@ -1275,9 +1275,20 @@ static double reference_epoch(int year, double days) {
 void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc) {
   MYB_CHECK(tle != NULL && utc != NULL);
   static const int MONTH[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  const double whole = floor(tle->epoch_day);
+  /* a day that is no moment of its year (NaN, 1e300, -5: set by a caller, never by
+   * myb_tle_parse) clamped into it, to its first or its last instant: converted as it was,
+   * it made an int of a NaN, which is undefined */
+  const double limit = leap_year(tle->epoch_year) ? 367.0 : 366.0;
+  double epoch_day = tle->epoch_day;
+  if (!(epoch_day >= 1.0)) {
+    epoch_day = 1.0;
+  }
+  if (!(epoch_day < limit)) {
+    epoch_day = nextafter(limit, 0.0);
+  }
+  const double whole = floor(epoch_day);
   int day = (int)whole;
-  const double seconds = (tle->epoch_day - whole) * 86400.0;
+  const double seconds = (epoch_day - whole) * 86400.0;
   int month = 0;
   for (; month < 11; ++month) {
     const int length = MONTH[month] + (month == 1 && leap_year(tle->epoch_year));
@@ -1299,6 +1310,10 @@ void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc) {
 myb_status myb_sgp4_init(const myb_tle* tle, myb_sgp4_gravity gravity, myb_sgp4_mode mode,
                          myb_sgp4* sgp4) {
   MYB_CHECK(tle != NULL && sgp4 != NULL);
+  /* an epoch that is a moment of its year: the reference code makes an int of its day */
+  if (!day_of_its_year(tle->epoch_year, tle->epoch_day)) {
+    return MYB_E_DOMAIN;
+  }
   const double xpdotp = 1440.0 / (2.0 * PI); /* 229.1831180523293 */
   const double epoch = reference_epoch(tle->epoch_year, tle->epoch_day);
   myb_sgp4_constants c;

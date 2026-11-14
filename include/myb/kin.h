@@ -321,7 +321,10 @@ typedef struct myb_sp3_data {
  * 2999 or whose seconds round to 61, a number wider than its field, a position or velocity
  * that rounds to the zeros of a missing one, a clock that rounds to the mark of a missing one,
  * a satellite twice or with a blank, a time system or frame with blanks at its ends, flags
- * other than MYB_SP3_*). */
+ * other than MYB_SP3_*; a standard deviation or an accuracy that is negative, not finite or
+ * nearest to no code of its field — below 1.25^-0.5 mm or above 1.25^99.5 mm, 1.025^999.5 ps,
+ * the same per second of the velocities; in the header below 2^0.5 mm or above 2^999.5 mm —
+ * which the writer would have written as the end of the codes). */
 MYB_API MYB_NODISCARD myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer,
                                                size_t size, size_t* length);
 

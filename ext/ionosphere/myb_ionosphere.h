@@ -62,8 +62,8 @@ typedef struct myb_ionex myb_ionex;
  * (IONEX 1.0, table 2): the reader keeps the densities, value / DHGT. Errors: MYB_E_FORMAT
  * (with the line in diag; a dimension other than 2 and 3, a height off the grid, a radius or
  * a grid definition that is not finite, an exponent, a map number, an epoch field or a value
- * that is not a whole number of its range — the exponent within -22 .. 22, the values I5),
- * MYB_E_NOMEM. */
+ * that is not a whole number of its range — the exponent within -22 .. 22, the values I5 —,
+ * a grid of more values than the text has characters), MYB_E_NOMEM. */
 MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_load(const char* text, size_t size,
                                                 const myb_allocator* allocator,
                                                 myb_ionex** maps, myb_diag* diag);

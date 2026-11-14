@@ -1325,6 +1325,133 @@ static void test_reviewed_edges(void) {
   printf("reviewed edges of the messages: overflow to SI, covariance keywords, writers\n");
 }
 
+/* A message with one line added at the end (a keyword of the message). */
+static myb_status with_line(const char* message, const char* line, int omm) {
+  static char text[4096];
+  snprintf(text, sizeof text, "%s%s\n", message, line);
+  myb_diag diag = {0};
+  if (omm) {
+    myb_omm out;
+    return myb_omm_parse(text, strlen(text), &out, &diag);
+  }
+  static myb_opm out;
+  return myb_opm_parse(text, strlen(text), &out, &diag);
+}
+
+/* Reviewed: the unit in brackets after a number was dropped unread, so that "7000 [m]" was
+ * read as 7000 km. It is the keyword's, as the standard spells it (in any case), or the
+ * message is refused; a line of data takes none. */
+static void test_units(void) {
+  static const char opm_head[] =
+      "CCSDS_OPM_VERS = 2.0\nCREATION_DATE = 2000-06-03T05:33:00\nORIGINATOR = A\n"
+      "OBJECT_NAME = B\nOBJECT_ID = C\nCENTER_NAME = EARTH\nREF_FRAME = TOD\nTIME_SYSTEM = UTC\n"
+      "EPOCH = 2006-06-03T00:00:00\nY = 2\nZ = 3\nX_DOT = 4\nY_DOT = 5\nZ_DOT = 6\n";
+  struct {
+    const char* line;
+    int omm;
+    myb_status expected;
+  } cases[] = {
+      {"X = 6655.9942 [km]", 0, MYB_OK},
+      {"X = 6655.9942 [KM]", 0, MYB_OK},
+      {"X = 6655.9942 [ km ]", 0, MYB_OK},
+      {"X = 6655.9942 [m]", 0, MYB_E_FORMAT},
+      {"X = 6655.9942 [km/s]", 0, MYB_E_FORMAT},
+      {"X = 6655.9942 []", 0, MYB_E_FORMAT},
+      {"X = 6655.9942\nX_DOT = 4 [km/s]", 0, MYB_OK},
+      {"X = 6655.9942\nX_DOT = 4 [m/s]", 0, MYB_E_FORMAT},
+      {"X = 1\nINCLINATION = 0.1 [rad]", 0, MYB_E_FORMAT},
+      {"X = 1\nMASS = 1913 [g]", 0, MYB_E_FORMAT},
+      {"X = 1\nMASS = 1913 [kg]", 0, MYB_OK},
+      {"X = 1\nDRAG_AREA = 10 [m**2]", 0, MYB_OK},
+      {"X = 1\nDRAG_AREA = 10 [km**2]", 0, MYB_E_FORMAT},
+      {"X = 1\nDRAG_COEFF = 2.3 [n/a]", 0, MYB_OK},
+      {"X = 1\nDRAG_COEFF = 2.3 [m]", 0, MYB_E_FORMAT},
+      {"X = 1\nMAN_EPOCH_IGNITION = 2000-06-03T09:00:34\nMAN_DURATION = 1 [s]", 0, MYB_OK},
+      {"X = 1\nMAN_EPOCH_IGNITION = 2000-06-03T09:00:34\nMAN_DURATION = 1 [min]", 0,
+       MYB_E_FORMAT},
+      {"X = 1\nMAN_EPOCH_IGNITION = 2000-06-03T09:00:34\nMAN_DV_1 = 1 [m/s]", 0, MYB_E_FORMAT},
+  };
+  for (size_t k = 0; k < sizeof cases / sizeof cases[0]; ++k) {
+    const myb_status status = with_line(opm_head, cases[k].line, 0);
+    MT_CHECK(status == cases[k].expected);
+    if (status != cases[k].expected) {
+      printf("  OPM: '%s': status %d\n", cases[k].line, (int)status);
+    }
+  }
+  /* the covariance: km**2, km**2/s, km**2/s**2 by the number of derivatives */
+  static char covariance[4096];
+  static const char* const keys[21] = {
+      "CX_X",         "CY_X",         "CY_Y",         "CZ_X",         "CZ_Y",         "CZ_Z",
+      "CX_DOT_X",     "CX_DOT_Y",     "CX_DOT_Z",     "CX_DOT_X_DOT", "CY_DOT_X",     "CY_DOT_Y",
+      "CY_DOT_Z",     "CY_DOT_X_DOT", "CY_DOT_Y_DOT", "CZ_DOT_X",     "CZ_DOT_Y",     "CZ_DOT_Z",
+      "CZ_DOT_X_DOT", "CZ_DOT_Y_DOT", "CZ_DOT_Z_DOT"};
+  size_t used = (size_t)snprintf(covariance, sizeof covariance, "X = 1");
+  static const char* const units[3] = {"km**2", "km**2/s", "km**2/s**2"};
+  for (int k = 0; k < 21; ++k) {
+    int derivatives = 0;
+    /* bound: two derivatives at most */
+    for (const char* d = strstr(keys[k], "_DOT"); d != NULL; d = strstr(d + 4, "_DOT")) {
+      ++derivatives;
+    }
+    used += (size_t)snprintf(covariance + used, sizeof covariance - used, "\n%s = 1e-6 [%s]",
+                             keys[k], units[derivatives]);
+  }
+  MT_CHECK(with_line(opm_head, covariance, 0) == MYB_OK);
+  char* wrong = strstr(covariance, "CX_DOT_X = 1e-6 [km**2/s]");
+  MT_CHECK(wrong != NULL);
+  if (wrong != NULL) {
+    memcpy(wrong + 16, "[km**2]  ", 9);
+    MT_CHECK(with_line(opm_head, covariance, 0) == MYB_E_FORMAT);
+  }
+  /* the mean elements of an element set */
+  static const char omm_head[] =
+      "CCSDS_OMM_VERS = 2.0\nCREATION_DATE = 2020-06-01T10:00:00\nORIGINATOR = A\n"
+      "OBJECT_NAME = B\nOBJECT_ID = C\nCENTER_NAME = EARTH\nREF_FRAME = TEME\nTIME_SYSTEM = UTC\n"
+      "MEAN_ELEMENT_THEORY = SGP4\nEPOCH = 2020-06-01T03:22:38\nECCENTRICITY = 0.0002335\n"
+      "RA_OF_ASC_NODE = 93\nARG_OF_PERICENTER = 45.4201\nMEAN_ANOMALY = 314.6988\n"
+      "INCLINATION = 51.6443 [deg]\n";
+  struct {
+    const char* line;
+    myb_status expected;
+  } elements[] = {
+      {"MEAN_MOTION = 15.49438371 [rev/day]", MYB_OK},
+      {"MEAN_MOTION = 15.49438371 [REV/DAY]", MYB_OK},
+      {"MEAN_MOTION = 15.49438371 [deg/s]", MYB_E_FORMAT},
+      {"SEMI_MAJOR_AXIS = 6800 [km]", MYB_OK},
+      {"SEMI_MAJOR_AXIS = 6800 [m]", MYB_E_FORMAT},
+      {"MEAN_MOTION = 15.5\nBSTAR = 2.4949e-5 [1/ER]", MYB_OK},
+      {"MEAN_MOTION = 15.5\nBSTAR = 2.4949e-5 [1/km]", MYB_E_FORMAT},
+      {"MEAN_MOTION = 15.5\nMEAN_MOTION_DOT = 9.07e-6 [rev/day**2]", MYB_OK},
+      {"MEAN_MOTION = 15.5\nMEAN_MOTION_DOT = 9.07e-6 [rev/day]", MYB_E_FORMAT},
+      {"MEAN_MOTION = 15.5\nMEAN_MOTION_DDOT = 0 [rev/day**3]", MYB_OK},
+      {"MEAN_MOTION = 15.5\nGM = 398600.4418 [km**3/s**2]", MYB_OK},
+      {"MEAN_MOTION = 15.5\nGM = 398600.4418 [m**3/s**2]", MYB_E_FORMAT},
+      {"MEAN_MOTION = 15.5\nNORAD_CAT_ID = 25544 [km]", MYB_E_FORMAT},
+      {"MEAN_MOTION = 15.5\nNORAD_CAT_ID = 25544", MYB_OK},
+  };
+  for (size_t k = 0; k < sizeof elements / sizeof elements[0]; ++k) {
+    const myb_status status = with_line(omm_head, elements[k].line, 1);
+    MT_CHECK(status == elements[k].expected);
+    if (status != elements[k].expected) {
+      printf("  OMM: '%s': status %d\n", elements[k].line, (int)status);
+    }
+  }
+  /* a line of an ephemeris takes no unit */
+  static const char oem_head[] =
+      "CCSDS_OEM_VERS = 2.0\nCREATION_DATE = 1996-11-04T17:22:31\nORIGINATOR = A\nMETA_START\n"
+      "OBJECT_NAME = B\nOBJECT_ID = C\nCENTER_NAME = EARTH\nREF_FRAME = EME2000\n"
+      "TIME_SYSTEM = UTC\nSTART_TIME = 1996-12-18T12:00:00\nSTOP_TIME = 1996-12-18T12:00:00\n"
+      "META_STOP\n";
+  static char ephemeris[2048];
+  snprintf(ephemeris, sizeof ephemeris, "%s1996-12-18T12:00:00 1[m] 2 3 4 5 6\n", oem_head);
+  myb_oem* oem = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_oem_load(ephemeris, strlen(ephemeris), NULL, &oem, &diag) == MYB_E_FORMAT &&
+           oem == NULL);
+  myb_oem_destroy(oem);
+  printf("units in brackets: the keyword's, or refused\n");
+}
+
 int main(void) {
   test_random();
   test_oem();
@@ -1334,5 +1461,6 @@ int main(void) {
   test_xml_sections();
   test_ocm();
   test_reviewed_edges();
+  test_units();
   return mt_finish("test_ccsds");
 }

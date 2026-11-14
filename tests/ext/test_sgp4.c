@@ -1190,6 +1190,49 @@ static void test_spk10_reviewed_edges(void) {
   myb_timesys_destroy(sys);
 }
 
+/* Reviewed: the epoch of an element set that is no day of its year (NaN, 1e300, -5: set by a
+ * caller, never by myb_tle_parse) was converted to int, which is undefined; myb_tle_epoch now
+ * clamps it into the year and myb_sgp4_init refuses it. A perigee below the surface is no
+ * error of the theory (Vallado removed it in 2006): the decay is reported by the propagation. */
+static void test_epochs_and_perigee(void) {
+  static const char l1[] = "1 25544U 98067A   20153.14072786  .00000907  00000-0  24949-4 0  9994";
+  static const char l2[] = "2 25544  51.6443  93.0000 0002335  45.4201 314.6988 15.49438371229542";
+  myb_diag diag = {0};
+  myb_tle iss;
+  MT_CHECK(myb_tle_parse(l1, l2, 0, &iss, &diag) == MYB_OK);
+  static const double days[4] = {(double)NAN, 1e300, -5.0, (double)INFINITY};
+  for (int k = 0; k < 4; ++k) {
+    myb_tle tle = iss;
+    tle.epoch_day = days[k];
+    myb_calendar utc;
+    myb_tle_epoch(&tle, &utc);
+    MT_CHECK(utc.year == 2020 && utc.month >= 1 && utc.month <= 12 && utc.day >= 1 &&
+             utc.day <= 31 && utc.hour >= 0 && utc.hour <= 23 && utc.minute >= 0 &&
+             utc.minute <= 59 && utc.second >= 0.0 && utc.second < 60.0);
+    if (k == 0 || k == 2) {
+      MT_CHECK(utc.month == 1 && utc.day == 1 && utc.hour == 0 && utc.second == 0.0);
+    } else {
+      MT_CHECK(utc.month == 12 && utc.day == 31 && utc.hour == 23 && utc.minute == 59);
+    }
+    myb_sgp4 theory;
+    MT_CHECK(myb_sgp4_init(&tle, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &theory) == MYB_E_DOMAIN);
+  }
+  /* a perigee of 5751 km (17 revolutions a day, e = 0.1): initialised, decayed at once */
+  myb_tle low = iss;
+  low.mean_motion = 17.0;
+  low.eccentricity = 0.1;
+  low.argument_of_perigee = 0.0;
+  low.mean_anomaly = 0.0;
+  myb_sgp4 theory;
+  MT_CHECK(myb_sgp4_init(&low, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &theory) == MYB_OK);
+  double r[3];
+  double v[3];
+  myb_sgp4_error error = MYB_SGP4_OK;
+  MT_CHECK(myb_sgp4_propagate(&theory, 0.0, r, v, &error) == MYB_OK &&
+           error == MYB_SGP4_DECAYED);
+  printf("SGP4: epochs that are no day clamped by myb_tle_epoch, refused by myb_sgp4_init\n");
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   run_verification();
@@ -1201,5 +1244,6 @@ int main(void) {
   test_spk10_reviewed_edges();
   test_fit();
   test_reviewed_edges();
+  test_epochs_and_perigee();
   return mt_finish("test_sgp4");
 }
