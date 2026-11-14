@@ -10,7 +10,8 @@
 //!  - kernels and time scales, an SPK set and a body of it in an environment, a message
 //!    written and read in both notations;
 //!  - a panic in a closure that C calls ends the process: it is not caught and does not
-//!    unwind through the frames of C (the test runs itself again as the process that dies).
+//!    unwind through the frames of C (the test runs itself again as the process that dies) —
+//!    a term, an event, and a provider of the upper layers.
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::ptr;
@@ -339,6 +340,8 @@ fn a_message_in_both_notations() -> myb::Result<()> {
             myb::Calendar { year: 2026, month: 3, day: 1, hour: 12, minute: 1, second: 0.5 },
         ],
         states: vec![[7.0e6, 1.0, -2.5, 0.25, 7.5e3, -1.0e3], [7.0e6 + 15.0, 4.5e5, -6.0e4, -480.0, 7.4e3, -990.0]],
+        covariance_frame: None,
+        covariances: Vec::new(),
     };
     let created = myb::Calendar { year: 2026, month: 3, day: 2, hour: 0, minute: 0, second: 0.0 };
     for notation in [myb::Notation::Kvn, myb::Notation::Xml] {
@@ -371,6 +374,12 @@ fn panic_in(what: &str) {
             model.add_term("broken", |_t, _x, _v| -> myb::Result<[f64; 3]> { panic!("in a term") }).unwrap();
             let _ = model.acceleration(0.0, &[7.0e6, 0.0, 0.0], &[0.0, 7.5e3, 0.0]);
         }
+        "state" => {
+            // a provider of the upper layers (myb::provider) behaves as the closures of the root
+            let still = |_t: myb::Time| -> myb::Result<State> { Ok([0.0; 6]) };
+            let broken = |_t: myb::Time| -> myb::Result<State> { panic!("in a state") };
+            let _ = myb::approach_find(&still, &broken, 0.0, 10.0, 1.0, 1);
+        }
         _ => {
             let model = Rc::new(model);
             let mut orbit = Orbit::new(&model, &OrbitOptions::default()).unwrap();
@@ -388,7 +397,7 @@ fn a_panic_in_a_closure_called_from_c_ends_the_process() {
         std::process::exit(0);
     }
     let this = std::env::current_exe().unwrap();
-    for what in ["term", "event"] {
+    for what in ["term", "event", "state"] {
         let output = std::process::Command::new(&this)
             .args(["--exact", "a_panic_in_a_closure_called_from_c_ends_the_process", "--nocapture", "--test-threads", "1"])
             .env(DIES, what)
@@ -397,7 +406,7 @@ fn a_panic_in_a_closure_called_from_c_ends_the_process() {
         let said = String::from_utf8_lossy(&output.stderr);
         // the message of the panic, then the end: not the exit of a test that failed by
         // unwinding (101), not success
-        assert!(said.contains(&format!("in {} {}", if what == "term" { "a" } else { "an" }, what)), "{what}: {said}");
+        assert!(said.contains(&format!("in {} {}", if what == "event" { "an" } else { "a" }, what)), "{what}: {said}");
         assert!(!output.status.success(), "{what}: the process went on");
         assert_ne!(output.status.code(), Some(101), "{what}: the panic unwound through C: {said}");
         assert!(said.contains("panic in a function that cannot unwind"), "{what}: {said}");

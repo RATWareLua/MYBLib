@@ -23,6 +23,17 @@
 //! The objects are not `Send`: the library's objects keep working memory, one thread at a
 //! time (an environment for another thread is a clone made in C, `myb_env_clone`).
 //!
+//! The rest of the interface comes in modules, all of them re-exported here: [`nbody`] (the
+//! N-body problem, Wisdom-Holman, a system of bodies with models), [`estim`] (stations,
+//! measurements, least squares, the filter), [`cr3bp`], [`targeting`] (transfers, Lambert,
+//! first orbits, relative motion, conjunctions, the variational equations), [`optimal`]
+//! (low thrust: the indirect method, Sims-Flanagan, chains, the Q-law), [`attitude`],
+//! [`observe`] (light time, delays, directions), [`files`] (numbers and tables, the SPK, CK
+//! and SP3 writers and readers, the orbit data messages, spacecraft clocks) and [`many`] (the
+//! array forms over slices); `sgp4` (two-line element sets) with the feature of that name.
+//! Providers of states, orientations and attitudes are the traits of [`provider`]: closures,
+//! or the ready-made providers of the library.
+//!
 //! ```no_run
 //! use std::rc::Rc;
 //! let gm = 3.986004418e14;
@@ -43,6 +54,30 @@ use std::rc::Rc;
 
 pub use myb_sys as sys;
 
+pub mod attitude;
+pub mod cr3bp;
+pub mod estim;
+pub mod files;
+pub mod many;
+pub mod nbody;
+pub mod observe;
+pub mod optimal;
+pub mod provider;
+#[cfg(feature = "sgp4")]
+pub mod sgp4;
+pub mod targeting;
+
+pub use attitude::*;
+pub use cr3bp::*;
+pub use estim::*;
+pub use files::*;
+pub use many::*;
+pub use nbody::*;
+pub use observe::*;
+pub use optimal::*;
+pub use provider::*;
+pub use targeting::*;
+
 /// Position (m) and velocity (m/s).
 pub type State = [f64; 6];
 pub type Vec3 = [f64; 3];
@@ -52,6 +87,8 @@ pub type Time = sys::myb_time;
 pub type Calendar = sys::myb_calendar;
 /// Classical elements: p (m), e, i, raan, argp, nu (rad).
 pub type Elements = sys::myb_elements;
+/// Modified equinoctial elements: p (m), f, g, h, k, l (the true longitude L, rad).
+pub type Equinoctial = sys::myb_equinoctial;
 
 // ---- Outcomes ---------------------------------------------------------------------------------
 
@@ -155,14 +192,63 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-fn check(code: sys::myb_status) -> Result<()> {
+pub(crate) fn check(code: sys::myb_status) -> Result<()> {
     match Status::from_raw(code) {
         None => Ok(()),
         Some(status) => Err(Error::new(status)),
     }
 }
 
-fn check_diag(code: sys::myb_status, diag: &sys::myb_diag) -> Result<()> {
+/// An argument the library would reject as outside its domain, caught before the call.
+pub(crate) fn domain<T>() -> Result<T> {
+    Err(Error::new(Status::Domain))
+}
+
+/// The pointer a constructor of the library wrote.
+pub(crate) fn created<T>(raw: *mut T) -> Result<NonNull<T>> {
+    NonNull::new(raw).ok_or(Error::new(Status::NoMemory))
+}
+
+/// A NUL-terminated text of the library, or `None` for NULL.
+pub(crate) fn c_text(text: *const c_char) -> Option<String> {
+    // SAFETY: the library's texts are NUL-terminated and live as long as their owner
+    (!text.is_null()).then(|| unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned())
+}
+
+/// A text of a fixed array of the library, up to its NUL.
+pub(crate) fn array_text(text: &[c_char]) -> String {
+    let bytes: Vec<u8> = text.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Writes a text into a fixed array of the library, with its NUL; Domain if it does not fit.
+pub(crate) fn set_array_text(target: &mut [c_char], text: &str) -> Result<()> {
+    if text.len() >= target.len() || text.as_bytes().contains(&0) {
+        return domain();
+    }
+    target.fill(0);
+    for (slot, &byte) in target.iter_mut().zip(text.as_bytes()) {
+        *slot = byte as c_char;
+    }
+    Ok(())
+}
+
+/// An output pointer for an optional buffer.
+pub(crate) fn out_ptr(buffer: &mut [f64]) -> *mut f64 {
+    if buffer.is_empty() {
+        ptr::null_mut()
+    } else {
+        buffer.as_mut_ptr()
+    }
+}
+
+/// States in a row as one slice of numbers.
+pub(crate) fn flat(states: &[State]) -> &[f64] {
+    // SAFETY: [f64; 6] has the layout of six f64 in a row, without padding
+    unsafe { std::slice::from_raw_parts(states.as_ptr().cast(), states.len() * 6) }
+}
+
+pub(crate) fn check_diag(code: sys::myb_status, diag: &sys::myb_diag) -> Result<()> {
     let Some(status) = Status::from_raw(code) else {
         return Ok(());
     };
@@ -172,16 +258,16 @@ fn check_diag(code: sys::myb_status, diag: &sys::myb_diag) -> Result<()> {
     Err(Error { status, message })
 }
 
-fn c_string(text: &str) -> Result<CString> {
+pub(crate) fn c_string(text: &str) -> Result<CString> {
     CString::new(text).map_err(|_| Error::new(Status::Domain))
 }
 
-fn c_path(path: &Path) -> Result<CString> {
+pub(crate) fn c_path(path: &Path) -> Result<CString> {
     c_string(path.to_str().ok_or(Error::new(Status::Domain))?)
 }
 
 /// A text of the library's writers: they tell the length when the buffer is too small.
-fn text(write: impl Fn(*mut c_char, usize, *mut usize) -> sys::myb_status) -> Result<String> {
+pub(crate) fn text(write: impl Fn(*mut c_char, usize, *mut usize) -> sys::myb_status) -> Result<String> {
     let mut length = 0usize;
     let code = write(ptr::null_mut(), 0, &mut length);
     if code != sys::MYB_OK && code != sys::MYB_E_OVERFLOW {
@@ -195,11 +281,11 @@ fn text(write: impl Fn(*mut c_char, usize, *mut usize) -> sys::myb_status) -> Re
 
 /// What an object points to and must outlive.
 #[derive(Default)]
-struct Kept(RefCell<Vec<Box<dyn Any>>>);
+pub(crate) struct Kept(RefCell<Vec<Box<dyn Any>>>);
 
 impl Kept {
     /// Stores a value for the life of the owner; the pointer stays valid until then.
-    fn keep<T: 'static>(&self, value: T) -> *mut T {
+    pub(crate) fn keep<T: 'static>(&self, value: T) -> *mut T {
         let mut boxed = Box::new(value);
         let pointer: *mut T = &mut *boxed;
         self.0.borrow_mut().push(boxed);
@@ -317,11 +403,11 @@ impl Drop for TimeSystem {
 
 // ---- Two bodies ---------------------------------------------------------------------------------
 
-fn pv_of(state: &State) -> sys::myb_pv {
+pub(crate) fn pv_of(state: &State) -> sys::myb_pv {
     sys::myb_pv { r: [state[0], state[1], state[2]], v: [state[3], state[4], state[5]] }
 }
 
-fn state_of(pv: &sys::myb_pv) -> State {
+pub(crate) fn state_of(pv: &sys::myb_pv) -> State {
     [pv.r[0], pv.r[1], pv.r[2], pv.v[0], pv.v[1], pv.v[2]]
 }
 
@@ -352,6 +438,7 @@ pub fn kepler_propagate(mu: f64, state: &State, dt: f64) -> Result<State> {
 /// A set of SPK files (`myb/kin.h`).
 pub struct Ephemeris {
     raw: NonNull<sys::myb_spk>,
+    kept: Kept,
 }
 
 impl Ephemeris {
@@ -359,7 +446,18 @@ impl Ephemeris {
         let mut raw = ptr::null_mut();
         // SAFETY: a valid place for the pointer
         check(unsafe { sys::myb_spk_create(ptr::null(), &mut raw) })?;
-        Ok(Ephemeris { raw: NonNull::new(raw).ok_or(Error::new(Status::NoMemory))? })
+        Ok(Ephemeris { raw: NonNull::new(raw).ok_or(Error::new(Status::NoMemory))?, kept: Kept::default() })
+    }
+
+    /// An SPK image in memory (what [`SpkWriter::write`] gives); the set keeps the bytes.
+    pub fn load_memory(&mut self, image: Vec<u8>) -> Result<()> {
+        let image = image.into_boxed_slice();
+        let (data, size) = (image.as_ptr(), image.len());
+        self.kept.keep(image); // the bytes stay where they are
+        let mut diag = sys::myb_diag::default();
+        // SAFETY: the image lives in self.kept, unchanged, as long as the set
+        let code = unsafe { sys::myb_spk_load_memory(self.raw.as_ptr(), data.cast(), size, &mut diag) };
+        check_diag(code, &diag)
     }
 
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
@@ -820,6 +918,12 @@ impl ForceModel {
         unsafe { sys::myb_force_model_count(self.raw.as_ptr()) }
     }
 
+    /// The parameters of the model (estimated with the state by [`fit_orbit`] and [`Filter`]).
+    pub fn parameter_count(&self) -> usize {
+        // SAFETY: the model is alive
+        unsafe { sys::myb_force_model_parameter_count(self.raw.as_ptr()) }
+    }
+
     pub fn term_name(&self, index: usize) -> Option<String> {
         if index >= self.term_count() {
             return None;
@@ -1053,6 +1157,10 @@ pub struct OemSegment {
     pub interpolation: Option<(String, u32)>,
     pub epochs: Vec<Calendar>,
     pub states: Vec<State>,
+    /// COV_REF_FRAME of the covariances, if the message is to name one.
+    pub covariance_frame: Option<String>,
+    /// Covariances of the state at epochs (rows; m^2, m^2/s, m^2/s^2).
+    pub covariances: Vec<(Calendar, [f64; 36])>,
 }
 
 /// An orbit ephemeris message as text.
@@ -1060,6 +1168,9 @@ pub fn write_oem(originator: &str, creation_date: &Calendar, segments: &[OemSegm
     struct Texts {
         fixed: [CString; 5],
         interpolation: Option<CString>,
+        covariance_frame: Option<CString>,
+        covariance_epochs: Vec<Calendar>,
+        covariances: Vec<f64>,
     }
     let mut texts = Vec::with_capacity(segments.len());
     for segment in segments {
@@ -1075,6 +1186,9 @@ pub fn write_oem(originator: &str, creation_date: &Calendar, segments: &[OemSegm
                 c_string(&segment.time_system)?,
             ],
             interpolation: segment.interpolation.as_ref().map(|(name, _)| c_string(name)).transpose()?,
+            covariance_frame: segment.covariance_frame.as_deref().map(c_string).transpose()?,
+            covariance_epochs: segment.covariances.iter().map(|(epoch, _)| *epoch).collect(),
+            covariances: segment.covariances.iter().flat_map(|(_, matrix)| matrix.iter().copied()).collect(),
         });
     }
     let made: Vec<sys::myb_oem_segment_data> = segments
@@ -1091,7 +1205,10 @@ pub fn write_oem(originator: &str, creation_date: &Calendar, segments: &[OemSegm
             count: segment.epochs.len(),
             epochs: segment.epochs.as_ptr(),
             states: segment.states.as_ptr().cast(),
-            ..Default::default()
+            covariance_count: text.covariance_epochs.len(),
+            covariance_epochs: text.covariance_epochs.as_ptr(),
+            covariance_frame: text.covariance_frame.as_ref().map_or(ptr::null(), |frame| frame.as_ptr()),
+            covariances: text.covariances.as_ptr(),
         })
         .collect();
     let originator = c_string(originator)?;
@@ -1101,12 +1218,13 @@ pub fn write_oem(originator: &str, creation_date: &Calendar, segments: &[OemSegm
         segment_count: made.len(),
         segments: made.as_ptr(),
     };
-    let notation = match notation {
-        Notation::Kvn => sys::MYB_ODM_KVN,
-        Notation::Xml => sys::MYB_ODM_XML,
-    };
     // SAFETY: every pointer of `data` is into `texts`, `made` and `segments`, alive here
-    text(|buffer, size, length| unsafe { sys::myb_oem_write_as(&data, notation, buffer, size, length) })
+    text(|buffer, size, length| unsafe {
+        match notation {
+            Notation::Kvn => sys::myb_oem_write(&data, buffer, size, length),
+            Notation::Xml => sys::myb_oem_write_as(&data, sys::MYB_ODM_XML, buffer, size, length),
+        }
+    })
 }
 
 /// An orbit ephemeris message read from text in either notation (`myb/ccsds.h`).
