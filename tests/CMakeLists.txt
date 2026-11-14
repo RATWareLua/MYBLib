@@ -205,6 +205,12 @@ if(CMAKE_CXX_COMPILER)
   target_compile_definitions(test_cpp_binding PRIVATE
     "MYB_TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data\""
     "MYB_DATA_DIR=\"${PROJECT_SOURCE_DIR}/data\"")
+  # with ext/sgp4: its header before myb.hpp gives the two-line elements of the C++ face too
+  # (the consumer built by cl, tests/tools/check_msvc.cmake, compiles the test without them)
+  if(TARGET myb_sgp4)
+    target_link_libraries(test_cpp_binding PRIVATE myb_sgp4)
+    target_compile_definitions(test_cpp_binding PRIVATE MYB_CPP_TEST_SGP4)
+  endif()
   myb_apply_flags(test_cpp_binding)
   # the header handles no exceptions: it compiles with them switched off
   target_compile_options(test_cpp_binding PRIVATE -fno-exceptions)

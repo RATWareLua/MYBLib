@@ -38,8 +38,18 @@ file(WRITE "${WORK_DIR}/environment.cmd" "@call \"${_vcvars}\" >nul 2>nul\r\n@se
 file(TO_NATIVE_PATH "${WORK_DIR}/environment.cmd" _environment_cmd)
 execute_process(COMMAND cmd /c "${_environment_cmd}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE environment ERROR_QUIET)
+# The names of the environment of Windows have no case (a cmd started from PowerShell writes
+# Path): each is matched in any case.
 foreach(_name INCLUDE LIB LIBPATH PATH)
-  if(NOT environment MATCHES "(^|\n)${_name}=([^\r\n]*)")
+  set(_any_case "")
+  string(LENGTH "${_name}" _length)
+  math(EXPR _last "${_length} - 1")
+  foreach(_i RANGE ${_last})
+    string(SUBSTRING "${_name}" ${_i} 1 _upper)
+    string(TOLOWER "${_upper}" _lower)
+    string(APPEND _any_case "[${_upper}${_lower}]")
+  endforeach()
+  if(NOT environment MATCHES "(^|\n)${_any_case}=([^\r\n]*)")
     message(FATAL_ERROR "vcvars64.bat left no ${_name}")
   endif()
   set(ENV{${_name}} "${CMAKE_MATCH_2}")
