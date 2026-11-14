@@ -101,6 +101,36 @@ myb_status mybgo_system_unpack(const mybgo_system* system, const double* y, doub
                                mybgo_rotation_state* rotations, size_t rotation_count,
                                mybgo_spin_state* spins, size_t spin_count);
 
+/* The deflections of the springs of a friction that sticks (myb_system_pack_contact, with pack
+ * != 0, or myb_system_unpack_contact): the contact number contacts[k] among those in place
+ * takes 3 values a point, in turn from `deflections` (capacity values). Packing, counts[k] is
+ * the points given for it and must be its count; unpacking, counts[k] receives that count.
+ * MYB_E_DOMAIN for no such contact or another count. *failed: the record that failed. */
+myb_status mybgo_system_contacts(const mybgo_system* system, int pack, double* y,
+                                 const size_t* contacts, size_t* counts, size_t count,
+                                 double* deflections, size_t capacity, size_t* failed);
+
+/* ---- The force of a contact ------------------------------------------------------------------ */
+
+typedef struct mybgo_contact_sample {
+  double x[3];
+  double v[3];
+  double attitude[9];
+  double omega[3];
+  int has_attitude;
+  int has_omega;
+} mybgo_contact_sample;
+
+/* The force of the surface on the points at each of `count` states (myb_contact_force_stick):
+ * with a friction that sticks, deflections holds 3 values a point a state and
+ * deflection_rates (may be NULL) as many; with the smooth one both are ignored (may be NULL).
+ * *failed: the state that failed. */
+myb_status mybgo_contact_forces(const myb_contact_surface* surface, const myb_contact_law* law,
+                                const myb_contact_point* points, size_t point_count,
+                                const mybgo_contact_sample* samples, size_t count,
+                                const double* deflections, double* deflection_rates,
+                                myb_contact_result* results, size_t* failed);
+
 enum {
   MYBGO_CONTACT_STOP = 0,    /* the run ends at the contact */
   MYBGO_CONTACT_MERGE = 1,   /* the lighter body is merged into the heavier (b into a if equal) */

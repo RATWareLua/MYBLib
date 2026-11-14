@@ -162,6 +162,14 @@ const (
 	PNSO25 PNOrders = C.MYB_PN_SO25
 	PNSO35 PNOrders = C.MYB_PN_SO35
 	PNSORR PNOrders = C.MYB_PN_SORR
+	// spin-spin at next-to-leading order (1/c^6), with its precession (needs the kappas)
+	PNSS3 PNOrders = C.MYB_PN_SS3
+	// spin-orbit radiation reaction at next-to-leading order (1/c^10)
+	PNSORR5 PNOrders = C.MYB_PN_SORR5
+	// the spin-orbit part of the dissipative tail, quasi-circular orbits
+	PNSOTAIL PNOrders = C.MYB_PN_SOTAIL
+	// the tails of PN4 and PN4RR on any osculating conic (unbound, parabolic, e above 0.83)
+	PNTAILX PNOrders = C.MYB_PN_TAILX
 )
 
 // PNPair adds the terms beyond 1PN of two bodies (myb_system_add_pn_pair).
@@ -197,9 +205,54 @@ type ContactSurface struct {
 	Mesh   *Polyhedron
 }
 
-// ContactLaw is the law of the force of contact (myb_contact_law).
+// ContactFriction is the friction of a law of contact (myb_contact_friction).
+type ContactFriction int
+
+// The frictions.
+const (
+	// Coulomb's made smooth, a function of the state: Slip
+	FrictionSmooth ContactFriction = C.MYB_CONTACT_FRICTION_SMOOTH
+	// a spring with a slip limit, a state of its own (3 values a point, ContactDeflections):
+	// TangentialStiffness, TangentialDamping
+	FrictionStick ContactFriction = C.MYB_CONTACT_FRICTION_STICK
+)
+
+// ContactLaw is the law of the force of contact (myb_contact_law): k, n, c of the normal
+// springs, mu of the friction, and the friction's kind with its parameters (v_s of the smooth
+// one, k_t and c_t of the one that sticks).
 type ContactLaw struct {
 	Stiffness, Exponent, Damping, Friction, Slip float64
+	Kind                                         ContactFriction
+	TangentialStiffness, TangentialDamping       float64
+}
+
+func (l ContactLaw) c() C.myb_contact_law {
+	return C.myb_contact_law{stiffness: C.double(l.Stiffness), exponent: C.double(l.Exponent),
+		damping: C.double(l.Damping), friction: C.double(l.Friction), slip: C.double(l.Slip),
+		kind: C.myb_contact_friction(l.Kind), tangential_stiffness: C.double(l.TangentialStiffness),
+		tangential_damping: C.double(l.TangentialDamping)}
+}
+
+// c is the surface of the library; a mesh is held by k.
+func (s ContactSurface) c(k *keeper) (C.myb_contact_surface, error) {
+	out := C.myb_contact_surface{shape: C.myb_contact_shape(s.Shape), point: cVec3(s.Point),
+		normal: cVec3(s.Normal), radii: cVec3(s.Radii)}
+	if s.Shape == ContactMesh {
+		mesh, err := k.hold(s.Mesh.obj())
+		if err != nil {
+			return out, err
+		}
+		out.mesh = (*C.myb_polyhedron)(mesh)
+	}
+	return out, nil
+}
+
+func cContactPoints(points []ContactPoint) []C.myb_contact_point {
+	out := make([]C.myb_contact_point, len(points))
+	for k, q := range points {
+		out[k] = C.myb_contact_point{offset: cVec3(q.Offset), radius: C.double(q.Radius)}
+	}
+	return out
 }
 
 // ContactPoint is a contact point of a body in its frame (myb_contact_point).
@@ -295,22 +348,15 @@ func cVec3(v [3]float64) [3]C.double {
 
 func (l ContactLink) link(c *C.mybgo_system_link, k *keeper, p *[]C.myb_contact_point) error {
 	c.kind, c.a, c.b = C.MYBGO_LINK_CONTACT, C.size_t(l.Body), C.size_t(l.Ground)
-	c.surface = C.myb_contact_surface{shape: C.myb_contact_shape(l.Surface.Shape),
-		point: cVec3(l.Surface.Point), normal: cVec3(l.Surface.Normal), radii: cVec3(l.Surface.Radii)}
-	if l.Surface.Shape == ContactMesh {
-		mesh, err := k.hold(l.Surface.Mesh.obj())
-		if err != nil {
-			return err
-		}
-		c.surface.mesh = (*C.myb_polyhedron)(mesh)
+	surface, err := l.Surface.c(k)
+	if err != nil {
+		return err
 	}
-	c.law = C.myb_contact_law{stiffness: C.double(l.Law.Stiffness), exponent: C.double(l.Law.Exponent),
-		damping: C.double(l.Law.Damping), friction: C.double(l.Law.Friction), slip: C.double(l.Law.Slip)}
+	c.surface = surface
+	c.law = l.Law.c()
 	c.first_point = C.size_t(len(*p))
 	c.point_count = C.size_t(len(l.Points))
-	for _, q := range l.Points {
-		*p = append(*p, C.myb_contact_point{offset: cVec3(q.Offset), radius: C.double(q.Radius)})
-	}
+	*p = append(*p, cContactPoints(l.Points)...)
 	return nil
 }
 
@@ -330,6 +376,7 @@ type System struct {
 	mu     sync.Mutex
 	state  *callState
 	bodies int
+	points int // the most points of a contact
 }
 
 // NewSystem makes the system of a description (one call into C).
@@ -390,12 +437,16 @@ func NewSystem(spec SystemSpec) (*System, error) {
 	}
 	links := make([]C.mybgo_system_link, len(spec.Links))
 	var points []C.myb_contact_point
+	most := 0
 	for j, l := range spec.Links {
 		if l == nil {
 			return nil, refuse(op, j, "a nil link")
 		}
 		if err := l.link(&links[j], k, &points); err != nil {
 			return nil, err
+		}
+		if links[j].kind == C.MYBGO_LINK_CONTACT {
+			most = max(most, int(links[j].point_count))
 		}
 	}
 	guided := make([]C.mybgo_provider, len(spec.Guided))
@@ -422,7 +473,7 @@ func NewSystem(spec SystemSpec) (*System, error) {
 	}
 	held, handles := k.keep()
 	ok = true
-	s := &System{state: k.state, bodies: len(spec.Bodies)}
+	s := &System{state: k.state, bodies: len(spec.Bodies), points: most}
 	s.o = newObject(unsafe.Pointer(system), func(q unsafe.Pointer) {
 		C.mybgo_system_destroy((*C.mybgo_system)(q))
 		for _, h := range handles {
@@ -467,7 +518,8 @@ func (s *System) failure(op string, status C.myb_status, index int) error {
 }
 
 // Coordinates is n, the count of the coordinates of a state (3 a body, 9 an integrated
-// rotation, 6 a pair with spins); a state holds 2 n values.
+// rotation, 6 a pair with spins, 3 a point of a contact whose friction sticks); a state holds
+// 2 n values.
 func (s *System) Coordinates() (int, error) {
 	sys, err := s.begin()
 	if err != nil {
@@ -596,16 +648,189 @@ func (s *System) UnpackState(y []float64, rotations []RotationState, spins []Spi
 	return bodies, outR, outS, nil
 }
 
+// ContactDeflections are the deflections of the springs of a friction that sticks in a state
+// (myb_system_pack_contact): Contact is the number of the contact among those in place (the
+// ContactLinks in their order, less those of a body a merger took away), Deflections one a
+// point of it (m, in the axes of its surface; zero: the springs at rest).
+type ContactDeflections struct {
+	Contact     int
+	Deflections [][3]float64
+}
+
+// PackContacts writes the deflections of contacts into the state y (of PackState), in place.
+// The deflections of a contact not given stay as they are in y (zero after PackState).
+func (s *System) PackContacts(y []float64, contacts []ContactDeflections) error {
+	const op = "System.PackContacts"
+	sys, err := s.begin()
+	if err != nil {
+		return err
+	}
+	defer s.end()
+	if len(y) != 2*int(C.mybgo_system_coordinates(sys)) {
+		return refuse(op, -1, "a state of another length")
+	}
+	numbers := make([]C.size_t, len(contacts))
+	counts := make([]C.size_t, len(contacts))
+	var values [][3]float64
+	for k, c := range contacts {
+		if c.Contact < 0 {
+			return refuse(op, k, "no such contact")
+		}
+		numbers[k], counts[k] = C.size_t(c.Contact), C.size_t(len(c.Deflections))
+		values = append(values, c.Deflections...)
+	}
+	var failed C.size_t
+	status := C.mybgo_system_contacts(sys, 1, cDoubles(y), (*C.size_t)(first(numbers)),
+		(*C.size_t)(first(counts)), C.size_t(len(contacts)), (*C.double)(first(values)),
+		C.size_t(3*len(values)), &failed)
+	return failAt(op, status, failed)
+}
+
+// UnpackContacts reads the deflections of the contacts numbered (among those in place) from the
+// state y.
+func (s *System) UnpackContacts(y []float64, contacts []int) ([]ContactDeflections, error) {
+	const op = "System.UnpackContacts"
+	sys, err := s.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer s.end()
+	if len(y) != 2*int(C.mybgo_system_coordinates(sys)) {
+		return nil, refuse(op, -1, "a state of another length")
+	}
+	numbers := make([]C.size_t, len(contacts))
+	for k, c := range contacts {
+		if c < 0 {
+			return nil, refuse(op, k, "no such contact")
+		}
+		numbers[k] = C.size_t(c)
+	}
+	counts := make([]C.size_t, len(contacts))
+	values := make([][3]float64, s.points*len(contacts))
+	var failed C.size_t
+	status := C.mybgo_system_contacts(sys, 0, cDoubles(y), (*C.size_t)(first(numbers)),
+		(*C.size_t)(first(counts)), C.size_t(len(contacts)), (*C.double)(first(values)),
+		C.size_t(3*len(values)), &failed)
+	if err := failAt(op, status, failed); err != nil {
+		return nil, err
+	}
+	out := make([]ContactDeflections, len(contacts))
+	at := 0
+	for k, c := range contacts {
+		n := int(counts[k])
+		out[k] = ContactDeflections{Contact: c, Deflections: values[at : at+n : at+n]}
+		at += n
+	}
+	return out, nil
+}
+
 // IAS15Options are the options of the IAS15 integrator of a system (myb_ias15_options: the
-// precision, the step limits, the budget).
+// precision, the step limits, the budget, the timescale of the step).
 type IAS15Options struct {
 	Epsilon, HInitial, HMax, HMin float64
 	MaxSteps                      int64
+	// TimescaleJerk for an acceleration that passes through zero: a body held by the springs
+	// of a contact
+	Timescale IAS15Timescale
 }
 
 func (o IAS15Options) c() C.myb_ias15_options {
 	return C.myb_ias15_options{epsilon: C.double(o.Epsilon), h_initial: C.double(o.HInitial),
-		h_max: C.double(o.HMax), h_min: C.double(o.HMin), max_steps: C.int64_t(o.MaxSteps)}
+		h_max: C.double(o.HMax), h_min: C.double(o.HMin), max_steps: C.int64_t(o.MaxSteps),
+		timescale: C.myb_ias15_timescale(o.Timescale)}
+}
+
+// ---- The force of a contact -------------------------------------------------------------------
+
+// ContactSample is a state of a body over a surface (myb_contact_force): X and V of its centre
+// of mass in the frame of the surface (m, m/s), Attitude the rotation from the axes of the
+// surface to the body axes (rows: the body axes; nil: the same axes), Omega its angular
+// velocity relative to the surface in the body axes (rad/s; nil: none), and with a friction
+// that sticks the Deflections of its springs, one a point (myb_contact_force_stick).
+type ContactSample struct {
+	X, V        [3]float64
+	Attitude    *[9]float64
+	Omega       *[3]float64
+	Deflections [][3]float64
+}
+
+// ContactResult is the force of a surface on a body (myb_contact_result): the force per unit
+// mass in the axes of the surface (m/s^2), the torque per unit mass in the body axes
+// (m^2/s^2), the energy of the springs (m^2/s^2), the least height of a sphere over the
+// surface less its radius (m), the points that press in, and with a friction that sticks the
+// rates of the deflections (m/s), one a point.
+type ContactResult struct {
+	Force, Torque   [3]float64
+	Energy, Gap     float64
+	Touching        int
+	DeflectionRates [][3]float64
+}
+
+// ContactForces is the force of the surface on the points of a body (in its frame) at each
+// sample, in one call (myb_contact_force_stick, which with the smooth friction is
+// myb_contact_force).
+func ContactForces(surface ContactSurface, law ContactLaw, points []ContactPoint, samples []ContactSample) ([]ContactResult, error) {
+	const op = "ContactForces"
+	sticks := law.Kind == FrictionStick
+	cs := make([]C.mybgo_contact_sample, len(samples))
+	var deflections []float64
+	for k, q := range samples {
+		cs[k].x, cs[k].v = cVec3(q.X), cVec3(q.V)
+		if q.Attitude != nil {
+			cs[k].has_attitude = 1
+			for i := range 9 {
+				cs[k].attitude[i] = C.double(q.Attitude[i])
+			}
+		}
+		if q.Omega != nil {
+			cs[k].has_omega = 1
+			cs[k].omega = cVec3(*q.Omega)
+		}
+		if sticks {
+			if len(q.Deflections) != len(points) {
+				return nil, refuse(op, k, "not one deflection for every point")
+			}
+			for _, z := range q.Deflections {
+				deflections = append(deflections, z[0], z[1], z[2])
+			}
+		}
+	}
+	k := newKeeper()
+	defer k.done()
+	cSurface, err := surface.c(k)
+	if err != nil {
+		return nil, err
+	}
+	cLaw := law.c()
+	cPoints := cContactPoints(points)
+	var rates []float64
+	if sticks {
+		rates = make([]float64, len(deflections))
+	}
+	results := make([]C.myb_contact_result, len(samples))
+	var failed C.size_t
+	status := C.mybgo_contact_forces(&cSurface, &cLaw, (*C.myb_contact_point)(first(cPoints)),
+		C.size_t(len(cPoints)), (*C.mybgo_contact_sample)(first(cs)), C.size_t(len(cs)),
+		cDoubles(deflections), cDoubles(rates), (*C.myb_contact_result)(first(results)), &failed)
+	if err := failAt(op, status, failed); err != nil {
+		return nil, err
+	}
+	out := make([]ContactResult, len(results))
+	for i, r := range results {
+		out[i] = ContactResult{Energy: float64(r.energy), Gap: float64(r.gap), Touching: int(r.touching)}
+		for j := range 3 {
+			out[i].Force[j] = float64(r.force[j])
+			out[i].Torque[j] = float64(r.torque[j])
+		}
+		if sticks {
+			out[i].DeflectionRates = make([][3]float64, len(points))
+			for p := range points {
+				at := 3 * (len(points)*i + p)
+				out[i].DeflectionRates[p] = [3]float64{rates[at], rates[at+1], rates[at+2]}
+			}
+		}
+	}
+	return out, nil
 }
 
 // ContactPolicy is what a run does at a contact of two bodies.

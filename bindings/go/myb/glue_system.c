@@ -7,6 +7,14 @@
 
 #include "glue_internal.h"
 
+/* A contact added: its bodies and its count of points (the system numbers the contacts in
+ * place, those whose two bodies are both still there). */
+typedef struct mybgo_contact_entry {
+  size_t body;
+  size_t ground;
+  size_t point_count;
+} mybgo_contact_entry;
+
 struct mybgo_system {
   myb_system* system;
   size_t bodies;
@@ -14,7 +22,9 @@ struct mybgo_system {
   mybgo_provider* guided;
   size_t guided_count;
   myb_contact_point* points;
-  mybgo_go_context* actions; /* one a link */
+  mybgo_go_context* actions;     /* one a link */
+  mybgo_contact_entry* contacts; /* one a contact link, in the order added */
+  size_t contact_count;
 };
 
 void mybgo_system_destroy(mybgo_system* s) {
@@ -22,6 +32,7 @@ void mybgo_system_destroy(mybgo_system* s) {
     return;
   }
   myb_system_destroy(s->system);
+  free(s->contacts);
   free(s->actions);
   free(s->points);
   free(s->guided);
@@ -84,7 +95,12 @@ static myb_status add_link(mybgo_system* s, size_t j, const mybgo_system_link* d
                                           .law = d->law,
                                           .points = s->points + d->first_point,
                                           .point_count = d->point_count};
-      return myb_system_add_contact(s->system, d->a, d->b, &contact);
+      const myb_status status = myb_system_add_contact(s->system, d->a, d->b, &contact);
+      if (status == MYB_OK) {
+        s->contacts[s->contact_count++] =
+            (mybgo_contact_entry){.body = d->a, .ground = d->b, .point_count = d->point_count};
+      }
+      return status;
     }
     case MYBGO_LINK_ACTION:
       s->actions[j].handle = d->handle;
@@ -117,8 +133,9 @@ myb_status mybgo_system_create(const mybgo_system_options* options, const mybgo_
   s->guided = calloc(guided_count > 0 ? guided_count : 1, sizeof *s->guided);
   s->points = calloc(point_count > 0 ? point_count : 1, sizeof *s->points);
   s->actions = calloc(link_count > 0 ? link_count : 1, sizeof *s->actions);
+  s->contacts = calloc(link_count > 0 ? link_count : 1, sizeof *s->contacts);
   if (gm == NULL || s->orientations == NULL || s->guided == NULL || s->points == NULL ||
-      s->actions == NULL) {
+      s->actions == NULL || s->contacts == NULL) {
     goto fail;
   }
   for (size_t i = 0; i < body_count; ++i) {
@@ -231,6 +248,72 @@ myb_status mybgo_system_unpack(const mybgo_system* s, const double* y, double* b
     status = myb_system_unpack_spins(s->system, spins[k].pair, y, spins[k].chi1, spins[k].chi2);
   }
   return status;
+}
+
+/* The count of points of the contact number `contact` among those in place; 0: no such contact.
+ * A merger drops exactly the contacts of the body it takes away. */
+static size_t contact_points(const mybgo_system* s, size_t contact) {
+  size_t seen = 0;
+  for (size_t k = 0; k < s->contact_count; ++k) {
+    const mybgo_contact_entry* e = &s->contacts[k];
+    if (!mybgo_system_present(s, e->body) || !mybgo_system_present(s, e->ground)) {
+      continue;
+    }
+    if (seen == contact) {
+      return e->point_count;
+    }
+    ++seen;
+  }
+  return 0;
+}
+
+myb_status mybgo_system_contacts(const mybgo_system* s, int pack, double* y, const size_t* contacts,
+                                 size_t* counts, size_t count, double* deflections, size_t capacity,
+                                 size_t* failed) {
+  myb_status status = MYB_OK;
+  size_t used = 0;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    const size_t points = contact_points(s, contacts[k]);
+    /* the deflections are 3 values a point of the contact: their count is checked against the
+     * points before the library reads or writes them */
+    if (points == 0 || (pack && counts[k] != points) || points > (capacity - used) / 3) {
+      status = MYB_E_DOMAIN;
+      break;
+    }
+    status = pack ? myb_system_pack_contact(s->system, contacts[k], deflections + used, y)
+                  : myb_system_unpack_contact(s->system, contacts[k], y, deflections + used);
+    if (status != MYB_OK) {
+      break;
+    }
+    counts[k] = points;
+    used += 3 * points;
+  }
+  return mybgo_end(status, k, failed);
+}
+
+/* ---- The force of a contact ------------------------------------------------------------------ */
+
+myb_status mybgo_contact_forces(const myb_contact_surface* surface, const myb_contact_law* law,
+                                const myb_contact_point* points, size_t point_count,
+                                const mybgo_contact_sample* samples, size_t count,
+                                const double* deflections, double* deflection_rates,
+                                myb_contact_result* results, size_t* failed) {
+  const int sticks = law->kind == MYB_CONTACT_FRICTION_STICK;
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    const mybgo_contact_sample* q = &samples[k];
+    const size_t at = 3 * point_count * k;
+    status = myb_contact_force_stick(
+        surface, law, points, point_count, q->x, q->v, q->has_attitude ? q->attitude : NULL,
+        q->has_omega ? q->omega : NULL, sticks && deflections != NULL ? deflections + at : NULL,
+        sticks && deflection_rates != NULL ? deflection_rates + at : NULL, &results[k]);
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  return mybgo_end(status, k, failed);
 }
 
 /* ---- Runs ------------------------------------------------------------------------------------ */

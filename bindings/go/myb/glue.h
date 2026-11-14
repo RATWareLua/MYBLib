@@ -192,6 +192,7 @@ typedef struct mybgo_model_options {
   const myb_timesys* timesys; /* NULL: one time scale */
   const char* scale;
   double table_step;
+  int break_scheme; /* myb_break_scheme (myb_force_model_set_break_scheme) */
 } mybgo_model_options;
 
 typedef struct mybgo_model mybgo_model;

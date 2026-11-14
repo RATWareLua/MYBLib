@@ -49,4 +49,33 @@ int cref_light_time(double c, double mu, const double* target, const double* obs
 int cref_ck_pointing(const char* ck_path, int instrument, double ticks, double* q);
 int cref_sclk_time(const char* kernel, long long id, double ticks, long long* s, double* f);
 
+/* An orbit about a point mass with the pressure of the light of a star on a Kepler orbit
+ * (epoch 0), the shadow of the planet declared as breaks, by IAS15 with a break scheme and a
+ * timescale: the states at the times and the steps. */
+int cref_shadow_orbit(double gm, double radius, double sun_gm, double sun_radius, const double* sun,
+                      double sun_mu, double luminosity, double area, double cr, int scheme,
+                      int timescale, const double* y0, double t_end, const double* times,
+                      size_t count, double* states, long long* steps);
+/* Body 1 on a plane of body 0 (law: k, n, c, mu, v_s, k_t, c_t; the friction that sticks): the
+ * acceleration of the state packed from the bodies (6 values each) and the deflections of
+ * contact 0 (n values), the run by IAS15 with the jerk timescale (states 2 n each), the
+ * deflections of the last state. */
+int cref_contact_system(const double* gm, const double* point, const double* normal,
+                        const double* law, const myb_contact_point* points, size_t point_count,
+                        const double* bodies, const double* deflections, const double* times,
+                        size_t count, double* a, double* states, double* final_deflections,
+                        size_t* coordinates);
+/* The force of a plane at count states, by myb_contact_force (the smooth friction) or
+ * myb_contact_force_stick: 9 values each (force, torque, energy, gap, touching). */
+int cref_contact_forces(const double* point, const double* normal, const double* law, int kind,
+                        const myb_contact_point* points, size_t point_count, const double* x,
+                        const double* v, const double* attitude, const double* omega,
+                        const double* deflections, size_t count, double* results,
+                        double* deflection_rates, size_t* failed);
+/* Two bodies with a PN pair and spins: the accelerations (n values each) of count states (12
+ * values and two spins each). */
+int cref_pn_binary(const double* gm, unsigned orders, double c, double r0, double kappa1,
+                   double kappa2, const double* bodies, const double* chi1, const double* chi2,
+                   size_t count, double* a, size_t* coordinates, size_t* failed);
+
 #endif /* MYBGO_CREF_H_ */

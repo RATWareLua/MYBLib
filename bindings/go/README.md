@@ -14,21 +14,28 @@ is the coarse layer of the library only — every call is a whole task:
 - **a force model assembled from data**: `ModelSpec` lists the bodies (their GM, radii,
   luminosities; states from an `Ephemeris`; orientations: fixed, the Earth's with observed EOP,
   a binary PCK, a WGCCRE model) and the terms — `PointMass`, `ThirdBody`, `Field` (a
-  `GravityField`), `Drag` (an exponential atmosphere), `Radiation` (with shadows),
-  `Schwarzschild`, `LenseThirring`, `DeSitter`, `Empirical` — and the parameters a fit
-  estimates; `NewModel` turns it into the environment and the model of the library in one call;
+  `GravityField`), `Drag` (an exponential atmosphere), `Radiation` (with shadows, their edges
+  declared as breaks), `Schwarzschild`, `LenseThirring`, `DeSitter`, `Empirical` — the
+  parameters a fit estimates, and how IAS15 ends its steps at the breaks (`BreakScheme`:
+  withdrawn and retaken, or aimed at the breaks predicted); `NewModel` turns it into the
+  environment and the model of the library in one call;
 - **a propagation** (`Model.Propagate`: states at many times, the transition matrices and the
-  sensitivities, impulsive manoeuvres), **a search for events** (`Model.Events`: nodes,
+  sensitivities, impulsive manoeuvres; the timescale of the IAS15 step, `TimescaleJerk` for an
+  acceleration that passes through zero), **a search for events** (`Model.Events`: nodes,
   apsides, distances, altitudes, the elevation over a station, eclipses), **a fit of an orbit**
   (`Model.Fit`: positions, states, range, range rate, angles from stations, with the light
   time, systematic shifts, a priori information) — one call each;
 - **systems of bodies** (`SystemSpec`, `NewSystem`): the point masses with their graph, the
   1PN terms and the fast multipole method, and the levels — fields, figures, tides,
-  distortions, pairs beyond 1PN, frame dragging, contact, guided bodies, actions in Go — with
-  orientations given or rotations integrated; `System.Run` integrates through the times asked,
-  the contacts merged, bounced or stopped at and the approaches reported as events;
-  `Invariants`, `PNInvariants`, `Partials` (the variational equations of the system),
-  `Accelerations`, `PackState`/`UnpackState`; Wisdom-Holman runs of point masses (`RunWH`);
+  distortions, pairs beyond 1PN (the spin terms and the tails up to `PNSS3`, `PNSORR5`,
+  `PNSOTAIL`, `PNTAILX`), frame dragging, contact (the friction smooth or sticking), guided
+  bodies, actions in Go — with orientations given or rotations integrated; `System.Run`
+  integrates through the times asked, the contacts merged, bounced or stopped at and the
+  approaches reported as events; `Invariants`, `PNInvariants`, `Partials` (the variational
+  equations of the system), `Accelerations`, `PackState`/`UnpackState` and
+  `PackContacts`/`UnpackContacts` (the deflections of the springs of a friction that sticks);
+  the force of a contact over many states (`ContactForces`); Wisdom-Holman runs of point
+  masses (`RunWH`);
 - **estimation**: the fit, the filter and the smoother over a batch of observations
   (`Model.Filter`), the measurements over slices (`Model.Measure`), the covariance carried
   along an orbit (`Model.PropagateCovariance`, `CovariancesRTN`);

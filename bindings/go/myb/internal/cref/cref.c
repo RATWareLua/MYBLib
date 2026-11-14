@@ -472,3 +472,235 @@ int cref_sclk_time(const char* kernel, long long id, double ticks, long long* s,
   myb_kpool_destroy(pool);
   return (int)status;
 }
+
+/* ---- Breaks, timescales, contacts, PN tails ---------------------------------------------------
+ */
+
+static myb_status cref_kepler_state(void* context, myb_time t, double state[6]) {
+  const cref_body* b = context;
+  const myb_time zero = {0};
+  return kepler_body(b->state, zero, b->mu, t, state);
+}
+
+int cref_shadow_orbit(double gm, double radius, double sun_gm, double sun_radius, const double* sun,
+                      double sun_mu, double luminosity, double area, double cr, int scheme,
+                      int timescale, const double* y0, double t_end, const double* times,
+                      size_t count, double* states, long long* steps) {
+  myb_env* env = NULL;
+  myb_force_model* model = NULL;
+  myb_orbit* orbit = NULL;
+  cref_body star_state = {.mu = sun_mu};
+  memcpy(star_state.state, sun, sizeof star_state.state);
+  const myb_env_options env_options = {0};
+  myb_env_body earth = {0};
+  earth.id = 399;
+  earth.gm = gm;
+  earth.radius = radius;
+  myb_env_body star = {0};
+  star.id = 10;
+  star.gm = sun_gm;
+  star.radius = sun_radius;
+  star.luminosity = luminosity;
+  star.state = cref_kepler_state;
+  star.state_context = &star_state;
+  myb_point_mass_term point_mass = {.gm = gm};
+  const myb_object object = {.mass = 1.0, .area = area, .cr = cr};
+  myb_radiation_term radiation = {
+      .env = NULL, .source = 1, .object = &object, .c = 299792458.0, .occulter_count = 1};
+  myb_eclipse_event breaks[2];
+  size_t index = 0;
+  myb_status status = myb_env_create(&env_options, NULL, &env);
+  if (status == MYB_OK) {
+    status = myb_force_model_create(NULL, &model);
+  }
+  if (status == MYB_OK) {
+    myb_force_model_set_break_scheme(model, (myb_break_scheme)scheme);
+    status = myb_env_add_body(env, &earth, &index);
+  }
+  if (status == MYB_OK) {
+    status = myb_env_add_body(env, &star, &index);
+  }
+  if (status == MYB_OK) {
+    status = myb_force_model_add(model, "earth", myb_term_point_mass, myb_term_point_mass_jacobian,
+                                 &point_mass, NULL);
+  }
+  if (status == MYB_OK) {
+    radiation.env = env;
+    radiation.occulters[0] = 0;
+    status = myb_force_model_add(model, "srp", myb_term_radiation, myb_term_radiation_jacobian,
+                                 &radiation, NULL);
+  }
+  if (status == MYB_OK) {
+    status = myb_term_radiation_breaks(&radiation, model, breaks);
+  }
+  const myb_orbit_options options = {.timescale = (myb_ias15_timescale)timescale};
+  if (status == MYB_OK) {
+    status = myb_orbit_create(model, &options, NULL, &orbit);
+  }
+  if (status == MYB_OK) {
+    status = myb_orbit_start(orbit, 0.0, y0, t_end);
+  }
+  for (size_t k = 0; k < count && status == MYB_OK; ++k) {
+    status = myb_orbit_state(orbit, times[k], states + 6 * k);
+  }
+  *steps = orbit != NULL ? (long long)myb_orbit_steps(orbit) : 0;
+  myb_orbit_destroy(orbit);
+  myb_force_model_destroy(model);
+  myb_env_destroy(env);
+  return (int)status;
+}
+
+static myb_contact_law cref_law(const double* law, int kind) {
+  myb_contact_law out = {0};
+  out.stiffness = law[0];
+  out.exponent = law[1];
+  out.damping = law[2];
+  out.friction = law[3];
+  out.slip = law[4];
+  out.kind = (myb_contact_friction)kind;
+  out.tangential_stiffness = law[5];
+  out.tangential_damping = law[6];
+  return out;
+}
+
+static myb_contact_surface cref_plane(const double* point, const double* normal) {
+  myb_contact_surface out = {0};
+  out.shape = MYB_CONTACT_PLANE;
+  memcpy(out.point, point, sizeof out.point);
+  memcpy(out.normal, normal, sizeof out.normal);
+  return out;
+}
+
+int cref_contact_system(const double* gm, const double* point, const double* normal,
+                        const double* law, const myb_contact_point* points, size_t point_count,
+                        const double* bodies, const double* deflections, const double* times,
+                        size_t count, double* a, double* states, double* final_deflections,
+                        size_t* coordinates) {
+  myb_system* system = NULL;
+  myb_ias15* integrator = NULL;
+  const myb_system_contact contact = {.surface = cref_plane(point, normal),
+                                      .law = cref_law(law, MYB_CONTACT_FRICTION_STICK),
+                                      .points = points,
+                                      .point_count = point_count};
+  double* y0 = NULL;
+  *coordinates = 0;
+  myb_status status = myb_system_create(2, gm, NULL, &system);
+  if (status == MYB_OK) {
+    status = myb_system_add_contact(system, 1, 0, &contact);
+  }
+  size_t n = 0;
+  if (status == MYB_OK) {
+    n = myb_system_coordinates(system);
+    *coordinates = n;
+    y0 = calloc(2 * n, sizeof *y0);
+    status = y0 != NULL ? MYB_OK : MYB_E_NOMEM;
+  }
+  if (status == MYB_OK) {
+    for (size_t i = 0; i < 2; ++i) {
+      memcpy(y0 + 3 * i, bodies + 6 * i, 3 * sizeof(double));
+      memcpy(y0 + n + 3 * i, bodies + 6 * i + 3, 3 * sizeof(double));
+    }
+    status = myb_system_pack_contact(system, 0, deflections, y0);
+  }
+  if (status == MYB_OK) {
+    status = myb_system_acceleration(system, 0.0, y0, y0 + n, a);
+  }
+  const myb_ias15_options options = {.timescale = MYB_IAS15_TIMESCALE_JERK};
+  if (status == MYB_OK) {
+    status = myb_system_integrator(system, &options, NULL, &integrator);
+  }
+  if (status == MYB_OK) {
+    status = myb_ias15_start(integrator, myb_system_acceleration, system, 0.0, y0);
+  }
+  for (size_t k = 0; k < count && status == MYB_OK; ++k) {
+    myb_system_event e;
+    status = myb_system_advance(system, integrator, times[k], 0.0, &e);
+    if (status == MYB_OK && e.kind != MYB_SYSTEM_ARRIVED) {
+      status = MYB_E_DOMAIN; /* not expected: no spheres to touch */
+    }
+    if (status == MYB_OK) {
+      memcpy(states + 2 * n * k, myb_ias15_state(integrator), 2 * n * sizeof(double));
+    }
+  }
+  if (status == MYB_OK && count > 0) {
+    status = myb_system_unpack_contact(system, 0, states + 2 * n * (count - 1), final_deflections);
+  }
+  free(y0);
+  myb_ias15_destroy(integrator);
+  myb_system_destroy(system);
+  return (int)status;
+}
+
+int cref_contact_forces(const double* point, const double* normal, const double* law, int kind,
+                        const myb_contact_point* points, size_t point_count, const double* x,
+                        const double* v, const double* attitude, const double* omega,
+                        const double* deflections, size_t count, double* results,
+                        double* deflection_rates, size_t* failed) {
+  const myb_contact_surface surface = cref_plane(point, normal);
+  const myb_contact_law contact_law = cref_law(law, kind);
+  myb_status status = MYB_OK;
+  size_t k = 0;
+  for (; k < count; ++k) {
+    myb_contact_result r;
+    status =
+        kind == MYB_CONTACT_FRICTION_STICK
+            ? myb_contact_force_stick(&surface, &contact_law, points, point_count, x + 3 * k,
+                                      v + 3 * k, attitude, omega, deflections + 3 * point_count * k,
+                                      deflection_rates + 3 * point_count * k, &r)
+            : myb_contact_force(&surface, &contact_law, points, point_count, x + 3 * k, v + 3 * k,
+                                attitude, omega, &r);
+    if (status != MYB_OK) {
+      break;
+    }
+    double* out = results + 9 * k;
+    memcpy(out, r.force, sizeof r.force);
+    memcpy(out + 3, r.torque, sizeof r.torque);
+    out[6] = r.energy;
+    out[7] = r.gap;
+    out[8] = (double)r.touching;
+  }
+  *failed = k;
+  return (int)status;
+}
+
+int cref_pn_binary(const double* gm, unsigned orders, double c, double r0, double kappa1,
+                   double kappa2, const double* bodies, const double* chi1, const double* chi2,
+                   size_t count, double* a, size_t* coordinates, size_t* failed) {
+  myb_system* system = NULL;
+  const myb_system_pn_pair pair = {
+      .orders = orders, .c = c, .r0 = r0, .kappa1 = kappa1, .kappa2 = kappa2};
+  double* y = NULL;
+  *coordinates = 0;
+  *failed = 0;
+  myb_status status = myb_system_create(2, gm, NULL, &system);
+  if (status == MYB_OK) {
+    status = myb_system_add_pn_pair(system, 0, 1, &pair);
+  }
+  size_t n = 0;
+  if (status == MYB_OK) {
+    n = myb_system_coordinates(system);
+    *coordinates = n;
+    y = calloc(2 * n, sizeof *y);
+    status = y != NULL ? MYB_OK : MYB_E_NOMEM;
+  }
+  size_t k = 0;
+  for (; k < count && status == MYB_OK; ++k) {
+    memset(y, 0, 2 * n * sizeof *y);
+    const double* b = bodies + 12 * k;
+    for (size_t i = 0; i < 2; ++i) {
+      memcpy(y + 3 * i, b + 6 * i, 3 * sizeof(double));
+      memcpy(y + n + 3 * i, b + 6 * i + 3, 3 * sizeof(double));
+    }
+    status = myb_system_pack_spins(system, 0, chi1 + 3 * k, chi2 + 3 * k, y);
+    if (status == MYB_OK) {
+      status = myb_system_acceleration(system, 0.0, y, y + n, a + n * k);
+    }
+    if (status != MYB_OK) {
+      break;
+    }
+  }
+  *failed = k;
+  free(y);
+  myb_system_destroy(system);
+  return (int)status;
+}

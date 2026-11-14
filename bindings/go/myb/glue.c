@@ -303,6 +303,14 @@ myb_status mybgo_model_create(const mybgo_model_options* options, const mybgo_bo
   if (status == MYB_OK) {
     status = myb_force_model_create(NULL, &m->model);
   }
+  if (status == MYB_OK) {
+    /* an unknown scheme is a contract of the library: refused here */
+    if (options->break_scheme != MYB_BREAKS_RETAKE && options->break_scheme != MYB_BREAKS_PREDICT) {
+      status = MYB_E_DOMAIN;
+    } else {
+      myb_force_model_set_break_scheme(m->model, (myb_break_scheme)options->break_scheme);
+    }
+  }
   if (status != MYB_OK) {
     goto fail;
   }

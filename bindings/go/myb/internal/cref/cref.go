@@ -177,3 +177,80 @@ func SCLKTime(kernel string, id int64, ticks float64) (int, int64, float64) {
 	status := C.cref_sclk_time(ck, C.longlong(id), C.double(ticks), &s, &f)
 	return int(status), int64(s), float64(f)
 }
+
+// ShadowOrbit: the states (6 each) at the times of an orbit through the shadow of a planet
+// with breaks, by a break scheme and a timescale, and the steps.
+func ShadowOrbit(gm, radius, sunGM, sunRadius float64, sun []float64, sunMU, luminosity, area, cr float64,
+	scheme, timescale int, y0 []float64, tEnd float64, times []float64) (int, []float64, int64) {
+	states := make([]float64, 6*len(times))
+	var steps C.longlong
+	status := C.cref_shadow_orbit(C.double(gm), C.double(radius), C.double(sunGM),
+		C.double(sunRadius), d(sun),
+		C.double(sunMU), C.double(luminosity), C.double(area), C.double(cr), C.int(scheme),
+		C.int(timescale), d(y0), C.double(tEnd), d(times), C.size_t(len(times)), d(states), &steps)
+	return int(status), states, int64(steps)
+}
+
+func points(p []float64) []C.myb_contact_point {
+	out := make([]C.myb_contact_point, len(p)/4)
+	for k := range out {
+		for i := range 3 {
+			out[k].offset[i] = C.double(p[4*k+i])
+		}
+		out[k].radius = C.double(p[4*k+3])
+	}
+	return out
+}
+
+func pointsOf(p []C.myb_contact_point) *C.myb_contact_point {
+	if len(p) == 0 {
+		return nil
+	}
+	return &p[0]
+}
+
+// ContactSystem: the acceleration of the packed state (n), the states at the times (2 n each)
+// and the deflections of the last; pts holds 4 values a point (offset, radius).
+func ContactSystem(gm, point, normal, law, pts, bodies, deflections, times []float64) (int, []float64, []float64, []float64) {
+	cp := points(pts)
+	n := 6 + 3*len(cp)
+	a := make([]float64, n)
+	states := make([]float64, 2*n*len(times))
+	final := make([]float64, 3*len(cp))
+	var coordinates C.size_t
+	status := C.cref_contact_system(d(gm), d(point), d(normal), d(law), pointsOf(cp),
+		C.size_t(len(cp)), d(bodies), d(deflections), d(times), C.size_t(len(times)), d(a),
+		d(states), d(final), &coordinates)
+	if int(coordinates) != n {
+		return -1, nil, nil, nil
+	}
+	return int(status), a, states, final
+}
+
+// ContactForces: 9 values a state (force, torque, energy, gap, touching), the rates of the
+// deflections (with the friction that sticks), the state that failed.
+func ContactForces(point, normal, law []float64, kind int, pts, x, v, attitude, omega, deflections []float64) (int, []float64, []float64, int) {
+	cp := points(pts)
+	count := len(x) / 3
+	results := make([]float64, 9*count)
+	rates := make([]float64, 3*len(cp)*count)
+	var failed C.size_t
+	status := C.cref_contact_forces(d(point), d(normal), d(law), C.int(kind), pointsOf(cp),
+		C.size_t(len(cp)), d(x), d(v), d(attitude), d(omega), d(deflections), C.size_t(count),
+		d(results), d(rates), &failed)
+	return int(status), results, rates, int(failed)
+}
+
+// PNBinary: the accelerations (n each) of the states (12 values each) with the spins (3 each),
+// and the state that failed.
+func PNBinary(gm []float64, orders uint, c, r0, kappa1, kappa2 float64, bodies, chi1, chi2 []float64) (int, []float64, int) {
+	count := len(bodies) / 12
+	a := make([]float64, 12*count) // n = 6 + 6 with the spins
+	var coordinates, failed C.size_t
+	status := C.cref_pn_binary(d(gm), C.uint(orders), C.double(c), C.double(r0), C.double(kappa1),
+		C.double(kappa2), d(bodies), d(chi1), d(chi2), C.size_t(count), d(a), &coordinates, &failed)
+	if status == 0 && coordinates != 12 {
+		return -1, nil, 0
+	}
+	return int(status), a, int(failed)
+}

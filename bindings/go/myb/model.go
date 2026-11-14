@@ -30,7 +30,20 @@ type ModelSpec struct {
 	Bodies     []Body
 	Terms      []Term
 	Parameters []Parameter
+	// how IAS15 ends its steps at the breaks of the model (the edges of shadows of a Radiation
+	// term with Breaks): BreaksRetake (the default) or BreaksPredict
+	BreakScheme BreakScheme
 }
+
+// BreakScheme is how myb_orbit with IAS15 ends its steps at the breaks of a model
+// (myb_break_scheme).
+type BreakScheme int
+
+// The schemes.
+const (
+	BreaksRetake  BreakScheme = C.MYB_BREAKS_RETAKE  // a step across a break is withdrawn and retaken
+	BreaksPredict BreakScheme = C.MYB_BREAKS_PREDICT // the steps are aimed at the breaks predicted
+)
 
 // Body is a body of the environment, by its index in ModelSpec.Bodies. Everything is optional:
 // zero means absent. The body without a State is the origin of the coordinates (one at most).
@@ -337,8 +350,11 @@ func NewModel(spec ModelSpec) (*Model, error) {
 	if !validTime(spec.Epoch) {
 		return nil, refuse(op, -1, "an epoch out of range")
 	}
+	if spec.BreakScheme != BreaksRetake && spec.BreakScheme != BreaksPredict {
+		return nil, refuse(op, -1, "an unknown break scheme")
+	}
 	options := C.mybgo_model_options{epoch: cTime(spec.Epoch), scale: k.optional(spec.Scale),
-		table_step: C.double(spec.TableStep)}
+		table_step: C.double(spec.TableStep), break_scheme: C.int(spec.BreakScheme)}
 	sys, err := k.hold(spec.TimeSystem.obj())
 	if err != nil {
 		return nil, err
@@ -553,13 +569,23 @@ type OrbitOptions struct {
 	Variational bool    // integrate the variational equations (set by Propagation.Partials)
 	Integrator  Integrator
 	RTol, ATol  float64 // DOP853 and RKN12 tolerances; 0 = 1e-12, 1e-9
+	Timescale   IAS15Timescale
 }
+
+// IAS15Timescale is the timescale that sets the step of IAS15 (myb_ias15_timescale).
+type IAS15Timescale int
+
+// The timescales.
+const (
+	TimescaleAcceleration IAS15Timescale = C.MYB_IAS15_TIMESCALE_ACCELERATION // the default
+	TimescaleJerk         IAS15Timescale = C.MYB_IAS15_TIMESCALE_JERK         // for a contact
+)
 
 func (o OrbitOptions) c() C.myb_orbit_options {
 	return C.myb_orbit_options{epsilon: C.double(o.Epsilon), h_max: C.double(o.HMax),
 		max_steps: C.int64_t(o.MaxSteps), variational: flag(o.Variational),
 		integrator: C.myb_orbit_integrator(o.Integrator), rtol: C.double(o.RTol),
-		atol: C.double(o.ATol)}
+		atol: C.double(o.ATol), timescale: C.myb_ias15_timescale(o.Timescale)}
 }
 
 // Impulse is an impulsive manoeuvre: at the model time T the velocity changes by DV (m/s).
