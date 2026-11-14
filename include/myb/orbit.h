@@ -15,7 +15,22 @@
  * ends at each of them: a step that would contain one is taken again up to it. The result
  * then does not depend on where the steps happen to fall around the edge, and its error falls
  * with the precision asked for as it does for a smooth force. The transition matrix and the
- * sensitivities continue across. */
+ * sensitivities continue across.
+ *
+ * With IAS15 the steps may instead be aimed at the breaks predicted before them
+ * (myb_force_model_set_break_scheme, MYB_BREAKS_PREDICT), so that no step is thrown away.
+ * Measured on the fit of LAGEOS (tests/unit/test_lageos.c, a week, 176 edges of the shadows of
+ * the Earth and the Moon) at epsilon 1e-9, 1e-10, 1e-11, 1e-12: the model evaluated 169 778,
+ * 196 804, 244 341, 318 308 times withdrawing the steps and 160 570, 188 045, 240 809, 314 696
+ * times aiming them (5.4, 4.5, 1.4, 1.1 % less); the residual of the first guess within
+ * 3e-6 m of withdrawing at 1e-12 either way, the fit 1.5685 cm either way. The prediction
+ * itself — the break functions on the polynomial carried over the next step — costs no
+ * evaluation of the model but evaluations of the breaks, and the time of the fit, three
+ * rounds on a shared machine, spread over a factor of two for one and the same case, with the
+ * least times 28.6 / 26.0, 31.9 / 35.7, 40.5 / 44.3, 53.3 / 50.9 s: no gain shows. The
+ * default stays MYB_BREAKS_RETAKE. (The breaks cost the fit 26 % against steps across the
+ * edges; aiming saves 1 to 5 % of the evaluations, so most of that price is not the steps
+ * withdrawn but the shorter steps around the edges, which every scheme pays.) */
 #ifndef MYB_ORBIT_H_
 #define MYB_ORBIT_H_
 
@@ -54,12 +69,16 @@ typedef struct myb_orbit_options {
   myb_orbit_integrator integrator;
   double rtol; /* DOP853 and RKN12: relative tolerance; 0 = 1e-12 */
   double atol; /* DOP853 and RKN12: absolute tolerance (m and m/s); 0 = 1e-9 */
+  myb_ias15_timescale timescale; /* IAS15 (with or without the variational equations): the
+                                    timescale of its step (myb/integ.h); 0 = that of a.
+                                    MYB_IAS15_TIMESCALE_JERK for an acceleration that passes
+                                    through zero: a contact (myb/contact.h) */
 } myb_orbit_options;
 
 /* The model must outlive the object; with variational != 0 its parameters at this moment are
  * those differentiated. options may be NULL (defaults). Errors: MYB_E_DOMAIN (negative
- * options, an integrator that is not one of the three, RKN12 with variational), MYB_E_NOMEM,
- * MYB_E_OVERFLOW. */
+ * options, an integrator that is not one of the three, RKN12 with variational, an unknown
+ * timescale), MYB_E_NOMEM, MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_orbit_create(myb_force_model* model,
                                                   const myb_orbit_options* options,
                                                   const myb_allocator* allocator,

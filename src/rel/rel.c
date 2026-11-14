@@ -360,8 +360,8 @@ static myb_status pn_binary(const myb_pn_binary* b, double newton, const double 
   if ((orders & (MYB_PN_3 | MYB_PN_4)) && !(b->r0 > 0.0 && b->r0 < 1e300)) {
     return MYB_E_DOMAIN;
   }
-  if ((orders & MYB_PN_SS) && !(b->kappa1 >= 0.0 && b->kappa1 < 1e300 && b->kappa2 >= 0.0 &&
-                                b->kappa2 < 1e300)) {
+  if ((orders & (MYB_PN_SS | MYB_PN_SS3)) &&
+      !(b->kappa1 >= 0.0 && b->kappa1 < 1e300 && b->kappa2 >= 0.0 && b->kappa2 < 1e300)) {
     return MYB_E_DOMAIN;
   }
   const double gm = gm1 + gm2;

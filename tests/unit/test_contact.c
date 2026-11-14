@@ -10,6 +10,9 @@
  *    never growing;
  *  - a block sliding with friction: the times against the closed form of the regularised law,
  *    and the stop against v0 / (mu g);
+ *  - the dropped ball and the sliding block under IAS15 (the timescale of a', the touches
+ *    predicted or withdrawn) against DOP853, with the steps of each; the timescale of a alone
+ *    stopping at the first contact;
  *  - on a mesh: the rebound from a face against that from a plane, from an edge and from a
  *    corner along the line to the ball;
  *  - a ball on the equator of a turning asteroid (a term with an environment): carried along by
@@ -17,6 +20,12 @@
  *  - a lander on four legs (a system with an integrated rotation): settling on a slope below
  *    the angle of friction at the creep speed of the closed form, sliding down a steeper one
  *    at g (sin a - mu cos a); the energy never growing;
+ *  - friction that sticks (a spring with a slip limit, its deflections carried in the state of
+ *    the system): a block let go on a slope rests at the deflection of its weight, whatever the
+ *    tolerance; the slope turned slowly to a part in a thousand below the angle of friction
+ *    it holds, above it it slides at g (sin a - mu cos a); the lander stands on 15 degrees
+ *    where the smooth law creeps, slides on 40 at g (sin a - mu cos a); the energy never
+ *    growing;
  *  - momentum and angular momentum of a spinning ball bouncing off a turning body;
  *  - what is refused. */
 #include <math.h>
@@ -33,6 +42,7 @@
 #include "myb/model.h"
 #include "myb/orbit.h"
 #include "myb/system.h"
+#include "dyn/system_internal.h"
 
 static const double PI = 3.141592653589793;
 
@@ -356,8 +366,10 @@ typedef struct scene {
   myb_orbit* orbit;
 } scene;
 
-static void scene_create(scene* s, const myb_contact_surface* surface, const myb_contact_law* law,
-                         double radius, const double g[3], double rtol) {
+/* The scene with any integrator and way of meeting the breaks. */
+static void scene_create_with(scene* s, const myb_contact_surface* surface,
+                              const myb_contact_law* law, double radius, const double g[3],
+                              const myb_orbit_options* options, myb_break_scheme scheme) {
   memset(s, 0, sizeof *s);
   memcpy(s->g.g, g, sizeof s->g.g);
   s->contact = (myb_contact_term){.env = NULL, .surface = *surface, .law = *law, .radius = radius};
@@ -367,9 +379,15 @@ static void scene_create(scene* s, const myb_contact_surface* surface, const myb
   MT_CHECK(myb_force_model_add(s->model, "contact", myb_term_contact, NULL, &s->contact, NULL) ==
            MYB_OK);
   MT_CHECK(myb_force_model_add_break(s->model, myb_event_contact, &s->contact) == MYB_OK);
+  myb_force_model_set_break_scheme(s->model, scheme);
+  MT_CHECK(myb_orbit_create(s->model, options, NULL, &s->orbit) == MYB_OK);
+}
+
+static void scene_create(scene* s, const myb_contact_surface* surface, const myb_contact_law* law,
+                         double radius, const double g[3], double rtol) {
   const myb_orbit_options options = {
       .integrator = MYB_ORBIT_DOP853, .rtol = rtol, .atol = 1e-3 * rtol, .max_steps = 0};
-  MT_CHECK(myb_orbit_create(s->model, &options, NULL, &s->orbit) == MYB_OK);
+  scene_create_with(s, surface, law, radius, g, &options, MYB_BREAKS_RETAKE);
 }
 
 static void scene_destroy(scene* s) {
@@ -561,6 +579,155 @@ static void test_slide(void) {
   scene_destroy(&s);
 }
 
+/* ---- Contact under IAS15 --------------------------------------------------------------------- */
+
+enum { DROP_TOUCHES = 64 };
+
+typedef struct drop_run {
+  int touches;
+  double touch[DROP_TOUCHES]; /* the times of the touches */
+  double rest;                /* the height of the centre at the end */
+  double speed;
+  double rise; /* the most the energy rose from one millisecond to the next */
+  long long steps;
+  long long breaks;
+} drop_run;
+
+/* The ball of test_rest dropped 0.2 m on the Moon, with these options and breaks. */
+static void drop_with(const myb_orbit_options* options, myb_break_scheme scheme, drop_run* out) {
+  const double r = 0.1;
+  const myb_contact_law law = {.stiffness = 1.0e6, .exponent = 1.5, .damping = 2.0};
+  scene s;
+  scene_create_with(&s, &ground, &law, r, (const double[3]){0, 0, -1.62}, options, scheme);
+  const double y0[6] = {0.0, 0.0, r + 0.2, 0.0, 0.0, 0.0};
+  const double t_end = 30.0;
+  MT_CHECK(myb_orbit_start(s.orbit, 0.0, y0, t_end) == MYB_OK);
+  double energy = scene_energy(&s, y0);
+  double y[6];
+  out->rise = 0.0;
+  /* bound: the samples of 30 s every millisecond */
+  for (int k = 1; k <= 30000; ++k) {
+    MT_CHECK(myb_orbit_state(s.orbit, t_end * k / 30000.0, y) == MYB_OK);
+    const double e = scene_energy(&s, y);
+    out->rise = fmax(out->rise, e - energy);
+    energy = e;
+  }
+  out->rest = y[2];
+  out->speed = norm3(y + 3);
+  out->steps = (long long)myb_orbit_steps(s.orbit);
+  out->breaks = (long long)myb_orbit_breaks(s.orbit);
+  MT_CHECK(myb_orbit_start(s.orbit, 0.0, y0, t_end) == MYB_OK);
+  out->touches = 0;
+  /* bound: DROP_TOUCHES touches */
+  for (int k = 0; k < DROP_TOUCHES; ++k) {
+    int found = 0;
+    double t = 0.0;
+    MT_CHECK(myb_orbit_event(s.orbit, myb_event_contact, &s.contact, t_end, -1, &found, &t, y) ==
+             MYB_OK);
+    if (!found) {
+      break;
+    }
+    out->touch[out->touches++] = t;
+  }
+  scene_destroy(&s);
+}
+
+typedef struct slide_run {
+  double times[3]; /* of the speeds v0 / 2, v0 / 100, 10 v_s */
+  double worst;    /* against the closed form of the regularised law */
+  double slid;
+  long long steps;
+} slide_run;
+
+/* The block of test_slide with these options. */
+static void slide_with(const myb_orbit_options* options, myb_break_scheme scheme,
+                       slide_run* out) {
+  const double r = 0.05;
+  const double g = 9.81;
+  const double mu = 0.4;
+  const double slip = 1.0e-3;
+  const myb_contact_law law = {
+      .stiffness = 1.0e5, .exponent = 1.0, .damping = 1.0, .friction = mu, .slip = slip};
+  scene s;
+  scene_create_with(&s, &ground, &law, r, (const double[3]){0, 0, -g}, options, scheme);
+  const double v0 = 2.0;
+  const double y0[6] = {0.0, 0.0, r - g / law.stiffness, v0, 0.0, 0.0};
+  const double stop = v0 / (mu * g);
+  MT_CHECK(myb_orbit_start(s.orbit, 0.0, y0, 2.0 * stop) == MYB_OK);
+  const double targets[3] = {0.5 * v0, 0.01 * v0, 10.0 * slip};
+  out->worst = 0.0;
+  double y[6];
+  for (int k = 0; k < 3; ++k) {
+    speed_event e = {targets[k]};
+    int found = 0;
+    MT_CHECK(myb_orbit_event(s.orbit, speed_crossing, &e, 2.0 * stop, -1, &found,
+                             &out->times[k], y) == MYB_OK);
+    MT_CHECK(found);
+    out->worst = fmax(out->worst, fabs(out->times[k] - slide_time(v0, targets[k], slip, mu * g)));
+  }
+  MT_CHECK(myb_orbit_state(s.orbit, 2.0 * stop, y) == MYB_OK);
+  out->slid = y[0];
+  out->steps = (long long)myb_orbit_steps(s.orbit);
+  scene_destroy(&s);
+}
+
+/* The ball dropped on the Moon and the sliding block under IAS15 — the timescale of a' where a
+ * passes through zero, the breaks of the touches predicted or retaken — against DOP853. */
+static void test_ias15(void) {
+  const myb_orbit_options dop = {.integrator = MYB_ORBIT_DOP853, .rtol = 1e-12, .atol = 1e-15};
+  drop_run reference;
+  drop_with(&dop, MYB_BREAKS_RETAKE, &reference);
+  slide_run slide_reference;
+  slide_with(&dop, MYB_BREAKS_RETAKE, &slide_reference);
+  printf("contact under IAS15 against DOP853 (rtol 1e-12: %d touches, %lld and %lld steps):\n",
+         reference.touches, reference.steps, slide_reference.steps);
+  static const double epsilons[3] = {1e-9, 1e-10, 1e-12};
+  for (int scheme = 0; scheme < 2; ++scheme) {
+    for (int k = 0; k < 3; ++k) {
+      const myb_orbit_options options = {.epsilon = epsilons[k],
+                                         .timescale = MYB_IAS15_TIMESCALE_JERK};
+      const myb_break_scheme breaks = scheme == 0 ? MYB_BREAKS_PREDICT : MYB_BREAKS_RETAKE;
+      drop_run run;
+      drop_with(&options, breaks, &run);
+      double touch_off = 0.0;
+      const int common = run.touches < reference.touches ? run.touches : reference.touches;
+      for (int i = 0; i < common; ++i) {
+        touch_off = fmax(touch_off, fabs(run.touch[i] - reference.touch[i]));
+      }
+      slide_run slid;
+      slide_with(&options, breaks, &slid);
+      double slide_off = 0.0;
+      for (int i = 0; i < 3; ++i) {
+        slide_off = fmax(slide_off, fabs(slid.times[i] - slide_reference.times[i]));
+      }
+      printf(
+          "  %s, epsilon %.0e: ball %d touches, at %.1e s of DOP853's, at rest %.1e m from its "
+          "height, energy up by %.1e at most, %lld steps (%lld breaks); block: the times of "
+          "three speeds %.1e s from DOP853's (the closed form to %.1e s), slid %.1e m from it, "
+          "%lld steps\n",
+          scheme == 0 ? "predicted" : "retaken", epsilons[k], run.touches, touch_off,
+          fabs(run.rest - reference.rest), run.rise, run.steps, run.breaks, slide_off, slid.worst,
+          fabs(slid.slid - slide_reference.slid), slid.steps);
+      MT_CHECK(run.touches == reference.touches);
+      MT_CHECK(touch_off < 1e-7 && fabs(run.rest - reference.rest) < 1e-15);
+      MT_CHECK(run.speed < 1e-12 && run.rise < 1e-14);
+      MT_CHECK(slide_off < 1e-9 && slid.worst < 1e-9);
+      MT_CHECK(fabs(slid.slid - slide_reference.slid) < 1e-9);
+    }
+  }
+  /* the timescale of a alone stalls at the first zero of the acceleration */
+  const myb_orbit_options plain = {.epsilon = 1e-10};
+  scene s;
+  const myb_contact_law law = {.stiffness = 1.0e6, .exponent = 1.5, .damping = 2.0};
+  scene_create_with(&s, &ground, &law, 0.1, (const double[3]){0, 0, -1.62}, &plain,
+                    MYB_BREAKS_PREDICT);
+  const double y0[6] = {0.0, 0.0, 0.3, 0.0, 0.0, 0.0};
+  double y[6];
+  MT_CHECK(myb_orbit_start(s.orbit, 0.0, y0, 2.0) == MYB_OK);
+  MT_CHECK(myb_orbit_state(s.orbit, 2.0, y) == MYB_E_STEP_MIN);
+  scene_destroy(&s);
+}
+
 /* ---- On a mesh: a face, an edge, a corner ---------------------------------------------------- */
 
 static void test_mesh(void) {
@@ -743,19 +910,38 @@ typedef struct landing {
   double accel;   /* down the slope, between the last two samples */
   size_t touching;
   long steps;
+  double place[3];  /* of the centre at the end */
+  double moved;     /* the distance the centre moved over the last sample */
+  double speed;     /* |v| at the end */
+  double deflected; /* the largest deflection of a spring at the end (friction that sticks) */
 } landing;
 
-/* The lander (body 1) dropped 5 cm onto a plane through the origin of body 0 tilted by the
- * slope, its legs square to it, with a small turn to rock it. */
-static void land(double slope, double t_end, double sample, landing* out) {
+/* The friction of the lander's legs: smooth (as in phase 22) or a spring that sticks. Per leg
+ * k_t = 1000 s^-2 (the four together: 63 rad/s along the ground) and c_t = 16 s^-1 (half the
+ * critical damping of that motion); the springs slip at mu g / 4 / k_t = 0.24 mm. */
+static myb_contact_law lander_law(int stick) {
   const double g = 1.62;
-  const double mu = 0.6;
   /* per leg: k d^1.5 = g / 4 at 3 mm */
-  const myb_contact_law law = {.stiffness = 0.25 * g / pow(3.0e-3, 1.5),
-                               .exponent = 1.5,
-                               .damping = 10.0,
-                               .friction = mu,
-                               .slip = 1.0e-3};
+  myb_contact_law law = {.stiffness = 0.25 * g / pow(3.0e-3, 1.5),
+                         .exponent = 1.5,
+                         .damping = 10.0,
+                         .friction = 0.6,
+                         .slip = 1.0e-3};
+  if (stick) {
+    law.kind = MYB_CONTACT_FRICTION_STICK;
+    law.slip = 0.0;
+    law.tangential_stiffness = 1000.0;
+    law.tangential_damping = 16.0;
+  }
+  return law;
+}
+
+/* The lander (body 1) dropped 5 cm onto a plane through the origin of body 0 tilted by the
+ * slope, its legs square to it, with a small turn to rock it; DOP853 at rtol (atol 1e-12). */
+static void land_with(double slope, double t_end, double sample, int stick, double rtol,
+                      landing* out) {
+  const double g = 1.62;
+  const myb_contact_law law = lander_law(stick);
   const double n[3] = {sin(slope), 0.0, cos(slope)};
   const double down[3] = {cos(slope), 0.0, -sin(slope)};
   const double gm[2] = {0.0, 1.0e-20};
@@ -772,8 +958,8 @@ static void land(double slope, double t_end, double sample, landing* out) {
       .point_count = 4};
   MT_CHECK(myb_system_add_contact(s, 1, 0, &contact) == MYB_OK);
   const size_t nc = myb_system_coordinates(s);
-  MT_CHECK(nc == 15);
-  double y[30];
+  MT_CHECK(nc == (stick ? 27u : 15u)); /* the springs of four legs: 12 more */
+  double y[54];
   memset(y, 0, sizeof y);
   const double height = 1.05 + 0.05;
   for (int i = 0; i < 3; ++i) {
@@ -786,7 +972,7 @@ static void land(double slope, double t_end, double sample, landing* out) {
   const double omega[3] = {0.05, -0.03, 0.02};
   MT_CHECK(myb_system_pack_rotation(s, 1, q, omega, NULL, y) == MYB_OK);
   first_order f = {s, nc};
-  const myb_dop853_options options = {.rtol = 1e-10, .atol = 1e-12};
+  const myb_dop853_options options = {.rtol = rtol, .atol = 1e-12};
   myb_dop853* in = NULL;
   MT_CHECK(myb_dop853_create(2 * nc, &options, NULL, &in) == MYB_OK);
   MT_CHECK(myb_dop853_start(in, system_ode, &f, 0.0, y) == MYB_OK);
@@ -795,6 +981,7 @@ static void land(double slope, double t_end, double sample, landing* out) {
   double rise = 0.0;
   double last_along = 0.0;
   double last_t = 0.0;
+  double last_place[3] = {0.0, 0.0, 0.0};
   double accel = 0.0;
   long steps = 0;
   /* bound: the steps of t_end, within the budget of the integrator */
@@ -806,8 +993,15 @@ static void land(double slope, double t_end, double sample, landing* out) {
     double mz[9];
     myb_quat_to_matrix(qz, mz);
     myb_contact_result r;
-    MT_CHECK(myb_contact_force(&contact.surface, &law, legs, 4, z + 3, z + nc + 3, mz, w, &r) ==
-             MYB_OK);
+    double deflection[12] = {0.0};
+    if (stick) {
+      MT_CHECK(myb_system_unpack_contact(s, 0, z, deflection) == MYB_OK);
+      MT_CHECK(myb_contact_force_stick(&contact.surface, &law, legs, 4, z + 3, z + nc + 3, mz, w,
+                                       deflection, NULL, &r) == MYB_OK);
+    } else {
+      MT_CHECK(myb_contact_force(&contact.surface, &law, legs, 4, z + 3, z + nc + 3, mz, w,
+                                 &r) == MYB_OK);
+    }
     const double* v = z + nc + 3;
     const double e = 0.5 * dot3(v, v) +
                      0.5 * (lander_moments[0] * w[0] * w[0] + lander_moments[1] * w[1] * w[1] +
@@ -831,11 +1025,19 @@ static void land(double slope, double t_end, double sample, landing* out) {
       const double weight_back[3] = {r.force[0], r.force[1], r.force[2] - g};
       out->support = norm3(weight_back) / g;
       out->touching = r.touching;
+      memcpy(out->place, z + 3, sizeof out->place);
+      const double shift[3] = {z[3] - last_place[0], z[4] - last_place[1], z[5] - last_place[2]};
+      out->moved = norm3(shift);
+      out->speed = norm3(v);
+      for (int p = 0; p < 4; ++p) {
+        out->deflected = fmax(out->deflected, norm3(deflection + 3 * p));
+      }
       break;
     }
     if (t >= t_end - sample && last_t == 0.0) {
       last_t = t;
       last_along = dot3(v, down);
+      memcpy(last_place, z + 3, sizeof last_place);
     }
     if (last_t > 0.0 && t - last_t > 0.5 * sample) {
       accel = (dot3(v, down) - last_along) / (t - last_t);
@@ -850,6 +1052,10 @@ static void land(double slope, double t_end, double sample, landing* out) {
   out->steps = steps;
   myb_dop853_destroy(in);
   myb_system_destroy(s);
+}
+
+static void land(double slope, double t_end, double sample, landing* out) {
+  land_with(slope, t_end, sample, 0, 1e-10, out);
 }
 
 static void test_lander(void) {
@@ -884,6 +1090,259 @@ static void test_lander(void) {
   MT_CHECK(slide.touching == 4 && slide.rise < 1e-9);
 }
 
+/* ---- Friction that sticks: a block on a slope, the lander ------------------------------------ */
+
+typedef struct block_run {
+  double along;  /* m down the slope from where it was put, at the end */
+  double moved;  /* m over the second half of the run */
+  double speed;  /* m/s at the end */
+  double accel;  /* m/s^2 down the slope over the second half */
+  double spring; /* |z| at the end (m) */
+  double rise;   /* the most the energy rose from one step to the next */
+  long steps;
+} block_run;
+
+/* Gravity that tilts: g at `from` to the normal of the plane until `start`, turned to `to`
+ * (radians) over `ramp` seconds along a smooth step, then held. */
+typedef struct tilting {
+  double g;
+  double from;
+  double to;
+  double start;
+  double ramp;
+  double normal[3]; /* of the plane */
+  double down[3];   /* down its slope at the angle 0 ... pi/2 */
+} tilting;
+
+static double tilt_angle(const tilting* w, double t) {
+  if (t <= w->start || w->ramp <= 0.0) {
+    return t <= w->start ? w->from : w->to;
+  }
+  const double u = (t - w->start) / w->ramp;
+  const double s = u >= 1.0 ? 1.0 : u * u * (3.0 - 2.0 * u);
+  return w->from + (w->to - w->from) * s;
+}
+
+static myb_status tilting_weight(void* context, double t, const myb_system_view* view,
+                                 double acceleration[3], double torque[3]) {
+  (void)view;
+  (void)torque;
+  const tilting* w = context;
+  const double angle = tilt_angle(w, t);
+  for (int i = 0; i < 3; ++i) {
+    acceleration[i] = w->g * (sin(angle) * w->down[i] - cos(angle) * w->normal[i]);
+  }
+  return MYB_OK;
+}
+
+/* A block (a point of radius 5 cm that does not turn) put at rest on a plane at the slope
+ * `from`, pressed in by its weight, with friction mu that sticks (k_t = 1e4 s^-2, c_t = 100
+ * s^-1: half the critical damping); the slope turned to `to` over 20 s from t = 10 s (no turn
+ * when from == to); g = 1.62 m/s^2; DOP853 at rtol for t_end. */
+static void block_tilted(double from, double to, double mu, double t_end, double rtol,
+                         block_run* out) {
+  const double g = 1.62;
+  const double r = 0.05;
+  const myb_contact_law law = {.stiffness = 1.0e4,
+                               .exponent = 1.0,
+                               .damping = 5.0,
+                               .friction = mu,
+                               .kind = MYB_CONTACT_FRICTION_STICK,
+                               .tangential_stiffness = 1.0e4,
+                               .tangential_damping = 100.0};
+  /* the plane is level; the gravity turns about y, down the slope along x */
+  const double n[3] = {0.0, 0.0, 1.0};
+  const double down[3] = {1.0, 0.0, 0.0};
+  const double gm[2] = {0.0, 1.0e-20};
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+  tilting weight_of = {.g = g,
+                       .from = from,
+                       .to = to,
+                       .start = 10.0,
+                       .ramp = from == to ? 0.0 : 20.0,
+                       .normal = {0.0, 0.0, 1.0},
+                       .down = {1.0, 0.0, 0.0}};
+  MT_CHECK(myb_system_add_action(s, 1, tilting_weight, &weight_of) == MYB_OK);
+  const myb_contact_point centre[1] = {{{0.0, 0.0, 0.0}, r}};
+  const myb_system_contact contact = {
+      .surface = {.shape = MYB_CONTACT_PLANE, .point = {0, 0, 0}, .normal = {n[0], n[1], n[2]}},
+      .law = law,
+      .points = centre,
+      .point_count = 1};
+  MT_CHECK(myb_system_add_contact(s, 1, 0, &contact) == MYB_OK);
+  const size_t nc = myb_system_coordinates(s);
+  MT_CHECK(nc == 9);
+  double y[18];
+  memset(y, 0, sizeof y);
+  const double depth = g * cos(from) / law.stiffness;
+  for (int i = 0; i < 3; ++i) {
+    y[3 + i] = (r - depth) * n[i];
+  }
+  first_order f = {s, nc};
+  const myb_dop853_options options = {.rtol = rtol, .atol = 1e-3 * rtol};
+  myb_dop853* in = NULL;
+  MT_CHECK(myb_dop853_create(2 * nc, &options, NULL, &in) == MYB_OK);
+  MT_CHECK(myb_dop853_start(in, system_ode, &f, 0.0, y) == MYB_OK);
+  double energy = 0.0;
+  double rise = 0.0;
+  double half_place = 0.0;
+  double half_speed = 0.0;
+  double half_t = -1.0;
+  double last_t = 0.0;
+  long steps = 0;
+  /* bound: the steps of t_end, within the budget of the integrator */
+  for (long k = 0; k < 10000000; ++k) {
+    const double* z = myb_dop853_state(in);
+    double deflection[3];
+    MT_CHECK(myb_system_unpack_contact(s, 0, z, deflection) == MYB_OK);
+    myb_contact_result res;
+    MT_CHECK(myb_contact_force_stick(&contact.surface, &law, centre, 1, z + 3, z + nc + 3, NULL,
+                                     NULL, deflection, NULL, &res) == MYB_OK);
+    const double* v = z + nc + 3;
+    const double t = myb_dop853_time(in);
+    double pull[3];
+    MT_CHECK(tilting_weight(&weight_of, t, NULL, pull, NULL) == MYB_OK);
+    /* E = |v|^2 / 2 - g . x + the springs: kept while the gravity does not turn */
+    const double e = 0.5 * dot3(v, v) - dot3(pull, z + 3) + res.energy;
+    const int turning = weight_of.ramp > 0.0 && t > weight_of.start &&
+                        last_t < weight_of.start + weight_of.ramp;
+    if (k > 0 && !turning) {
+      rise = fmax(rise, e - energy);
+    }
+    energy = e;
+    last_t = t;
+    const double along = dot3(z + 3, down);
+    if (half_t < 0.0 && t >= 0.5 * t_end) {
+      half_t = t;
+      half_place = along;
+      half_speed = dot3(v, down);
+    }
+    if (t >= t_end) {
+      out->along = along;
+      out->moved = fabs(along - half_place);
+      out->speed = norm3(v);
+      out->accel = (dot3(v, down) - half_speed) / (t - half_t);
+      out->spring = norm3(deflection);
+      break;
+    }
+    MT_CHECK(myb_dop853_step(in, t_end) == MYB_OK);
+    ++steps;
+  }
+  out->rise = rise;
+  out->steps = steps;
+  myb_dop853_destroy(in);
+  myb_system_destroy(s);
+}
+
+static void test_stick_block(void) {
+  const double g = 1.62;
+  const double mu = 0.6;
+  const double kt = 1.0e4;
+  /* below the angle of friction: it stays, held by the spring deflected by its weight */
+  const double slope = 25.0 * PI / 180.0;
+  static const double tolerances[4] = {1e-9, 1e-10, 1e-11, 1e-12};
+  block_run run[4];
+  double spread = 0.0;
+  for (int k = 0; k < 4; ++k) {
+    memset(&run[k], 0, sizeof run[k]);
+    block_tilted(slope, slope, mu, 60.0, tolerances[k], &run[k]);
+    spread = fmax(spread, fabs(run[k].along - run[0].along));
+  }
+  const block_run* held = &run[3];
+  const double static_spring = g * sin(slope) / kt;
+  const double limit = mu * g * cos(slope) / kt;
+  printf(
+      "a block put on 25 deg with mu %.1f that sticks: after 60 s %.4e m down the slope (the "
+      "spring deflected by its weight %.4e m, its limit %.3e m), %.1e m in the last 30 s, "
+      "%.1e m/s; over rtol 1e-9 .. 1e-12 the place within %.1e m; energy never up by more "
+      "than %.1e (%ld steps)\n",
+      mu, held->along, static_spring, limit, held->moved, held->speed, spread, held->rise,
+      held->steps);
+  /* let go at once, it overshoots its rest by 16 % (half the critical damping): 0.90 of the
+   * limit, where the anchor still holds — it comes to rest by its spring alone */
+  MT_CHECK(fabs(held->along - static_spring) < 1e-9 * static_spring);
+  MT_CHECK(fabs(held->spring - static_spring) < 1e-9 * static_spring);
+  MT_CHECK(held->moved < 1e-15 && held->speed < 1e-14);
+  MT_CHECK(spread < 1e-12);
+  for (int k = 0; k < 4; ++k) {
+    MT_CHECK(run[k].rise < 1e-15);
+  }
+  /* the angle of friction: the slope turned slowly (over 20 s, the spring's period being 63 ms)
+   * from 25 deg to a part in a thousand below it — the block stays — or above it: it slides
+   * at g (sin a - mu cos a) */
+  const double friction_angle = atan(mu);
+  const double a_below = atan(mu * (1.0 - 1e-3));
+  const double a_above = atan(mu * (1.0 + 1e-3));
+  block_run below;
+  block_run above;
+  memset(&below, 0, sizeof below);
+  memset(&above, 0, sizeof above);
+  block_tilted(slope, a_below, mu, 80.0, 1e-12, &below);
+  block_tilted(slope, a_above, mu, 80.0, 1e-12, &above);
+  const double expected = g * (sin(a_above) - mu * cos(a_above));
+  const double limit_below = mu * g * cos(a_below) / kt;
+  printf(
+      "at the angle of friction (%.4f deg), turned to slowly: 1e-3 below it the block holds "
+      "%.4e m down (%.3f slip deflections: the spring 0.999 and the anchor's slip in the top 5 %% "
+      "of the limit), %.1e m in its last 40 s; 1e-3 above it slides, accelerating at %.9e "
+      "m/s^2, g (sin a - mu cos a) to %.1e\n",
+      friction_angle * 180.0 / PI, below.along, below.along / limit_below, below.moved,
+      above.accel, fabs(above.accel / expected - 1.0));
+  MT_CHECK(below.moved < 1e-14 && below.speed < 1e-14);
+  MT_CHECK(below.along > 0.999 * limit_below && below.along < 1.5 * limit_below);
+  MT_CHECK(fabs(above.accel / expected - 1.0) < 1e-6);
+  MT_CHECK(below.rise < 1e-15 && above.rise < 1e-15);
+}
+
+static void test_stick_lander(void) {
+  const double g = 1.62;
+  const double mu = 0.6;
+  /* on 15 degrees: it stands, over the tolerances */
+  static const double tolerances[3] = {1e-9, 1e-10, 1e-11};
+  landing stand[3];
+  double spread = 0.0;
+  for (int k = 0; k < 3; ++k) {
+    memset(&stand[k], 0, sizeof stand[k]);
+    land_with(15.0 * PI / 180.0, 20.0, 10.0, 1, tolerances[k], &stand[k]);
+    const double d[3] = {stand[k].place[0] - stand[0].place[0],
+                         stand[k].place[1] - stand[0].place[1],
+                         stand[k].place[2] - stand[0].place[2]};
+    spread = fmax(spread, norm3(d));
+  }
+  const landing* still = &stand[1];
+  printf(
+      "lander with friction that sticks on 15 deg: after 20 s %.1e m/s (the smooth law creeps at "
+      "5.0e-04), %.1e m in the last 10 s, %zu legs down bearing its weight to %.1e, springs "
+      "deflected up to %.3e m; over rtol 1e-9 .. 1e-11 it stands within %.1e m; energy never "
+      "up by more than %.1e (%ld steps)\n",
+      still->speed, still->moved, still->touching, still->support, still->deflected, spread,
+      still->rise, still->steps);
+  MT_CHECK(still->touching == 4 && still->speed < 1e-12 && still->moved < 1e-11);
+  MT_CHECK(still->support < 1e-9 && still->spin < 1e-12);
+  MT_CHECK(still->deflected < mu * g / 1000.0); /* a leg's limit if it bore the whole weight */
+  MT_CHECK(spread < 1e-6);
+  for (int k = 0; k < 3; ++k) {
+    MT_CHECK(stand[k].rise < 1e-9);
+  }
+  /* on 40 degrees: it slides at g (sin a - mu cos a) */
+  landing slide;
+  memset(&slide, 0, sizeof slide);
+  land_with(40.0 * PI / 180.0, 16.0, 4.0, 1, 1e-10, &slide);
+  const double expected = g * (sin(slide.slope) - mu * cos(slide.slope));
+  printf(
+      "lander with friction that sticks on 40 deg: slides at %.3f m/s, accelerating at %.9f "
+      "m/s^2, g (sin a - mu cos a) to %.1e; %zu legs down; energy never up by more than %.1e "
+      "(%ld steps)\n",
+      slide.along, slide.accel, fabs(slide.accel / expected - 1.0), slide.touching, slide.rise,
+      slide.steps);
+  MT_CHECK(fabs(slide.accel / expected - 1.0) < 1e-6);
+  MT_CHECK(slide.touching == 4 && slide.rise < 1e-9);
+  /* sliding, the springs keep within twice their limits (mu f_n / k_t, the legs bearing about
+   * g cos a / 4 each) */
+  MT_CHECK(slide.deflected < 2.0 * mu * 0.5 * g / 1000.0);
+}
+
 /* ---- Momentum and angular momentum through a contact of two turning bodies ------------------- */
 
 static void momenta(myb_system* s, const double* y, size_t nc, const double* gm,
@@ -907,6 +1366,84 @@ static void momenta(myb_system* s, const double* y, size_t nc, const double* gm,
       l[i] += gm[b] * (xv[i] + spin);
     }
   }
+}
+
+/* The derivatives of a system with a friction that sticks. myb_system_partials takes the
+ * differences of whole propagations for a system with contacts (the variations of a stiff
+ * contact on the steps of a quiet state drift: see system.c), so its answer is theirs bit for
+ * bit; the Jacobian of the system (myb_internal_system_jacobian) still has the columns of the
+ * springs of the contact, here against central differences of the acceleration. A block resting
+ * on a level plane, nudged along it gently enough to stay stuck. */
+static void test_stick_partials(void) {
+  const double g = 1.62;
+  const double r = 0.05;
+  const myb_contact_law law = {.stiffness = 1.0e4,
+                               .exponent = 1.0,
+                               .damping = 5.0,
+                               .friction = 0.6,
+                               .kind = MYB_CONTACT_FRICTION_STICK,
+                               .tangential_stiffness = 1.0e4,
+                               .tangential_damping = 100.0};
+  const double gm[2] = {0.0, 1.0e-20};
+  myb_system* s = NULL;
+  MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
+  if (s == NULL) {
+    return;
+  }
+  gravity weight_of = {{0.0, 0.0, -g}};
+  MT_CHECK(myb_system_add_action(s, 1, weight, &weight_of) == MYB_OK);
+  const myb_contact_point centre[1] = {{{0.0, 0.0, 0.0}, r}};
+  const myb_system_contact contact = {
+      .surface = {.shape = MYB_CONTACT_PLANE, .point = {0, 0, 0}, .normal = {0.0, 0.0, 1.0}},
+      .law = law,
+      .points = centre,
+      .point_count = 1};
+  MT_CHECK(myb_system_add_contact(s, 1, 0, &contact) == MYB_OK);
+  const size_t nc = myb_system_coordinates(s);
+  MT_CHECK(nc == 9);
+  double y0[18];
+  memset(y0, 0, sizeof y0);
+  y0[5] = r - g / law.stiffness; /* resting at the depth of its weight */
+  y0[nc + 3] = 2.0e-4;           /* nudged along x */
+  y0[nc + 6] = 3.0e-6;           /* the spring deflected along x */
+  const myb_ias15_options options = {.epsilon = 1e-10, .timescale = MYB_IAS15_TIMESCALE_JERK};
+  static double phi[18 * 18];
+  static double reference[18 * 18];
+  double y1[18];
+  double y1_reference[18];
+  MT_CHECK(myb_system_partials(s, &options, 0.0, y0, 0.4, NULL, 0, y1, phi, NULL) == MYB_OK);
+  MT_CHECK(myb_internal_system_partials_differences(s, &options, 0.0, y0, 0.4, NULL, 0,
+                                                    y1_reference, reference, NULL) == MYB_OK);
+  MT_CHECK(memcmp(phi, reference, sizeof phi) == 0 && memcmp(y1, y1_reference, sizeof y1) == 0);
+  /* the columns of the deflections (rates of the state from nc + 6) in the Jacobian */
+  static double jacobian[9 * 18];
+  MT_CHECK(myb_internal_system_jacobian(s, 0.0, y0, NULL, 0, jacobian, NULL) == MYB_OK);
+  double worst = 0.0;
+  double largest = 0.0;
+  for (size_t k = 6; k < 9; ++k) {
+    const double h = 0x1p-36; /* 1.5e-11 m of a deflection of 3e-6 m */
+    double plus[18];
+    double minus[18];
+    memcpy(plus, y0, sizeof plus);
+    memcpy(minus, y0, sizeof minus);
+    plus[nc + k] += h;
+    minus[nc + k] -= h;
+    double ap[9];
+    double am[9];
+    MT_CHECK(myb_system_acceleration(s, 0.0, plus, plus + nc, ap) == MYB_OK);
+    MT_CHECK(myb_system_acceleration(s, 0.0, minus, minus + nc, am) == MYB_OK);
+    for (size_t i = 0; i < nc; ++i) {
+      const double difference = (ap[i] - am[i]) / (2.0 * h);
+      largest = fmax(largest, fabs(difference));
+      worst = fmax(worst, fabs(jacobian[2 * nc * i + nc + k] - difference));
+    }
+  }
+  printf("a block that sticks: its derivatives are the differences of propagations bit for bit; "
+         "the columns of the springs in the Jacobian against central differences of the "
+         "acceleration: %.1e of %.2e\n",
+         worst, largest);
+  MT_CHECK(largest > 0.0 && worst < 1e-6 * largest);
+  myb_system_destroy(s);
 }
 
 static void test_momentum(void) {
@@ -1031,19 +1568,85 @@ static void test_refused(void) {
     MT_CHECK(myb_system_add_contact(s, 1 + (size_t)(k % 2), 0, &c) == MYB_OK);
   }
   MT_CHECK(myb_system_add_contact(s, 1, 0, &c) == MYB_E_OVERFLOW);
+  double spring[3] = {0.0, 0.0, 0.0};
+  double state[18] = {0.0};
+  MT_CHECK(myb_system_unpack_contact(s, 0, state, spring) == MYB_E_DOMAIN); /* smooth */
+  myb_system_destroy(s);
+
+  /* friction that sticks: what needs its state, and what is not a law */
+  myb_contact_law sticky = {.stiffness = 1.0,
+                            .exponent = 1.5,
+                            .friction = 0.5,
+                            .kind = MYB_CONTACT_FRICTION_STICK,
+                            .tangential_stiffness = 10.0,
+                            .tangential_damping = 1.0};
+  const double z[3] = {1e-4, 0.0, 0.0};
+  double rate[3];
+  const double moving[3] = {0.3, 0.0, 0.0};
+  MT_CHECK(myb_contact_force(&ground, &sticky, &point, 1, x, v, NULL, NULL, &r) == MYB_E_DOMAIN);
+  MT_CHECK(myb_contact_force_stick(&ground, &sticky, &point, 1, x, moving, NULL, NULL, NULL, rate,
+                                   &r) == MYB_E_DOMAIN);
+  MT_CHECK(myb_contact_force_stick(&ground, &sticky, &point, 1, x, moving, NULL, NULL,
+                                   (const double[3]){(double)NAN, 0, 0}, rate, &r) == MYB_E_DOMAIN);
+  MT_CHECK(myb_contact_force_stick(&ground, &sticky, &point, 1, x, moving, NULL, NULL, z, rate,
+                                   &r) == MYB_OK);
+  /* pressed in by 5 cm, the limit 0.5 k d^1.5 = 0.0056: the spring (0.001) below half of it
+   * holds its anchor — the rate is the velocity — and the dashpot brings the force to the
+   * limit, not beyond */
+  MT_CHECK(r.force[0] < 0.0 && fabs(r.force[0]) <= 0.5 * r.force[2] * (1.0 + 1e-15));
+  MT_CHECK(fabs(fabs(r.force[0]) - 0.5 * r.force[2]) < 1e-15);
+  MT_CHECK(rate[0] == 0.3 && rate[1] == 0.0 && rate[2] == 0.0);
+  MT_CHECK(fabs(r.energy - (0.5 * 10.0 * 1e-8 + pow(0.05, 2.5) / 2.5)) < 1e-15);
+  myb_contact_result plain;
+  myb_contact_result through;
+  MT_CHECK(myb_contact_force(&ground, &good, &point, 1, x, moving, NULL, NULL, &plain) == MYB_OK);
+  MT_CHECK(myb_contact_force_stick(&ground, &good, &point, 1, x, moving, NULL, NULL, NULL, NULL,
+                                   &through) == MYB_OK);
+  MT_CHECK(memcmp(&plain, &through, sizeof plain) == 0);
+  myb_contact_law broken = sticky;
+  broken.tangential_stiffness = 0.0;
+  MT_CHECK(myb_contact_force_stick(&ground, &broken, &point, 1, x, v, NULL, NULL, z, rate, &r) ==
+           MYB_E_DOMAIN);
+  broken = sticky;
+  broken.tangential_damping = -1.0;
+  MT_CHECK(myb_contact_force_stick(&ground, &broken, &point, 1, x, v, NULL, NULL, z, rate, &r) ==
+           MYB_E_DOMAIN);
+  broken = sticky;
+  broken.kind = (myb_contact_friction)7;
+  MT_CHECK(myb_contact_force_stick(&ground, &broken, &point, 1, x, v, NULL, NULL, z, rate, &r) ==
+           MYB_E_DOMAIN);
+  term.law = sticky;
+  MT_CHECK(myb_term_contact(&term, 0.0, x, v, a) == MYB_E_DOMAIN); /* no place for the state */
+  /* the state of the system: after every other coordinate, 3 a point */
+  MT_CHECK(myb_system_create(3, gm, NULL, &s) == MYB_OK);
+  const myb_system_rotation turning = {.moments = {1.0, 1.0, 1.0}};
+  MT_CHECK(myb_system_set_rotation(s, 2, &turning) == MYB_OK);
+  myb_system_contact held = {.surface = ground, .law = sticky, .points = &point, .point_count = 1};
+  MT_CHECK(myb_system_add_contact(s, 1, 0, &held) == MYB_OK);
+  MT_CHECK(myb_system_coordinates(s) == 9 + 9 + 3);
+  double y42[42] = {0.0};
+  MT_CHECK(myb_system_pack_contact(s, 0, z, y42) == MYB_OK);
+  MT_CHECK(y42[21 + 18] == z[0] && y42[18] == 0.0);
+  MT_CHECK(myb_system_unpack_contact(s, 0, y42, spring) == MYB_OK && spring[0] == z[0]);
+  MT_CHECK(myb_system_unpack_contact(s, 1, y42, spring) == MYB_E_DOMAIN);
   myb_system_destroy(s);
 }
 
 int main(void) {
+  setvbuf(stdout, NULL, _IONBF, 0);
   test_restitution();
   test_nearest();
   test_drop();
   test_rest();
   test_slide();
+  test_ias15();
   test_mesh();
   test_sphere_nearest();
   test_turning_ground();
   test_lander();
+  test_stick_block();
+  test_stick_lander();
+  test_stick_partials();
   test_momentum();
   test_refused();
   return mt_finish("test_contact");

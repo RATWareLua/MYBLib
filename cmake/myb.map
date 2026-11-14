@@ -467,6 +467,7 @@ MYB_1.2 {
     myb_conjunction_long;
     myb_contact_damping;
     myb_contact_force;
+    myb_contact_force_stick;
     myb_contact_restitution;
     myb_contact_surface_nearest;
     myb_cr3bp_orbit_continue;
@@ -528,7 +529,9 @@ MYB_1.2 {
     myb_force_model_bind_parameter;
     myb_force_model_break;
     myb_force_model_break_count;
+    myb_force_model_break_scheme;
     myb_force_model_position_only;
+    myb_force_model_set_break_scheme;
     myb_force_model_set_position_only;
     myb_force_newtonian_mesh;
     myb_force_newtonian_plates;
@@ -759,6 +762,7 @@ MYB_1.2 {
     myb_system_light_action;
     myb_system_merge;
     myb_system_nbody;
+    myb_system_pack_contact;
     myb_system_pack_rotation;
     myb_system_pack_spins;
     myb_system_partials;
@@ -770,6 +774,7 @@ MYB_1.2 {
     myb_system_set_radius;
     myb_system_set_rotation;
     myb_system_set_tide;
+    myb_system_unpack_contact;
     myb_system_unpack_rotation;
     myb_system_unpack_spins;
     myb_table_columns;

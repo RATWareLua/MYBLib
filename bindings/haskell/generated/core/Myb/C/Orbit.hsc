@@ -54,6 +54,7 @@ data Myb_orbit_options = Myb_orbit_options
   , myb_orbit_options'integrator :: Myb_orbit_integrator
   , myb_orbit_options'rtol :: CDouble
   , myb_orbit_options'atol :: CDouble
+  , myb_orbit_options'timescale :: Myb_ias15_timescale
   }
   deriving (Eq, Show)
 
@@ -68,7 +69,8 @@ instance Storable Myb_orbit_options where
     v5 <- #{peek myb_orbit_options, integrator} p
     v6 <- #{peek myb_orbit_options, rtol} p
     v7 <- #{peek myb_orbit_options, atol} p
-    pure (Myb_orbit_options v1 v2 v3 v4 v5 v6 v7)
+    v8 <- #{peek myb_orbit_options, timescale} p
+    pure (Myb_orbit_options v1 v2 v3 v4 v5 v6 v7 v8)
   poke p v = do
     fillBytes p 0 #{size myb_orbit_options}
     #{poke myb_orbit_options, epsilon} p (myb_orbit_options'epsilon v)
@@ -78,9 +80,10 @@ instance Storable Myb_orbit_options where
     #{poke myb_orbit_options, integrator} p (myb_orbit_options'integrator v)
     #{poke myb_orbit_options, rtol} p (myb_orbit_options'rtol v)
     #{poke myb_orbit_options, atol} p (myb_orbit_options'atol v)
+    #{poke myb_orbit_options, timescale} p (myb_orbit_options'timescale v)
 
 instance Zero Myb_orbit_options where
-  zero = Myb_orbit_options zero zero zero zero zero zero zero
+  zero = Myb_orbit_options zero zero zero zero zero zero zero zero
 
 -- | myb_status myb_orbit_create(myb_force_model *model, const myb_orbit_options *options, const myb_allocator *allocator, myb_orbit **orbit)
 foreign import ccall "myb_orbit_create" myb_orbit_create :: Ptr Myb_force_model -> Ptr Myb_orbit_options -> Ptr Myb_allocator -> Ptr (Ptr Myb_orbit) -> IO Myb_status

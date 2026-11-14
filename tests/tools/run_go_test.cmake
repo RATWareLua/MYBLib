@@ -33,7 +33,20 @@ set(ENV{CGO_ENABLED} "1")
 set(ENV{CC} "${_cc}")
 # the C of the package computes nothing; it is still compiled under the numerical contract of
 # the library
-set(ENV{CGO_CFLAGS} "-O2 -g -ffp-contract=off -fno-fast-math")
+# The build cache of Go knows the files of the package, not the headers it includes from
+# elsewhere: after a structure of the library changes, a glue object compiled against the old
+# one would be taken from the cache (and the library would read past its end). A hash of the
+# public headers among the flags makes their contents part of the key of every cgo compile.
+file(GLOB _headers "${SOURCE_DIR}/../../include/myb/*.h" "${SOURCE_DIR}/../../ext/*/myb_*.h")
+list(SORT _headers)
+set(_contents "")
+foreach(_header IN LISTS _headers)
+  file(READ "${_header}" _text)
+  string(APPEND _contents "${_text}")
+endforeach()
+string(SHA256 _headers_hash "${_contents}")
+string(SUBSTRING "${_headers_hash}" 0 16 _headers_hash)
+set(ENV{CGO_CFLAGS} "-O2 -g -ffp-contract=off -fno-fast-math -DMYBGO_HEADERS=0x${_headers_hash}")
 set(ENV{CGO_LDFLAGS} "${LDFLAGS}")
 set(ENV{PKG_CONFIG} "${PKG_CONFIG}")
 set(ENV{PKG_CONFIG_LIBDIR} "${PC_DIR}") # the build tree only: not an installed myb-static.pc

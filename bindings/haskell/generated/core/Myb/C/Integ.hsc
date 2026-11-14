@@ -118,6 +118,20 @@ foreign import ccall "dynamic" call'myb_accel_function :: Myb_accel_function -> 
 -- | struct myb_ias15: an object of the library, known by pointer.
 data Myb_ias15
 
+-- | enum myb_ias15_timescale
+newtype Myb_ias15_timescale = Myb_ias15_timescale #{type myb_ias15_timescale}
+  deriving stock (Show)
+  deriving newtype (Eq, Ord, Storable)
+
+instance Zero Myb_ias15_timescale where
+  zero = Myb_ias15_timescale 0
+
+pattern MYB_IAS15_TIMESCALE_ACCELERATION :: Myb_ias15_timescale
+pattern MYB_IAS15_TIMESCALE_ACCELERATION = Myb_ias15_timescale (#{const MYB_IAS15_TIMESCALE_ACCELERATION})
+
+pattern MYB_IAS15_TIMESCALE_JERK :: Myb_ias15_timescale
+pattern MYB_IAS15_TIMESCALE_JERK = Myb_ias15_timescale (#{const MYB_IAS15_TIMESCALE_JERK})
+
 -- | struct myb_ias15_options
 data Myb_ias15_options = Myb_ias15_options
   { myb_ias15_options'epsilon :: CDouble
@@ -128,6 +142,7 @@ data Myb_ias15_options = Myb_ias15_options
   , myb_ias15_options'block :: CSize
   , myb_ias15_options'groups :: Ptr CSize
   , myb_ias15_options'group_count :: CSize
+  , myb_ias15_options'timescale :: Myb_ias15_timescale
   }
   deriving (Eq, Show)
 
@@ -143,7 +158,8 @@ instance Storable Myb_ias15_options where
     v6 <- #{peek myb_ias15_options, block} p
     v7 <- #{peek myb_ias15_options, groups} p
     v8 <- #{peek myb_ias15_options, group_count} p
-    pure (Myb_ias15_options v1 v2 v3 v4 v5 v6 v7 v8)
+    v9 <- #{peek myb_ias15_options, timescale} p
+    pure (Myb_ias15_options v1 v2 v3 v4 v5 v6 v7 v8 v9)
   poke p v = do
     fillBytes p 0 #{size myb_ias15_options}
     #{poke myb_ias15_options, epsilon} p (myb_ias15_options'epsilon v)
@@ -154,9 +170,10 @@ instance Storable Myb_ias15_options where
     #{poke myb_ias15_options, block} p (myb_ias15_options'block v)
     #{poke myb_ias15_options, groups} p (myb_ias15_options'groups v)
     #{poke myb_ias15_options, group_count} p (myb_ias15_options'group_count v)
+    #{poke myb_ias15_options, timescale} p (myb_ias15_options'timescale v)
 
 instance Zero Myb_ias15_options where
-  zero = Myb_ias15_options zero zero zero zero zero zero zero zero
+  zero = Myb_ias15_options zero zero zero zero zero zero zero zero zero
 
 -- | struct myb_ias15_stats
 data Myb_ias15_stats = Myb_ias15_stats

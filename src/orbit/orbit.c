@@ -8,7 +8,8 @@
  * (myb_internal_ias15_retake), so that every step kept lies on one side of every break. The
  * integrator is not started again: the state, the transition matrix and the sensitivities
  * simply continue, and the step after the break starts from the polynomial of the step
- * withdrawn.
+ * withdrawn. With MYB_BREAKS_PREDICT (myb_force_model_set_break_scheme) the steps of IAS15
+ * are aimed at the breaks instead (advance_predicted below).
  */
 #include <math.h>
 #include <string.h>
@@ -85,7 +86,9 @@ myb_status myb_orbit_create(myb_force_model* model, const myb_orbit_options* opt
       !(opt->atol >= 0.0) || !isfinite(opt->rtol) || !isfinite(opt->atol) ||
       (opt->integrator != MYB_ORBIT_IAS15 && opt->integrator != MYB_ORBIT_DOP853 &&
        opt->integrator != MYB_ORBIT_RKN12) ||
-      (opt->integrator == MYB_ORBIT_RKN12 && opt->variational)) {
+      (opt->integrator == MYB_ORBIT_RKN12 && opt->variational) ||
+      (opt->timescale != MYB_IAS15_TIMESCALE_ACCELERATION &&
+       opt->timescale != MYB_IAS15_TIMESCALE_JERK)) {
     return MYB_E_DOMAIN;
   }
   const myb_allocator a = myb_internal_allocator(allocator);
@@ -129,8 +132,12 @@ myb_status myb_orbit_create(myb_force_model* model, const myb_orbit_options* opt
   } else if (opt->variational) {
     const myb_variational_options vo = {.epsilon = epsilon, .h_max = opt->h_max};
     status = myb_variational_create(model, &vo, allocator, &o->var);
+    if (status == MYB_OK) {
+      myb_internal_variational_set_timescale(o->var, opt->timescale);
+    }
   } else {
-    const myb_ias15_options io = {.epsilon = epsilon, .h_max = opt->h_max};
+    const myb_ias15_options io = {
+        .epsilon = epsilon, .h_max = opt->h_max, .timescale = opt->timescale};
     status = myb_ias15_create(3, &io, allocator, &o->ias);
   }
   if (status != MYB_OK) {
@@ -340,9 +347,10 @@ static myb_status dense_view(void* orbit, double t, double* y) {
 
 /* The first sign change of a break of the model in the step [ta, tb] just taken, ya the state
  * at ta: examined, as events are, at the ends of four parts of the step and located on its
- * dense output. The signs recorded are brought up to what was examined. */
+ * dense output. The signs recorded are brought up to what was examined; *changed (may be
+ * NULL) is the break found. */
 static myb_status first_break(myb_orbit* o, size_t count, double ta, const double ya[6],
-                              double tb, int* found, double* t_break) {
+                              double tb, int* found, double* t_break, size_t* changed) {
   *found = 0;
   double t0 = ta;
   double y0[6];
@@ -393,6 +401,9 @@ static myb_status first_break(myb_orbit* o, size_t count, double ta, const doubl
     }
     if (*found) {
       o->break_sign[which] = (signed char)-o->break_sign[which];
+      if (changed != NULL) {
+        *changed = which;
+      }
       return MYB_OK;
     }
     t0 = t1;
@@ -434,7 +445,7 @@ static myb_status advance_dop853(myb_orbit* o) {
   }
   int found = 0;
   double t_break = 0.0;
-  status = first_break(o, count, before, o->y_begin, after, &found, &t_break);
+  status = first_break(o, count, before, o->y_begin, after, &found, &t_break, NULL);
   if (status != MYB_OK || !found) {
     return status;
   }
@@ -461,12 +472,278 @@ static myb_status advance_dop853(myb_orbit* o) {
   return MYB_OK;
 }
 
+/* ---- Breaks predicted (MYB_BREAKS_PREDICT, IAS15) ----------------------------------------------
+ * Before a step the break functions are examined on the polynomial of the last step carried
+ * over the step to come; a sign change found there is located on it and becomes the end of
+ * the step. Once the step is taken its own polynomial, on one side of the break, says where
+ * the break really is: inside the step (the prediction was late) — the step is reshaped to
+ * end at that root, as a step withdrawn would be, but it has run past the break by the error
+ * of the prediction and not by most of a step; or just beyond its end (the prediction was
+ * early) — the step is reshaped, lengthened, to end at the root of its polynomial carried
+ * past it. A reshaping starts from the step's own polynomial and converges in a sweep or
+ * two; it is repeated until the root is at the end of the step to 2^-30 of the step. On the
+ * orbits measured the prediction itself is that good already (the edges of a shadow to 3e-7 s
+ * at epsilon 1e-9), so that the steps are seldom reshaped; what decides the accuracy is the
+ * step after the break (plan_after_break). */
+
+/* The state at t from the polynomial of the last step, carried beyond its end if t is. */
+static myb_status extrapolated_view(void* orbit, double t, double* y) {
+  const myb_orbit* o = orbit;
+  if (o->var != NULL) {
+    myb_internal_variational_extrapolate(o->var, t, y);
+  } else {
+    myb_internal_ias15_extrapolate(o->ias, t, 3, y);
+  }
+  return MYB_OK;
+}
+
+/* The first sign change, from the sign recorded, of a break on the extrapolated motion over
+ * [ta, tb] (ta: the time integrated to), examined at the ends of four parts and located; the
+ * signs recorded are left as they are. */
+static myb_status predicted_break(myb_orbit* o, size_t count, double ta, double tb, int* found,
+                                  double* t_break, size_t* which) {
+  *found = 0;
+  double t0 = ta;
+  double y0[6];
+  extrapolated_view(o, ta, y0);
+  for (int part = 1; part <= EVENT_PARTS; ++part) {
+    const double t1 = part < EVENT_PARTS ? ta + (tb - ta) * ((double)part / event_parts) : tb;
+    double y1[6];
+    extrapolated_view(o, t1, y1);
+    for (size_t k = 0; k < count; ++k) {
+      myb_break_function g = NULL;
+      void* context = NULL;
+      myb_force_model_break(o->model, k, &g, &context);
+      const signed char s0 = o->break_sign[k];
+      const signed char s1 = sign_of(g(context, t1, y1));
+      if (s0 == 0 || s1 == s0) {
+        continue;
+      }
+      double candidate = t1;
+      if (s1 != 0) {
+        const myb_internal_step_view view = {.dense = extrapolated_view,
+                                             .integrator = o,
+                                             .m = 6,
+                                             .t0 = t0,
+                                             .y0 = y0,
+                                             .t1 = t1,
+                                             .y1 = y1,
+                                             .scratch = o->scratch};
+        int located = 0;
+        const myb_status status =
+            myb_internal_locate_event(&view, g, context, &located, &candidate, NULL);
+        if (status != MYB_OK) {
+          return status;
+        }
+        if (!located) { /* the sign at t0 is not the one recorded: nothing to aim at here */
+          continue;
+        }
+      }
+      if (!*found || (candidate - *t_break) * o->direction < 0.0) {
+        *found = 1;
+        *t_break = candidate;
+        *which = k;
+      }
+    }
+    if (*found) {
+      return MYB_OK;
+    }
+    t0 = t1;
+    memcpy(y0, y1, sizeof y0);
+  }
+  return MYB_OK;
+}
+
+static myb_status reshape(myb_orbit* o, double t_limit) {
+  return o->var != NULL ? myb_internal_variational_reshape(o->var, t_limit)
+                        : myb_internal_ias15_reshape(o->ias, t_limit);
+}
+
+enum { REFINE_PASSES = 4 };
+
+static const double reached_fraction = 0x1p-30; /* of the step: the root is at its end */
+static const double onset_fraction = 0.25;      /* of the step planned before a break */
+
+/* The step after a break reached by aiming: at most a quarter of the step that was planned
+ * before it. Beyond the break the force starts anew, and not smoothly — the light comes back
+ * as (t - t_e)^(3/2) at the edge of a shadow — while the step is planned from the polynomial
+ * of the step before the break, which knows nothing of it, and the timescale is read at the
+ * end of a step, never at its beginning. A step withdrawn (MYB_BREAKS_RETAKE) leaves the next
+ * one a prediction from the polynomial that ran past the break; here there is none, and the
+ * step of the planned length lost three orders of the accuracy: measured on the orbit of
+ * 12 000 km with 54 edges (tests/unit/test_events.c) at epsilon 1e-9, 1.2e-4 m from the
+ * reference with the planned length, 1.5e-7 m with a quarter of it (517 against 557 steps;
+ * a tenth: 5e-9 m, 598 steps); the step grows back by 4 a step.
+ * And after any step aimed at a break, at most 4 times that step: its polynomial predicts the
+ * next step, and IAS15 never carries a polynomial further than 4 lengths of its step (the
+ * bound of its growth) — but a step cut short at an instant is planned from the length it was
+ * cut from. A step of a second aimed at the umbra just after the penumbra, followed by one of
+ * 69 s predicted from it, left the next one a prediction so far off that its sweeps went into
+ * the Earth (the LAGEOS fit at epsilon 1e-10, MYB_E_DOMAIN). */
+static void plan_after_aim(myb_orbit* o, double planned, double length, int reached) {
+  double cap = 4.0 * length;
+  if (reached && onset_fraction * planned < cap) {
+    cap = onset_fraction * planned;
+  }
+  const double next = o->var != NULL ? myb_internal_variational_next_step(o->var)
+                                     : myb_internal_ias15_next_step(o->ias);
+  if (cap > 0.0 && next > cap) {
+    if (o->var != NULL) {
+      myb_internal_variational_plan_step(o->var, cap);
+    } else {
+      myb_internal_ias15_plan_step(o->ias, cap);
+    }
+  }
+}
+
+/* One step of IAS15 towards t_end, aimed at the break predicted in it and brought to it. */
+static myb_status advance_predicted(myb_orbit* o, size_t count) {
+  const double before = integrator_time(o);
+  if (o->var != NULL) {
+    myb_variational_get(o->var, o->y_begin, NULL, NULL);
+  } else {
+    memcpy(o->y_begin, myb_ias15_state(o->ias), sizeof o->y_begin);
+  }
+  /* the step to come, as the integrator plans it, and the break predicted in it */
+  const double planned = o->var != NULL ? myb_internal_variational_next_step(o->var)
+                                        : myb_internal_ias15_next_step(o->ias);
+  double horizon = o->t_end;
+  if (planned > 0.0 && planned < fabs(o->t_end - before)) {
+    horizon = before + o->direction * planned;
+  }
+  double t_limit = o->t_end;
+  int aimed = 0;
+  int predicted = 0;
+  double t_predicted = 0.0;
+  size_t which = 0;
+  myb_status status = predicted_break(o, count, before, horizon, &predicted, &t_predicted, &which);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (predicted && (t_predicted - before) * o->direction > 0.0) {
+    t_limit = t_predicted;
+    aimed = 1;
+  }
+  status = o->var != NULL ? myb_variational_step(o->var, t_limit) : myb_ias15_step(o->ias, t_limit);
+  if (status != MYB_OK) {
+    return status;
+  }
+  double after = integrator_time(o);
+  if (after == before) {
+    return MYB_OK;
+  }
+  o->step_begin = before;
+  o->step_end = after;
+  o->have_step = 1;
+  o->steps++;
+  aimed = aimed && after == t_limit;
+  /* bound: REFINE_PASSES reshapings */
+  for (int pass = 0; pass < REFINE_PASSES; ++pass) {
+    int found = 0;
+    double t_break = 0.0;
+    size_t crossed = 0;
+    status = first_break(o, count, before, o->y_begin, after, &found, &t_break, &crossed);
+    if (status != MYB_OK) {
+      return status;
+    }
+    const double reached = reached_fraction * fabs(after - before);
+    if (found && (t_break == before || t_break == after ||
+                  (aimed && fabs(after - t_break) <= reached))) {
+      o->breaks++; /* at an end of the step: all of it on one side */
+      if (aimed) {
+        plan_after_aim(o, planned, fabs(after - before), 1);
+      }
+      return MYB_OK;
+    }
+    if (found && !aimed) {
+      /* a break not predicted: the step is withdrawn, as by MYB_BREAKS_RETAKE */
+      o->breaks++;
+      status = o->var != NULL ? myb_internal_variational_retake(o->var, t_break)
+                              : myb_internal_ias15_retake(o->ias, t_break);
+      if (status == MYB_E_DOMAIN) {
+        return MYB_OK; /* closer to the beginning than the time resolves: the step stays */
+      }
+      if (status != MYB_OK) {
+        o->have_step = 0;
+        return status;
+      }
+      o->step_end = integrator_time(o);
+      return MYB_OK;
+    }
+    if (found) {
+      /* aimed and run past the break by the error of the prediction: brought back to the root
+       * of its polynomial, which straddled the kink, and looked at again */
+      o->break_sign[crossed] = (signed char)-o->break_sign[crossed];
+      status = reshape(o, t_break);
+      if (status == MYB_E_DOMAIN) {
+        o->break_sign[crossed] = (signed char)-o->break_sign[crossed];
+        o->breaks++;
+        plan_after_aim(o, planned, fabs(after - before), 1);
+        return MYB_OK;
+      }
+      if (status != MYB_OK) {
+        o->have_step = 0;
+        return status;
+      }
+      after = integrator_time(o);
+      o->step_end = after;
+      continue;
+    }
+    if (!aimed) {
+      return MYB_OK;
+    }
+    /* the break is beyond the end: located on the polynomial of the step carried past it */
+    int ahead = 0;
+    double t_root = 0.0;
+    status = predicted_break(o, count, after, after + 0.25 * (after - before), &ahead, &t_root,
+                             &which);
+    if (status != MYB_OK) {
+      return status;
+    }
+    if (!ahead) {
+      plan_after_aim(o, planned, fabs(after - before), 0);
+      return MYB_OK; /* it is not there after all */
+    }
+    if (fabs(t_root - after) <= reached) {
+      o->break_sign[which] = (signed char)-o->break_sign[which];
+      o->breaks++;
+      plan_after_aim(o, planned, fabs(after - before), 1);
+      return MYB_OK;
+    }
+    status = reshape(o, t_root);
+    if (status != MYB_OK) {
+      o->have_step = status == MYB_E_DOMAIN;
+      if (status == MYB_E_DOMAIN) {
+        plan_after_aim(o, planned, fabs(after - before), 0);
+      }
+      return status == MYB_E_DOMAIN ? MYB_OK : status;
+    }
+    after = integrator_time(o);
+    o->step_end = after;
+  }
+  /* not brought to the break within the passes: the step stays as it is, and the signs are
+   * brought up to its end */
+  int found = 0;
+  double t_break = 0.0;
+  status = first_break(o, count, before, o->y_begin, after, &found, &t_break, NULL);
+  if (status == MYB_OK && found) {
+    o->breaks++;
+  }
+  if (status == MYB_OK && aimed) {
+    plan_after_aim(o, planned, fabs(after - before), found);
+  }
+  return status;
+}
+
 /* One step of the integrator towards t_end, ended at the first break of the model in it. */
 static myb_status advance(myb_orbit* o) {
   if (o->dop != NULL || o->rkn != NULL) {
     return advance_dop853(o);
   }
   const size_t count = myb_force_model_break_count(o->model);
+  if (count > 0 && myb_force_model_break_scheme(o->model) == MYB_BREAKS_PREDICT) {
+    return advance_predicted(o, count);
+  }
   const double before = integrator_time(o);
   if (count > 0) {
     if (o->var != NULL) {
@@ -493,7 +770,7 @@ static myb_status advance(myb_orbit* o) {
   }
   int found = 0;
   double t_break = 0.0;
-  status = first_break(o, count, before, o->y_begin, after, &found, &t_break);
+  status = first_break(o, count, before, o->y_begin, after, &found, &t_break, NULL);
   if (status != MYB_OK || !found) {
     return status;
   }

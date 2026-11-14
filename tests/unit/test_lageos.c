@@ -29,7 +29,9 @@
  * week after the fit, the full model 2.0 cm then — 1.57 cm since the secondary waves of the
  * ocean tide (phase 20)): without the solid tides 21 cm, without the ocean
  * tides 6.3 cm, without relativity 2.06 cm (radial 5.3 mm against 2.6), without shadows 2.1 cm;
- * MYB_LAGEOS_OFF selects parts to leave out, MYB_LAGEOS_PROFILE times an evaluation. */
+ * MYB_LAGEOS_OFF selects parts to leave out, MYB_LAGEOS_PROFILE times an evaluation,
+ * MYB_LAGEOS_EPS sets the precision of the fit, MYB_LAGEOS_PREDICT aims the steps at the edges
+ * of the shadows (MYB_BREAKS_PREDICT) and MYB_LAGEOS_COUNT counts the evaluations of the fit. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -322,6 +324,23 @@ static myb_status acceleration(void* context, double t, const double* x, const d
   return myb_force_empirical_rtn(x, v, rtn, a);
 }
 
+/* MYB_LAGEOS_COUNT: a term of zero that counts the evaluations of the model — the work of the
+ * integrator, which the time on a loaded machine measures badly. */
+static long long evaluations;
+
+static myb_status counting_term(void* context, double t, const double x[3], const double v[3],
+                                double a[3]) {
+  (void)context;
+  (void)t;
+  (void)x;
+  (void)v;
+  ++evaluations;
+  a[0] = 0.0;
+  a[1] = 0.0;
+  a[2] = 0.0;
+  return MYB_OK;
+}
+
 /* ---- The same model from the ready-made terms of myb/env.h ---------------------------------- */
 
 typedef struct assembly {
@@ -466,13 +485,21 @@ static int assemble(const model* m, assembly* s, int estimate_cr) {
   if (ok && (off & 16)) {
     myb_force_model_set_enabled(s->forces, term, 0);
   }
-  /* the edges of the shadows end the steps of the integrator (MYB_LAGEOS_NO_BREAKS: not) */
+  /* the edges of the shadows end the steps of the integrator (MYB_LAGEOS_NO_BREAKS: not), as
+   * steps withdrawn and taken again, or predicted and brought to them (MYB_LAGEOS_PREDICT) */
   if (ok && getenv("MYB_LAGEOS_NO_BREAKS") == NULL) {
     ok = myb_term_radiation_breaks(&s->pressure, s->forces, s->edges) == MYB_OK;
+  }
+  if (ok && getenv("MYB_LAGEOS_PREDICT") != NULL) {
+    myb_force_model_set_break_scheme(s->forces, MYB_BREAKS_PREDICT);
   }
   size_t empirical = 0;
   ok = ok && myb_force_model_add(s->forces, "empirical", myb_term_empirical,
                                  myb_term_no_jacobian, &s->empirical, &empirical) == MYB_OK;
+  if (ok && getenv("MYB_LAGEOS_COUNT") != NULL) {
+    ok = myb_force_model_add(s->forces, "counter", counting_term, myb_term_no_jacobian, NULL,
+                             NULL) == MYB_OK;
+  }
   /* the parameters of the fit, in the order of p[6 ..]: cr only on request (it enters two
    * terms), the five empirical ones bound to their term */
   if (estimate_cr) {
@@ -779,7 +806,7 @@ int main(void) {
   double rms = 0.0;
   double rtn[3];
   statistics(&obs, res, &rms, rtn);
-  printf("  from the ILRS state at the first epoch, cr 1.13, no empirical: RMS %.4f m "
+  printf("  from the ILRS state at the first epoch, cr 1.13, no empirical: RMS %.7f m "
          "(R %.4f, T %.4f, N %.4f)\n",
          rms, rtn[0], rtn[1], rtn[2]);
   /* with the edges of the shadows declared this number does not depend on the precision of
@@ -796,15 +823,19 @@ int main(void) {
    * separated */
   static double covariance[PARAMETERS * PARAMETERS];
   options = (myb_fit_options){.max_iterations = 5, .tolerance = 1e-3, .epsilon = epsilon};
+  evaluations = 0;
   const clock_t started = clock();
   MT_CHECK(myb_fit_orbit(set.forces, 0.0, y0, fit_obs, obs.count, &options, NULL, &result,
                          covariance, res) == MYB_OK);
   const double seconds = (double)(clock() - started) / (double)CLOCKS_PER_SEC;
   statistics(&obs, res, &rms, rtn);
   const size_t unknowns = 6 + myb_force_model_parameter_count(set.forces);
-  printf("  least squares of the library (%zu unknowns, %zu values): RMS %.4f m (R %.4f, "
+  printf("  least squares of the library (%zu unknowns, %zu values): RMS %.7f m (R %.4f, "
          "T %.4f, N %.4f) after %d corrections, %.1f s\n",
          unknowns, result.values, rms, rtn[0], rtn[1], rtn[2], result.iterations, seconds);
+  if (getenv("MYB_LAGEOS_COUNT") != NULL) {
+    printf("  the fit evaluated the model %lld times\n", evaluations);
+  }
   const double* e = &set.empirical.constant[0];
   printf("  fitted: cr %.4f; along-track %.2f, %.2f cos u, %.2f sin u; cross-track %.2f cos u, "
          "%.2f sin u (pm/s^2)\n",

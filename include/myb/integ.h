@@ -110,12 +110,42 @@ MYB_API MYB_NODISCARD myb_status myb_dop853_locate(myb_dop853* integrator, myb_e
  * zero where the acceleration of the whole state (of a whole group, when the options name
  * groups) vanishes — every block at once. A system of
  * bodies never gets there, but a one-dimensional oscillator, whose acceleration changes sign,
- * stalls with MYB_E_STEP_MIN: use DOP853 there. */
+ * stalls with MYB_E_STEP_MIN: near a zero of a, tau = sqrt(2) |a| / |a'| is sqrt(2) times the
+ * time left to it, so the step that would cross it is always rejected. The option
+ * MYB_IAS15_TIMESCALE_JERK takes the larger of that tau and the same expression one
+ * derivative up,
+ *   tau_1^2 = 2 |a'|^2 / (|a''|^2 + |a'| |a'''|),
+ * which is the period / 2 pi of a sinusoid at every phase as tau is, but does not vanish where
+ * a does (a and a' do not vanish together on a smooth motion): a body held against gravity by
+ * a spring, the contact of myb/contact.h, goes through. Where both vanish — an acceleration
+ * that leaves zero as a power of the time, the contact of a body on which nothing else acts —
+ * the steps still shrink towards that instant: end them there (myb_orbit with breaks). Two
+ * more things come with this option, for the same problems. A body at rest on its springs has
+ * an acceleration that is the rounding of a balance, and every timescale read from it is the
+ * step itself: the step is not shortened below the time over which a moves the block by
+ * less than 4 ulp of its place, sqrt(2^-49 |x| / |a|) (a ball resting on the Moon: 10 ms; an
+ * orbit or a contact in motion: microseconds and less, below any step taken). And a step whose
+ * sweeps stop correcting far above round-off (a relative change of b6 above 1e-12) is
+ * rejected: the iteration does not converge for a step that long — a stiff force whose fast
+ * motion is not excited, a block resting on a stiff normal spring, which the timescale does
+ * not see — and accepting it, as the published method does, left errors of 1e-8 s in the
+ * stopping of a sliding block (tests/unit/test_contact.c).
+ *
+ * A step whose sweeps diverge — the state at a node leaves the doubles, as when a step far
+ * too long for a stiff force is tried — is rejected and tried again four times shorter, as one
+ * whose series is not finite; the acceleration is not called with such a state. (With every
+ * option: such a step was rejected before too, unless the acceleration refused the state.) */
 
 typedef myb_status (*myb_accel_function)(void* context, double t, const double* x,
                                          const double* v, double* a);
 
 typedef struct myb_ias15 myb_ias15;
+
+/* The timescale that sets the step (above). */
+typedef enum myb_ias15_timescale {
+  MYB_IAS15_TIMESCALE_ACCELERATION = 0, /* tau of a: Pham, Rein & Spiegel; the default */
+  MYB_IAS15_TIMESCALE_JERK = 1          /* the larger of tau of a and tau_1 of a' */
+} myb_ias15_timescale;
 
 typedef struct myb_ias15_options {
   double epsilon;   /* precision parameter, > 0; 0 = 1e-9 */
@@ -133,6 +163,7 @@ typedef struct myb_ias15_options {
    * shortest timescale and the worst convergence counting. The sizes are copied. */
   const size_t* groups;
   size_t group_count;
+  myb_ias15_timescale timescale; /* 0: MYB_IAS15_TIMESCALE_ACCELERATION */
 } myb_ias15_options;
 
 typedef struct myb_ias15_stats {
@@ -144,7 +175,8 @@ typedef struct myb_ias15_stats {
 } myb_ias15_stats;
 
 /* Creates an integrator for n coordinates (state of 2n values). Errors: MYB_E_DOMAIN (invalid
- * options, n == 0, block not dividing n), MYB_E_NOMEM, MYB_E_OVERFLOW. allocator may be NULL. */
+ * options, n == 0, block not dividing n, an unknown timescale), MYB_E_NOMEM, MYB_E_OVERFLOW.
+ * allocator may be NULL. */
 MYB_API MYB_NODISCARD myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
                                                   const myb_allocator* allocator,
                                                   myb_ias15** integrator);

@@ -92,6 +92,46 @@ MYB_API size_t myb_force_model_break_count(const myb_force_model* model);
 MYB_API void myb_force_model_break(const myb_force_model* model, size_t index,
                                    myb_break_function* g, void** context);
 
+/* How myb_orbit with IAS15 (and the estimators through it) ends its steps at the breaks.
+ *   MYB_BREAKS_RETAKE   (the default) a step that turns out to contain a sign change is
+ *                       withdrawn and taken again from its beginning up to it. Exact, but the
+ *                       step that ran past the break is work thrown away, and the sweeps of a
+ *                       step that holds a kink converge badly. A step that cannot be taken at
+ *                       all across the break — a force so stiff beyond it (a contact) that the
+ *                       sweeps of a long step diverge — is shortened until it can, which may
+ *                       take many attempts.
+ *   MYB_BREAKS_PREDICT  before a step the break functions are examined on the polynomial of
+ *                       the last step carried over the step to come (on the Taylor polynomial
+ *                       of the state after a start); a sign change predicted there becomes the
+ *                       end of the step. Once taken, the step's own polynomial — now on one
+ *                       side of the break — locates it again: inside the step or just beyond
+ *                       its end. The step is then reshaped to end there (taken again from its
+ *                       beginning, warm, in a sweep or two), until the root of its own
+ *                       polynomial is at its end to 2^-30 of the step; no step is ever taken
+ *                       across a break and thrown away. The step after the break is planned at
+ *                       most a quarter of the one planned before it (the force starts anew
+ *                       there, not smoothly, and nothing in the polynomial before the break
+ *                       knows of it), and the step after any aimed one at most 4 times it (it
+ *                       is predicted from it). A break the prediction misses is met as by
+ *                       MYB_BREAKS_RETAKE.
+ * Both give the same results to the accuracy of the integration. Measured on an orbit of
+ * 12 000 km with 0.2 m^2/kg through 54 edges of the Earth's shadow in two days
+ * (tests/unit/test_events.c): the final place over epsilon 1e-9 .. 1e-12 within 8.2e-7 m
+ * withdrawing, 8.4e-7 m predicting (4e-7 m apart at 1e-13); 517, 701, 953, 1308 steps against
+ * 557, 742, 993, 1362 — a step more an edge, the quarter step after it. Without the quarter the
+ * prediction lost three orders (1.2e-4 m at 1e-9): the predicted edges themselves were right
+ * to 3e-7 s, the step after them too long. On the fit of LAGEOS aiming saves 1 to 5 % of the
+ * evaluations of the model and no time that shows (myb/orbit.h): RETAKE stays the default.
+ * DOP853 and RKN12 restart at a break in either case. */
+typedef enum myb_break_scheme {
+  MYB_BREAKS_RETAKE = 0,
+  MYB_BREAKS_PREDICT = 1
+} myb_break_scheme;
+
+/* Takes effect from the next myb_orbit_start. An unknown scheme is a contract violation. */
+MYB_API void myb_force_model_set_break_scheme(myb_force_model* model, myb_break_scheme scheme);
+MYB_API myb_break_scheme myb_force_model_break_scheme(const myb_force_model* model);
+
 /* Scales of the central differences: steps cbrt(eps) * scale per component (defaults: the norm
  * of x, resp. v, at the point, at least length_scale, resp. velocity_scale; both 1 by default).
  * Errors: MYB_E_DOMAIN for non-positive scales. */

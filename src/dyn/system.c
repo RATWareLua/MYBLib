@@ -109,12 +109,15 @@ typedef struct drag_entry {
   double spin[3];
 } drag_entry;
 
-/* A body on the surface of another. */
+/* A body on the surface of another; with a friction that sticks, the deflections of its
+ * springs are coordinates of the state: 3 a point from `state` among those of the contacts. */
 typedef struct contact_entry {
   size_t body;
   size_t ground;
   myb_system_contact contact;
   double gap; /* of the evaluation in hand (myb_contact_result.gap) */
+  int sticks;
+  size_t state;
 } contact_entry;
 
 /* A body whose motion is given. */
@@ -161,6 +164,7 @@ struct myb_system {
   drag_entry drags[MYB_SYSTEM_MAX_DRAGS];
   size_t contact_count;
   contact_entry contacts[MYB_SYSTEM_MAX_CONTACTS];
+  size_t contact_coordinates; /* of the frictions that stick: after all the others, never fewer */
   /* the bodies with a given motion, and their places at the last instants asked for: an
    * integrator comes back to the same instants several times within a step */
   size_t guided_count;
@@ -269,7 +273,13 @@ static size_t spin_pairs(const myb_system* s) {
 size_t myb_system_coordinates(const myb_system* system) {
   MYB_CHECK(system != NULL);
   return 3 * system->bodies + ROTATION_COORDINATES * system->rotation_count +
-         SPIN_COORDINATES * spin_pairs(system);
+         SPIN_COORDINATES * spin_pairs(system) + system->contact_coordinates;
+}
+
+/* Where the coordinates of the contacts begin: after every other kind. */
+static size_t contact_offset(const myb_system* s) {
+  return 3 * s->bodies + ROTATION_COORDINATES * s->rotation_count +
+         SPIN_COORDINATES * spin_pairs(s);
 }
 
 static size_t rotation_offset(const myb_system* s, int rotation) {
@@ -487,7 +497,8 @@ myb_status myb_system_add_pn_pair(myb_system* system, size_t a, size_t b,
   }
   if (!isfinite(model.c + model.r0 + model.kappa1 + model.kappa2) ||
       ((model.orders & (MYB_PN_3 | MYB_PN_4)) && !(model.r0 > 0.0)) ||
-      ((model.orders & MYB_PN_SS) && (!(model.kappa1 >= 0.0) || !(model.kappa2 >= 0.0)))) {
+      ((model.orders & (MYB_PN_SS | MYB_PN_SS3)) &&
+       (!(model.kappa1 >= 0.0) || !(model.kappa2 >= 0.0)))) {
     return MYB_E_DOMAIN;
   }
   if (system->pn_count >= MYB_SYSTEM_MAX_PN_PAIRS) {
@@ -571,7 +582,52 @@ myb_status myb_system_add_contact(myb_system* system, size_t body, size_t ground
   if (system->contact_count >= MYB_SYSTEM_MAX_CONTACTS) {
     return MYB_E_OVERFLOW;
   }
-  system->contacts[system->contact_count++] = (contact_entry){body, ground, *contact, 0.0};
+  const int sticks = contact->law.kind == MYB_CONTACT_FRICTION_STICK;
+  size_t more = 0;
+  if (sticks && (ckd_mul(&more, contact->point_count, (size_t)3) ||
+                 ckd_add(&more, more, system->contact_coordinates))) {
+    return MYB_E_OVERFLOW;
+  }
+  system->contacts[system->contact_count++] =
+      (contact_entry){body, ground, *contact, 0.0, sticks, system->contact_coordinates};
+  if (sticks) {
+    system->contact_coordinates = more;
+  }
+  return MYB_OK;
+}
+
+/* The deflections of contact k, which sticks, in a state y (their place among the rates). */
+static myb_status contact_state(const myb_system* s, size_t k, size_t* at) {
+  if (k >= s->contact_count || !s->contacts[k].sticks) {
+    return MYB_E_DOMAIN;
+  }
+  *at = myb_system_coordinates(s) + contact_offset(s) + s->contacts[k].state;
+  return MYB_OK;
+}
+
+myb_status myb_system_pack_contact(const myb_system* system, size_t contact,
+                                   const double* deflection, double* y) {
+  MYB_CHECK(system != NULL && deflection != NULL && y != NULL);
+  size_t at = 0;
+  const myb_status st = contact_state(system, contact, &at);
+  if (st != MYB_OK) {
+    return st;
+  }
+  const size_t values = 3 * system->contacts[contact].contact.point_count;
+  memset(y + (at - myb_system_coordinates(system)), 0, values * sizeof *y);
+  memcpy(y + at, deflection, values * sizeof *y);
+  return MYB_OK;
+}
+
+myb_status myb_system_unpack_contact(const myb_system* system, size_t contact, const double* y,
+                                     double* deflection) {
+  MYB_CHECK(system != NULL && y != NULL && deflection != NULL);
+  size_t at = 0;
+  const myb_status st = contact_state(system, contact, &at);
+  if (st != MYB_OK) {
+    return st;
+  }
+  memcpy(deflection, y + at, 3 * system->contacts[contact].contact.point_count * sizeof *y);
   return MYB_OK;
 }
 
@@ -679,10 +735,11 @@ myb_status myb_system_unpack_spins(const myb_system* system, size_t pair_index, 
   return MYB_OK;
 }
 
-enum { MAX_GROUPS = 1 + MYB_SYSTEM_MAX_ROTATIONS + MYB_SYSTEM_MAX_PN_PAIRS };
+enum { MAX_GROUPS = 2 + MYB_SYSTEM_MAX_ROTATIONS + MYB_SYSTEM_MAX_PN_PAIRS };
 
 /* The options of an integrator of the system: those given (the precision, the step limits, the
- * budget), blocks of three, a group for the positions, one per rotation, one per pair of spins. */
+ * budget, the timescale), blocks of three, a group for the positions, one per rotation, one per
+ * pair of spins, one for the springs of the contacts that stick. */
 static myb_ias15_options system_options(const myb_system* system, const myb_ias15_options* options,
                                         size_t groups[MAX_GROUPS]) {
   size_t count = 0;
@@ -694,6 +751,9 @@ static myb_ias15_options system_options(const myb_system* system, const myb_ias1
     if (system->pn[k].spins) {
       groups[count++] = SPIN_COORDINATES;
     }
+  }
+  if (system->contact_coordinates > 0) {
+    groups[count++] = system->contact_coordinates; /* the springs of the contacts */
   }
   myb_ias15_options o = {0};
   if (options != NULL) {
@@ -1285,8 +1345,12 @@ static myb_status apply_contacts(myb_system* s, const double* x, const double* v
     }
     myb_contact_result r;
     const myb_status st =
-        myb_contact_force(&e->contact.surface, &e->contact.law, e->contact.points,
-                          e->contact.point_count, p, u, attitude, w, &r);
+        e->sticks ? myb_contact_force_stick(&e->contact.surface, &e->contact.law, e->contact.points,
+                                            e->contact.point_count, p, u, attitude, w,
+                                            v + contact_offset(s) + e->state,
+                                            a + contact_offset(s) + e->state, &r)
+                  : myb_contact_force(&e->contact.surface, &e->contact.law, e->contact.points,
+                                      e->contact.point_count, p, u, attitude, w, &r);
     if (st != MYB_OK) {
       return st;
     }
@@ -2140,6 +2204,21 @@ static void difference_scales(partials_work* w, const double* x, const double* v
       w->scales[n + at + i] = size;
     }
   }
+  /* the deflection of a spring of a friction that sticks: its own size, at least a micrometre
+   * (the static deflections of the tests are tens of micrometres) */
+  for (size_t k = 0; k < s->contact_count; ++k) {
+    const contact_entry* e = &s->contacts[k];
+    if (!e->sticks) {
+      continue;
+    }
+    for (size_t p = 0; p < e->contact.point_count; ++p) {
+      const size_t at = contact_offset(s) + e->state + 3 * p;
+      const double size = fmax(myb_vec3_norm(v + at), 1e-6);
+      for (size_t i = 0; i < 3; ++i) {
+        w->scales[n + at + i] = size;
+      }
+    }
+  }
 }
 
 /* The differenced levels: their columns of the Jacobian and of the gm. */
@@ -2319,6 +2398,10 @@ static void plan_differences(partials_work* w) {
       memset(w->move + 3 * two[i], 1, 3);
       memset(w->move + n + 3 * two[i], 1, 3);
     }
+    if (s->contacts[k].sticks) { /* the deflections of its springs (rates of the state) */
+      memset(w->move + n + contact_offset(s) + s->contacts[k].state, 1,
+             3 * s->contacts[k].contact.point_count);
+    }
   }
   for (size_t k = 0; k < s->rotation_count; ++k) {
     const size_t at = rotation_offset(s, (int)k);
@@ -2455,6 +2538,17 @@ myb_status myb_system_partials(myb_system* system, const myb_ias15_options* opti
                                double* y1, double* phi, double* sensitivity) {
   MYB_CHECK(system != NULL && y0 != NULL && (bodies != NULL || count == 0));
   myb_system* s = system;
+  /* A contact is stiff where the state is quiet — a body at rest on its springs, a smooth
+   * friction whose derivative in the velocity is mu f_n / v_s —, and the variations, which ride
+   * on the steps the state takes, are then integrated with steps far too long for them (a block
+   * resting on a plane, nudged: 1e-4 of the largest element with a friction that sticks, the
+   * whole size with the smooth one, while the differences of propagations hold to 2e-8);
+   * letting them steer the steps leaves an explicit integrator on a stiff linear system. A
+   * system with contacts takes the differences of whole propagations, as before. */
+  if (s->contact_count > 0) {
+    return myb_internal_system_partials_differences(s, options, t0, y0, t1, bodies, count, y1,
+                                                    phi, sensitivity);
+  }
   const size_t n = myb_system_coordinates(s);
   if (!isfinite(t0) || !isfinite(t1) || t0 == t1) {
     return MYB_E_DOMAIN;

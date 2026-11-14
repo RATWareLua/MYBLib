@@ -453,6 +453,14 @@ foreign import ccall "&myb_system_pack_spins" p'myb_system_pack_spins :: FunPtr 
 foreign import ccall "myb_system_unpack_spins" myb_system_unpack_spins :: Ptr Myb_system -> CSize -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> IO Myb_status
 foreign import ccall "&myb_system_unpack_spins" p'myb_system_unpack_spins :: FunPtr (Ptr Myb_system -> CSize -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> IO Myb_status)
 
+-- | myb_status myb_system_pack_contact(const myb_system *system, size_t contact, const double *deflection, double *y)
+foreign import ccall "myb_system_pack_contact" myb_system_pack_contact :: Ptr Myb_system -> CSize -> Ptr CDouble -> Ptr CDouble -> IO Myb_status
+foreign import ccall "&myb_system_pack_contact" p'myb_system_pack_contact :: FunPtr (Ptr Myb_system -> CSize -> Ptr CDouble -> Ptr CDouble -> IO Myb_status)
+
+-- | myb_status myb_system_unpack_contact(const myb_system *system, size_t contact, const double *y, double *deflection)
+foreign import ccall "myb_system_unpack_contact" myb_system_unpack_contact :: Ptr Myb_system -> CSize -> Ptr CDouble -> Ptr CDouble -> IO Myb_status
+foreign import ccall "&myb_system_unpack_contact" p'myb_system_unpack_contact :: FunPtr (Ptr Myb_system -> CSize -> Ptr CDouble -> Ptr CDouble -> IO Myb_status)
+
 -- | myb_status myb_system_integrator(const myb_system *system, const myb_ias15_options *options, const myb_allocator *allocator, myb_ias15 **integrator)
 foreign import ccall "myb_system_integrator" myb_system_integrator :: Ptr Myb_system -> Ptr Myb_ias15_options -> Ptr Myb_allocator -> Ptr (Ptr Myb_ias15) -> IO Myb_status
 foreign import ccall "&myb_system_integrator" p'myb_system_integrator :: FunPtr (Ptr Myb_system -> Ptr Myb_ias15_options -> Ptr Myb_allocator -> Ptr (Ptr Myb_ias15) -> IO Myb_status)

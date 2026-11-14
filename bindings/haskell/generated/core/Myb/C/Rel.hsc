@@ -155,6 +155,18 @@ pattern MYB_PN_SO35 = (#{const MYB_PN_SO35})
 pattern MYB_PN_SORR :: (Eq a, Num a) => a
 pattern MYB_PN_SORR = (#{const MYB_PN_SORR})
 
+pattern MYB_PN_SS3 :: (Eq a, Num a) => a
+pattern MYB_PN_SS3 = (#{const MYB_PN_SS3})
+
+pattern MYB_PN_SORR5 :: (Eq a, Num a) => a
+pattern MYB_PN_SORR5 = (#{const MYB_PN_SORR5})
+
+pattern MYB_PN_SOTAIL :: (Eq a, Num a) => a
+pattern MYB_PN_SOTAIL = (#{const MYB_PN_SOTAIL})
+
+pattern MYB_PN_TAILX :: (Eq a, Num a) => a
+pattern MYB_PN_TAILX = (#{const MYB_PN_TAILX})
+
 -- | myb_status myb_ppn_validate(const myb_ppn *ppn)
 foreign import ccall "myb_ppn_validate" myb_ppn_validate :: Ptr Myb_ppn -> IO Myb_status
 foreign import ccall "&myb_ppn_validate" p'myb_ppn_validate :: FunPtr (Ptr Myb_ppn -> IO Myb_status)

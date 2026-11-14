@@ -1491,7 +1491,11 @@ enum { LEVELS_N = 24 }; /* 3 bodies, a rotation, a pair of spins */
 
 /* gm: of the bodies; the fields keep the GM of their own (field_gm), which is not the system's: a
  * system built with a gm changed sees its fields unchanged, as the derivatives take them. */
-static void levels_build(levels_fixture* f, const double gm[3], const double field_gm[2]) {
+/* contact: with the level of a contact (the satellite far above the ground, so it never
+ * touches) — the Jacobian has it; myb_system_partials takes a system with contacts by the
+ * differences of propagations, so the test of the variational equations leaves it out. */
+static void levels_build(levels_fixture* f, const double gm[3], const double field_gm[2],
+                         int contact) {
   const double c = 299792458.0;
   const double au = 1.495978707e11;
   const double re = 6378136.3;
@@ -1553,7 +1557,9 @@ static void levels_build(levels_fixture* f, const double gm[3], const double fie
       .law = {.stiffness = 1.0e3, .exponent = 1.5, .damping = 0.0, .friction = 0.5, .slip = 1.0e-3},
       .points = &f->foot,
       .point_count = 1};
-  MT_CHECK(myb_system_add_contact(s, 2, 0, &ground) == MYB_OK);
+  if (contact) {
+    MT_CHECK(myb_system_add_contact(s, 2, 0, &ground) == MYB_OK);
+  }
   MT_CHECK(myb_system_coordinates(s) == LEVELS_N);
 }
 
@@ -1602,7 +1608,7 @@ static void test_partials_jacobian(void) {
   const size_t n = LEVELS_N;
   const double gm[3] = {3.986004418e14, 4.9028e12, 1.0e3};
   levels_fixture f;
-  levels_build(&f, gm, gm);
+  levels_build(&f, gm, gm, 1);
   double y[2 * LEVELS_N];
   levels_state(&f, y);
   const double t = 100.0;
@@ -1665,7 +1671,7 @@ static void test_partials_jacobian(void) {
         double moved[3] = {gm[0], gm[1], gm[2]};
         moved[k] += side == 0 ? step : -step;
         levels_fixture g;
-        levels_build(&g, moved, gm);
+        levels_build(&g, moved, gm, 1);
         MT_CHECK(myb_system_acceleration(g.s, t, y, y + n, side == 0 ? up : down) == MYB_OK);
         levels_destroy(&g);
       }
@@ -1740,7 +1746,7 @@ static void test_partials_levels(void) {
   const size_t n = LEVELS_N;
   const double gm[3] = {3.986004418e14, 4.9028e12, 1.0e3};
   levels_fixture f;
-  levels_build(&f, gm, gm);
+  levels_build(&f, gm, gm, 0);
   myb_system* s = f.s;
   double y0[2 * LEVELS_N];
   levels_state(&f, y0);

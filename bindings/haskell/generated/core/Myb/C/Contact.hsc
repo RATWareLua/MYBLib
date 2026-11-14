@@ -73,6 +73,20 @@ instance Storable Myb_contact_surface where
 instance Zero Myb_contact_surface where
   zero = Myb_contact_surface zero (replicate (#{const (3)}) zero) (replicate (#{const (3)}) zero) (replicate (#{const (3)}) zero) zero
 
+-- | enum myb_contact_friction
+newtype Myb_contact_friction = Myb_contact_friction #{type myb_contact_friction}
+  deriving stock (Show)
+  deriving newtype (Eq, Ord, Storable)
+
+instance Zero Myb_contact_friction where
+  zero = Myb_contact_friction 0
+
+pattern MYB_CONTACT_FRICTION_SMOOTH :: Myb_contact_friction
+pattern MYB_CONTACT_FRICTION_SMOOTH = Myb_contact_friction (#{const MYB_CONTACT_FRICTION_SMOOTH})
+
+pattern MYB_CONTACT_FRICTION_STICK :: Myb_contact_friction
+pattern MYB_CONTACT_FRICTION_STICK = Myb_contact_friction (#{const MYB_CONTACT_FRICTION_STICK})
+
 -- | struct myb_contact_law
 data Myb_contact_law = Myb_contact_law
   { myb_contact_law'stiffness :: CDouble
@@ -80,6 +94,9 @@ data Myb_contact_law = Myb_contact_law
   , myb_contact_law'damping :: CDouble
   , myb_contact_law'friction :: CDouble
   , myb_contact_law'slip :: CDouble
+  , myb_contact_law'kind :: Myb_contact_friction
+  , myb_contact_law'tangential_stiffness :: CDouble
+  , myb_contact_law'tangential_damping :: CDouble
   }
   deriving (Eq, Show)
 
@@ -92,7 +109,10 @@ instance Storable Myb_contact_law where
     v3 <- #{peek myb_contact_law, damping} p
     v4 <- #{peek myb_contact_law, friction} p
     v5 <- #{peek myb_contact_law, slip} p
-    pure (Myb_contact_law v1 v2 v3 v4 v5)
+    v6 <- #{peek myb_contact_law, kind} p
+    v7 <- #{peek myb_contact_law, tangential_stiffness} p
+    v8 <- #{peek myb_contact_law, tangential_damping} p
+    pure (Myb_contact_law v1 v2 v3 v4 v5 v6 v7 v8)
   poke p v = do
     fillBytes p 0 #{size myb_contact_law}
     #{poke myb_contact_law, stiffness} p (myb_contact_law'stiffness v)
@@ -100,9 +120,12 @@ instance Storable Myb_contact_law where
     #{poke myb_contact_law, damping} p (myb_contact_law'damping v)
     #{poke myb_contact_law, friction} p (myb_contact_law'friction v)
     #{poke myb_contact_law, slip} p (myb_contact_law'slip v)
+    #{poke myb_contact_law, kind} p (myb_contact_law'kind v)
+    #{poke myb_contact_law, tangential_stiffness} p (myb_contact_law'tangential_stiffness v)
+    #{poke myb_contact_law, tangential_damping} p (myb_contact_law'tangential_damping v)
 
 instance Zero Myb_contact_law where
-  zero = Myb_contact_law zero zero zero zero zero
+  zero = Myb_contact_law zero zero zero zero zero zero zero zero
 
 -- | struct myb_contact_point
 data Myb_contact_point = Myb_contact_point
@@ -195,6 +218,10 @@ foreign import ccall "&myb_contact_surface_nearest" p'myb_contact_surface_neares
 -- | myb_status myb_contact_force(const myb_contact_surface *surface, const myb_contact_law *law, const myb_contact_point *points, size_t count, const double *x, const double *v, const double *attitude, const double *omega, myb_contact_result *result)
 foreign import ccall "myb_contact_force" myb_contact_force :: Ptr Myb_contact_surface -> Ptr Myb_contact_law -> Ptr Myb_contact_point -> CSize -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_contact_result -> IO Myb_status
 foreign import ccall "&myb_contact_force" p'myb_contact_force :: FunPtr (Ptr Myb_contact_surface -> Ptr Myb_contact_law -> Ptr Myb_contact_point -> CSize -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_contact_result -> IO Myb_status)
+
+-- | myb_status myb_contact_force_stick(const myb_contact_surface *surface, const myb_contact_law *law, const myb_contact_point *points, size_t count, const double *x, const double *v, const double *attitude, const double *omega, const double *deflection, double *deflection_rate, myb_contact_result *result)
+foreign import ccall "myb_contact_force_stick" myb_contact_force_stick :: Ptr Myb_contact_surface -> Ptr Myb_contact_law -> Ptr Myb_contact_point -> CSize -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_contact_result -> IO Myb_status
+foreign import ccall "&myb_contact_force_stick" p'myb_contact_force_stick :: FunPtr (Ptr Myb_contact_surface -> Ptr Myb_contact_law -> Ptr Myb_contact_point -> CSize -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_contact_result -> IO Myb_status)
 
 -- | myb_status myb_contact_restitution(double damping, double speed, double *restitution)
 foreign import ccall "myb_contact_restitution" myb_contact_restitution :: CDouble -> CDouble -> Ptr CDouble -> IO Myb_status

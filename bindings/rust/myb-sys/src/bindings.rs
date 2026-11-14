@@ -525,6 +525,15 @@ unsafe extern "C" {
         context: *mut *mut ::std::os::raw::c_void,
     );
 }
+pub const MYB_BREAKS_RETAKE: myb_break_scheme = 0;
+pub const MYB_BREAKS_PREDICT: myb_break_scheme = 1;
+pub type myb_break_scheme = ::std::os::raw::c_uint;
+unsafe extern "C" {
+    pub fn myb_force_model_set_break_scheme(model: *mut myb_force_model, scheme: myb_break_scheme);
+}
+unsafe extern "C" {
+    pub fn myb_force_model_break_scheme(model: *const myb_force_model) -> myb_break_scheme;
+}
 unsafe extern "C" {
     pub fn myb_force_model_set_scales(
         model: *mut myb_force_model,
@@ -2860,6 +2869,9 @@ pub type myb_accel_function = ::std::option::Option<
 pub struct myb_ias15 {
     _unused: [u8; 0],
 }
+pub const MYB_IAS15_TIMESCALE_ACCELERATION: myb_ias15_timescale = 0;
+pub const MYB_IAS15_TIMESCALE_JERK: myb_ias15_timescale = 1;
+pub type myb_ias15_timescale = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct myb_ias15_options {
@@ -2871,6 +2883,7 @@ pub struct myb_ias15_options {
     pub block: usize,
     pub groups: *const usize,
     pub group_count: usize,
+    pub timescale: myb_ias15_timescale,
 }
 impl Default for myb_ias15_options {
     fn default() -> Self {
@@ -3166,6 +3179,7 @@ pub struct myb_orbit_options {
     pub integrator: myb_orbit_integrator,
     pub rtol: f64,
     pub atol: f64,
+    pub timescale: myb_ias15_timescale,
 }
 impl Default for myb_orbit_options {
     fn default() -> Self {
@@ -4300,6 +4314,10 @@ pub const MYB_PN_4RR: _bindgen_ty_15 = 256;
 pub const MYB_PN_SO25: _bindgen_ty_15 = 512;
 pub const MYB_PN_SO35: _bindgen_ty_15 = 1024;
 pub const MYB_PN_SORR: _bindgen_ty_15 = 2048;
+pub const MYB_PN_SS3: _bindgen_ty_15 = 4096;
+pub const MYB_PN_SORR5: _bindgen_ty_15 = 8192;
+pub const MYB_PN_SOTAIL: _bindgen_ty_15 = 16384;
+pub const MYB_PN_TAILX: _bindgen_ty_15 = 32768;
 pub type _bindgen_ty_15 = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -4941,14 +4959,29 @@ unsafe extern "C" {
         height: *mut f64,
     ) -> myb_status;
 }
+pub const MYB_CONTACT_FRICTION_SMOOTH: myb_contact_friction = 0;
+pub const MYB_CONTACT_FRICTION_STICK: myb_contact_friction = 1;
+pub type myb_contact_friction = ::std::os::raw::c_uint;
 #[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct myb_contact_law {
     pub stiffness: f64,
     pub exponent: f64,
     pub damping: f64,
     pub friction: f64,
     pub slip: f64,
+    pub kind: myb_contact_friction,
+    pub tangential_stiffness: f64,
+    pub tangential_damping: f64,
+}
+impl Default for myb_contact_law {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -4975,6 +5008,21 @@ unsafe extern "C" {
         v: *const f64,
         attitude: *const f64,
         omega: *const f64,
+        result: *mut myb_contact_result,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_contact_force_stick(
+        surface: *const myb_contact_surface,
+        law: *const myb_contact_law,
+        points: *const myb_contact_point,
+        count: usize,
+        x: *const f64,
+        v: *const f64,
+        attitude: *const f64,
+        omega: *const f64,
+        deflection: *const f64,
+        deflection_rate: *mut f64,
         result: *mut myb_contact_result,
     ) -> myb_status;
 }
@@ -7977,6 +8025,22 @@ unsafe extern "C" {
         y: *const f64,
         chi1: *mut f64,
         chi2: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_pack_contact(
+        system: *const myb_system,
+        contact: usize,
+        deflection: *const f64,
+        y: *mut f64,
+    ) -> myb_status;
+}
+unsafe extern "C" {
+    pub fn myb_system_unpack_contact(
+        system: *const myb_system,
+        contact: usize,
+        y: *const f64,
+        deflection: *mut f64,
     ) -> myb_status;
 }
 unsafe extern "C" {

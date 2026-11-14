@@ -36,6 +36,8 @@ enum {
 static const double default_epsilon = 1e-9;
 static const double safety = 0.25;          /* step change bound, both ways */
 static const double converged_change = 1e-16; /* |delta b6| / |a| at which the sweeps stop */
+static const double unseen_rounding = 0x1p-50; /* 4 ulp: the resolution of a place (JERK) */
+static const double stalled_change = 1e-12;    /* JERK: sweeps stopped above it do not converge */
 
 /* 1 / ((k + 2)(k + 3)) and 1 / (k + 2): integration of h^(k+1) twice and once. */
 static const double x_weight[ORDER] = {1.0 / 6.0,  1.0 / 12.0, 1.0 / 20.0, 1.0 / 30.0,
@@ -109,7 +111,9 @@ static myb_status create(size_t n, size_t followers, const myb_ias15_options* op
   }
   if (n == 0 || !(o.epsilon > 0.0) || !finite(o.epsilon) || !(o.h_initial >= 0.0) ||
       !finite(o.h_initial) || !(o.h_max >= 0.0) || !(o.h_min >= 0.0) || o.max_steps < 0 ||
-      (o.block != 0 && (n % o.block != 0 || lead % o.block != 0))) {
+      (o.block != 0 && (n % o.block != 0 || lead % o.block != 0)) ||
+      (o.timescale != MYB_IAS15_TIMESCALE_ACCELERATION &&
+       o.timescale != MYB_IAS15_TIMESCALE_JERK)) {
     return MYB_E_DOMAIN;
   }
   if (o.max_steps == 0) {
@@ -340,9 +344,22 @@ static void g_from_b(myb_ias15* s) {
   }
 }
 
-/* Predictor-corrector sweeps for the step dt from the current b. */
-static myb_status sweeps(myb_ias15* s, double dt) {
+static int all_finite(const double* v, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    if (!finite(v[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/* Predictor-corrector sweeps for the step dt from the current b. *diverged: 2 when the state at
+ * a node left the doubles (the acceleration is not called with it); 1 (JERK only) when the
+ * corrections stopped shrinking far above round-off; either way the step is to be rejected. */
+static myb_status sweeps(myb_ias15* s, double dt, int* diverged) {
   const size_t n = s->n;
+  const int watch = s->options.timescale == MYB_IAS15_TIMESCALE_JERK;
+  *diverged = 0;
   g_from_b(s);
   double change_last = (double)INFINITY;
   /* bound: MAX_SWEEPS */
@@ -353,6 +370,10 @@ static myb_status sweeps(myb_ias15* s, double dt) {
     for (int node = 1; node <= ORDER; ++node) {
       const double h = myb_ias15_h[node];
       state_at(n, s->y, s->y_comp, s->a0, s->b, dt, h, s->y_sub, NULL);
+      if (!all_finite(s->y_sub, 2 * n)) {
+        *diverged = 2;
+        return MYB_OK;
+      }
       const myb_status status = evaluate(s, s->t + (s->t_comp + h * dt), s->y_sub, s->a_sub);
       if (status != MYB_OK) {
         return status;
@@ -398,11 +419,17 @@ static myb_status sweeps(myb_ias15* s, double dt) {
       return MYB_OK; /* NaN: the series diverged; the step is rejected by its proposal */
     }
     if (relative < converged_change || (sweep >= 2 && !(relative < change_last))) {
-      return MYB_OK; /* converged, or the corrections stopped shrinking (round-off level) */
+      /* converged, or the corrections stopped shrinking: at round-off — or, far above it,
+       * because the iteration does not converge for a step this long (a stiff force whose
+       * fast motion is not excited, so that the timescale does not see it); with JERK such a
+       * step is rejected */
+      *diverged = watch && relative > stalled_change ? 1 : 0;
+      return MYB_OK;
     }
     change_last = relative;
   }
   s->stats.unconverged++;
+  *diverged = watch && change_last > stalled_change ? 1 : 0;
   return MYB_OK;
 }
 
@@ -413,13 +440,17 @@ static myb_status sweeps(myb_ias15* s, double dt) {
  * configuration) does not shrink the step, as a minimum of per-block timescales would. */
 static double proposed_of_group(const myb_ias15* s, double dt, size_t begin, size_t end) {
   const size_t m = s->options.block;
-  double y2 = 0.0; /* max over blocks of |a|^2, |dt a'|^2, |dt^2 a''|^2 */
+  const int jerk = s->options.timescale == MYB_IAS15_TIMESCALE_JERK;
+  double y2 = 0.0; /* max over blocks of |a|^2, |dt a'|^2, |dt^2 a''|^2, |dt^3 a'''|^2 */
   double y3 = 0.0;
   double y4 = 0.0;
+  double y5 = 0.0;
+  double unseen = (double)INFINITY; /* JERK: the step over which no block's a shows */
   for (size_t first = begin; first < end; first += m) {
     double b2 = 0.0;
     double b3 = 0.0;
     double b4 = 0.0;
+    double b5 = 0.0;
     for (size_t i = first; i < first + m; ++i) {
       const double* b = s->b + (size_t)ORDER * i;
       /* a, dt a', dt^2 a'' at h = 1 */
@@ -431,13 +462,25 @@ static double proposed_of_group(const myb_ias15* s, double dt, size_t begin, siz
       b2 += a * a;
       b3 += j * j;
       b4 += k * k;
+      if (jerk) { /* dt^3 a''' */
+        const double l = 6.0 * b[2] + 24.0 * b[3] + 60.0 * b[4] + 120.0 * b[5] + 210.0 * b[6];
+        b5 += l * l;
+      }
     }
-    if (!finite(b2) || !finite(b3) || !finite(b4)) {
+    if (!finite(b2) || !finite(b3) || !finite(b4) || !finite(b5)) {
       return (double)NAN;
+    }
+    if (jerk && b2 > 0.0) {
+      /* the step over which a moves the block by less than the rounding of its place:
+       * a dt^2 / 2 < 4 ulp |x|; nothing the integration does there can be seen */
+      const double place = block_norm(s->y + first, m);
+      const double step = sqrt(2.0 * unseen_rounding * place / sqrt(b2));
+      unseen = step < unseen ? step : unseen;
     }
     y2 = b2 > y2 ? b2 : y2;
     y3 = b3 > y3 ? b3 : y3;
     y4 = b4 > y4 ? b4 : y4;
+    y5 = b5 > y5 ? b5 : y5;
   }
   if (!(y2 > 0.0)) {
     return (double)INFINITY; /* no acceleration anywhere: no timescale */
@@ -447,7 +490,22 @@ static double proposed_of_group(const myb_ias15* s, double dt, size_t begin, siz
   if (!(denominator > 0.0)) {
     return (double)INFINITY;
   }
-  return s->eta * sqrt(2.0 / denominator) * dt;
+  double ratio = sqrt(2.0 / denominator); /* tau / dt */
+  if (!jerk) {
+    return s->eta * ratio * dt;
+  }
+  if (y3 > 0.0) {
+    /* tau_1^2 / dt^2 = 2 / (y4 / y3 + sqrt(y5 / y3)): the same one derivative up */
+    const double up = y4 / y3 + sqrt(y5 / y3);
+    if (!(up > 0.0)) {
+      return (double)INFINITY;
+    }
+    const double ratio_up = sqrt(2.0 / up);
+    ratio = ratio_up > ratio ? ratio_up : ratio;
+  }
+  const double proposed = s->eta * ratio * fabs(dt);
+  const double longest = proposed > unseen ? proposed : unseen;
+  return dt > 0.0 ? longest : -longest;
 }
 
 /* The shortest proposal of the groups (in magnitude; dt carries the direction). */
@@ -605,11 +663,12 @@ myb_status myb_ias15_step(myb_ias15* integrator, double t_limit) {
     } else {
       predict(s, s->have_step ? dt / s->h_last : 0.0); /* for the actual length of the attempt */
     }
-    const myb_status status = sweeps(s, dt);
+    int diverged = 0;
+    const myb_status status = sweeps(s, dt, &diverged);
     if (status != MYB_OK) {
       return status;
     }
-    const double proposed = proposed_step(s, dt);
+    const double proposed = diverged ? (double)NAN : proposed_step(s, dt);
     if (!(fabs(proposed) >= safety * fabs(dt))) { /* also NaN: the series diverged */
       s->stats.rejected++;
       dt = finite(proposed) ? proposed : safety * dt;
@@ -666,9 +725,13 @@ myb_status myb_internal_ias15_retake(myb_ias15* integrator, double t_limit) {
   s->hint_h = withdrawn;
   s->hint_s0 = 0.0;
   predict_from_hint(s, dt / withdrawn);
-  const myb_status status = sweeps(s, dt);
+  int diverged = 0;
+  const myb_status status = sweeps(s, dt, &diverged);
   if (status != MYB_OK) {
     return status;
+  }
+  if (diverged == 2) {
+    return MYB_E_STEP_MIN;
   }
   const double proposed = proposed_step(s, dt);
   state_at(n, s->y, s->y_comp, s->a0, s->b, dt, 1.0, s->y_new, s->comp_new);
@@ -686,6 +749,93 @@ myb_status myb_internal_ias15_retake(myb_ias15* integrator, double t_limit) {
   }
   s->h = clamp_step(s, withdrawn > 0.0 ? next : -next);
   return MYB_OK;
+}
+
+myb_status myb_internal_ias15_reshape(myb_ias15* integrator, double t_limit) {
+  MYB_CHECK(integrator != NULL && integrator->started);
+  myb_ias15* s = integrator;
+  const size_t n = s->n;
+  const double reshaped = s->h_last;
+  const double planned = fabs(s->h);
+  const double dt = (t_limit - s->t_old) - s->t_comp_old;
+  if (!s->have_step || !finite(t_limit) || !(dt * reshaped > 0.0) ||
+      !(fabs(dt) <= 2.0 * fabs(reshaped)) || dt == reshaped) {
+    return MYB_E_DOMAIN;
+  }
+  /* back to the beginning of the step, with its own polynomial as the prediction */
+  memcpy(s->b_hint, s->b_last, (size_t)ORDER * n * sizeof(double));
+  memcpy(s->y, s->y_old, 2 * n * sizeof(double));
+  memcpy(s->y_comp, s->comp_old, 2 * n * sizeof(double));
+  memcpy(s->a0, s->a_old, n * sizeof(double));
+  s->t = s->t_old;
+  s->t_comp = s->t_comp_old;
+  s->a0_valid = 1;
+  s->have_step = 0;
+  s->stats.accepted--;
+  s->stats.rejected++;
+  s->hint_h = reshaped;
+  s->hint_s0 = 0.0;
+  predict_from_hint(s, dt / reshaped);
+  int diverged = 0;
+  const myb_status status = sweeps(s, dt, &diverged);
+  if (status != MYB_OK) {
+    return status;
+  }
+  if (diverged == 2) {
+    return MYB_E_STEP_MIN;
+  }
+  const double proposed = proposed_step(s, dt);
+  state_at(n, s->y, s->y_comp, s->a0, s->b, dt, 1.0, s->y_new, s->comp_new);
+  if (!all_finite(s->y_new, 2 * n)) {
+    return MYB_E_STEP_MIN;
+  }
+  accept(s, dt, 1, t_limit); /* clears the hint: the next step is predicted from this one */
+  /* ... by its polynomial alone: what the sweeps changed in the polynomial they started from
+   * is not an error of a prediction to carry on (a step that ran past a kink was polluted by
+   * it, the reshaped one is not) */
+  s->last_prediction = 0;
+  double next = planned;
+  if (finite(proposed) && fabs(proposed) < next) {
+    next = fabs(proposed);
+  }
+  s->h = clamp_step(s, reshaped > 0.0 ? next : -next);
+  return MYB_OK;
+}
+
+void myb_internal_ias15_extrapolate(const myb_ias15* integrator, double t, size_t count,
+                                    double* y) {
+  MYB_CHECK(integrator != NULL && integrator->started && y != NULL && count <= integrator->n);
+  const myb_ias15* s = integrator;
+  const size_t n = s->n;
+  if (!s->have_step) {
+    const double dt = (t - s->t) - s->t_comp;
+    for (size_t i = 0; i < count; ++i) {
+      y[i] = s->y[i] + (s->y_comp[i] + dt * (s->y[n + i] + dt * (0.5 * s->a0[i])));
+      y[count + i] = s->y[n + i] + (s->y_comp[n + i] + dt * s->a0[i]);
+    }
+    return;
+  }
+  const double dt = s->h_last;
+  const double h = ((t - s->t_old) - s->t_comp_old) / dt;
+  const double dth = dt * h;
+  for (size_t i = 0; i < count; ++i) {
+    double p = 0.0;
+    double q = 0.0;
+    node_state(s->b_last + (size_t)ORDER * i, s->a_old[i], h, &p, &q);
+    y[i] = s->y_old[i] + (s->comp_old[i] + dth * (s->y_old[n + i] + dth * p));
+    y[count + i] = s->y_old[n + i] + (s->comp_old[n + i] + dth * q);
+  }
+}
+
+double myb_internal_ias15_next_step(const myb_ias15* integrator) {
+  MYB_CHECK(integrator != NULL && integrator->started);
+  return fabs(integrator->h);
+}
+
+void myb_internal_ias15_set_timescale(myb_ias15* integrator, myb_ias15_timescale timescale) {
+  MYB_CHECK(integrator != NULL && (timescale == MYB_IAS15_TIMESCALE_ACCELERATION ||
+                                   timescale == MYB_IAS15_TIMESCALE_JERK));
+  integrator->options.timescale = timescale;
 }
 
 myb_status myb_ias15_integrate(myb_ias15* integrator, double t_end) {

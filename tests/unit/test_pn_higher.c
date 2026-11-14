@@ -669,12 +669,27 @@ static void test_domain(void) {
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   b.r0 = 1.0;
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_OK);
-  b.orders = 1u << 20; /* an unknown bit (128 and above up to 2048 are the higher terms) */
+  b.orders = 1u << 20; /* an unknown bit (128 and above up to 32768 are the higher terms) */
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   b.orders = MYB_PN_SS;
   b.kappa1 = -1.0;
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
+  b.orders = MYB_PN_SS3;
+  MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   b.kappa1 = 1.0;
+  MT_CHECK(myb_pn_binary_evaluate(&b, x, v, NULL, NULL, a, NULL, NULL) == MYB_OK);
+  /* the tails on an unbound osculating orbit: refused, taken in the time domain with TAILX;
+   * a rectilinear orbit is refused either way */
+  const double fast[3] = {0.0, 0.5, 0.0};
+  const double radial[3] = {0.2, 0.0, 0.0};
+  b.orders = MYB_PN_4 | MYB_PN_4RR;
+  b.r0 = 1.0;
+  MT_CHECK(myb_pn_binary_evaluate(&b, x, fast, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
+  MT_CHECK(myb_pn_binary_evaluate(&b, x, radial, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
+  b.orders |= MYB_PN_TAILX;
+  MT_CHECK(myb_pn_binary_evaluate(&b, x, fast, NULL, NULL, a, NULL, NULL) == MYB_OK);
+  MT_CHECK(myb_pn_binary_evaluate(&b, x, radial, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
+  b.orders = MYB_PN_SS;
   const double bad[3] = {(double)NAN, 0.0, 0.0};
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v, bad, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   /* the old entry point refuses 3PN (no gauge length) */

@@ -2,7 +2,8 @@
 /* Events and breaks (myb/events.h, myb_force_model_add_break):
  *  - breaks at the edges of a shadow: with radiation pressure and the Earth's shadow the
  *    final state changes with the precision of the integrator as long as steps straddle the
- *    edges, and stops doing so once the edges are declared;
+ *    edges, and stops doing so once the edges are declared; the same with the steps aimed at
+ *    the edges (MYB_BREAKS_PREDICT; MYB_EVENTS_TIMING=<repetitions> times both ways);
  *  - the transition matrix and the sensitivities carried across the breaks, against
  *    differences of whole propagations;
  *  - ready-made events on a Kepler orbit against closed forms: apsides, a node, a distance;
@@ -16,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "mtest.h"
 #include "myb/myb.h"
@@ -199,6 +201,61 @@ static void test_breaks(void) {
   MT_CHECK(spread[0] > 1.0e-4);
   MT_CHECK(spread[1] < 2.0e-6);
   MT_CHECK(spread[1] < spread[0] / 100.0);
+}
+
+/* The same edges met by steps aimed at them (MYB_BREAKS_PREDICT): the same reference, the
+ * same independence of the precision; MYB_EVENTS_TIMING=<repetitions> times both schemes. */
+static void test_breaks_predicted(void) {
+  static const double epsilons[4] = {1e-9, 1e-10, 1e-11, 1e-12};
+  const double span = 2.0 * 86400.0;
+  world w;
+  world_init(&w, 1, 1);
+  double truth[6];
+  run(&w, 1e-13, span, truth, NULL, NULL);
+  myb_force_model_set_break_scheme(w.model, MYB_BREAKS_PREDICT);
+  double truth_predicted[6];
+  int64_t breaks_predicted = 0;
+  run(&w, 1e-13, span, truth_predicted, NULL, &breaks_predicted);
+  double spread = 0.0;
+  for (int k = 0; k < 4; ++k) {
+    double y[6];
+    int64_t steps = 0;
+    int64_t breaks = 0;
+    run(&w, epsilons[k], span, y, &steps, &breaks);
+    const double d = distance6(y, truth);
+    printf("  predicted breaks, epsilon %.0e: %lld steps, %lld breaks, %.3e m from the reference\n",
+           epsilons[k], (long long)steps, (long long)breaks, d);
+    spread = fmax(spread, d);
+    MT_CHECK(breaks == breaks_predicted);
+  }
+  printf("the final state over the precisions with predicted breaks: %.2e m (at 1e-13 %.1e m from "
+         "the steps withdrawn)\n",
+         spread, distance6(truth_predicted, truth));
+  MT_CHECK(spread < 2.0e-6);
+  MT_CHECK(distance6(truth_predicted, truth) < 1e-6);
+  const char* timing = getenv("MYB_EVENTS_TIMING");
+  if (timing != NULL) {
+    const int repetitions = atoi(timing) > 0 ? atoi(timing) : 10;
+    for (int k = 0; k < 4; ++k) {
+      for (int scheme = 0; scheme < 2; ++scheme) {
+        myb_force_model_set_break_scheme(w.model,
+                                         scheme == 0 ? MYB_BREAKS_RETAKE : MYB_BREAKS_PREDICT);
+        double best = 1e300;
+        double y[6];
+        int64_t steps = 0;
+        for (int r = 0; r < repetitions; ++r) {
+          const clock_t started = clock();
+          run(&w, epsilons[k], span, y, &steps, NULL);
+          const double seconds = (double)(clock() - started) / (double)CLOCKS_PER_SEC;
+          best = fmin(best, seconds);
+        }
+        printf("  timing: %s, epsilon %.0e: %lld steps, best of %d %.4f s, %.3e m\n",
+               scheme == 0 ? "withdrawn" : "predicted", epsilons[k], (long long)steps,
+               repetitions, best, distance6(y, truth));
+      }
+    }
+  }
+  world_destroy(&w);
 }
 
 /* The same edges with the other integrator. */
@@ -1036,6 +1093,7 @@ static void test_cspice_views(void) {
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_breaks();
+  test_breaks_predicted();
   test_breaks_dop853();
   test_breaks_rkn12();
   test_partials();

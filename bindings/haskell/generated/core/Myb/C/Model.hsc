@@ -56,6 +56,20 @@ foreign import ccall "wrapper" mk'myb_break_function :: (Ptr () -> CDouble -> Pt
 -- | Calls a myb_break_function.
 foreign import ccall "dynamic" call'myb_break_function :: Myb_break_function -> Ptr () -> CDouble -> Ptr CDouble -> IO CDouble
 
+-- | enum myb_break_scheme
+newtype Myb_break_scheme = Myb_break_scheme #{type myb_break_scheme}
+  deriving stock (Show)
+  deriving newtype (Eq, Ord, Storable)
+
+instance Zero Myb_break_scheme where
+  zero = Myb_break_scheme 0
+
+pattern MYB_BREAKS_RETAKE :: Myb_break_scheme
+pattern MYB_BREAKS_RETAKE = Myb_break_scheme (#{const MYB_BREAKS_RETAKE})
+
+pattern MYB_BREAKS_PREDICT :: Myb_break_scheme
+pattern MYB_BREAKS_PREDICT = Myb_break_scheme (#{const MYB_BREAKS_PREDICT})
+
 pattern MYB_MODEL_MAX_TERMS :: (Eq a, Num a) => a
 pattern MYB_MODEL_MAX_TERMS = (#{const MYB_MODEL_MAX_TERMS})
 
@@ -139,6 +153,14 @@ foreign import ccall "&myb_force_model_break_count" p'myb_force_model_break_coun
 -- | void myb_force_model_break(const myb_force_model *model, size_t index, myb_break_function *g, void **context)
 foreign import ccall "myb_force_model_break" myb_force_model_break :: Ptr Myb_force_model -> CSize -> Ptr Myb_break_function -> Ptr (Ptr ()) -> IO ()
 foreign import ccall "&myb_force_model_break" p'myb_force_model_break :: FunPtr (Ptr Myb_force_model -> CSize -> Ptr Myb_break_function -> Ptr (Ptr ()) -> IO ())
+
+-- | void myb_force_model_set_break_scheme(myb_force_model *model, myb_break_scheme scheme)
+foreign import ccall "myb_force_model_set_break_scheme" myb_force_model_set_break_scheme :: Ptr Myb_force_model -> Myb_break_scheme -> IO ()
+foreign import ccall "&myb_force_model_set_break_scheme" p'myb_force_model_set_break_scheme :: FunPtr (Ptr Myb_force_model -> Myb_break_scheme -> IO ())
+
+-- | myb_break_scheme myb_force_model_break_scheme(const myb_force_model *model)
+foreign import ccall "myb_force_model_break_scheme" myb_force_model_break_scheme :: Ptr Myb_force_model -> IO Myb_break_scheme
+foreign import ccall "&myb_force_model_break_scheme" p'myb_force_model_break_scheme :: FunPtr (Ptr Myb_force_model -> IO Myb_break_scheme)
 
 -- | myb_status myb_force_model_set_scales(myb_force_model *model, double length_scale, double velocity_scale)
 foreign import ccall "myb_force_model_set_scales" myb_force_model_set_scales :: Ptr Myb_force_model -> CDouble -> CDouble -> IO Myb_status

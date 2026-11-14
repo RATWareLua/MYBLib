@@ -1036,6 +1036,7 @@ impl Orbit {
             },
             rtol: options.rtol,
             atol: options.atol,
+            timescale: sys::MYB_IAS15_TIMESCALE_ACCELERATION,
         };
         let mut raw = ptr::null_mut();
         // SAFETY: the model is alive and kept alive by the orbit

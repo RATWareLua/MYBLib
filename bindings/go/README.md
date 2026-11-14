@@ -173,6 +173,11 @@ func main() {
 }
 ```
 
+**After installing another version of the library**, clear the build cache of Go (`go clean
+-cache`) or change `CGO_CFLAGS`: Go keys its cache by the files of the package, not by the
+headers of myb it includes, so the C of the package compiled against the old structures would
+be reused (the test of this repository adds a hash of the headers to `CGO_CFLAGS` for that).
+
 ## Test
 
 `test_go_binding` of ctest (registered when CMake finds Go — the cache variable `MYB_GO`, else

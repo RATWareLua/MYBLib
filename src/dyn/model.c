@@ -36,6 +36,7 @@ struct myb_force_model {
   myb_break_function breaks[MYB_MODEL_MAX_BREAKS];
   void* break_contexts[MYB_MODEL_MAX_BREAKS];
   size_t break_count;
+  myb_break_scheme break_scheme;
   double length_scale;
   double velocity_scale;
 };
@@ -188,6 +189,16 @@ void myb_force_model_break(const myb_force_model* model, size_t index, myb_break
   MYB_CHECK(model != NULL && index < model->break_count && g != NULL && context != NULL);
   *g = model->breaks[index];
   *context = model->break_contexts[index];
+}
+
+void myb_force_model_set_break_scheme(myb_force_model* model, myb_break_scheme scheme) {
+  MYB_CHECK(model != NULL && (scheme == MYB_BREAKS_RETAKE || scheme == MYB_BREAKS_PREDICT));
+  model->break_scheme = scheme;
+}
+
+myb_break_scheme myb_force_model_break_scheme(const myb_force_model* model) {
+  MYB_CHECK(model != NULL);
+  return model->break_scheme;
 }
 
 myb_status myb_force_model_bind_parameter(myb_force_model* model, size_t parameter, size_t term) {

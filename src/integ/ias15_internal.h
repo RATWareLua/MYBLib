@@ -14,6 +14,33 @@
  * t_limit is not inside the last step; otherwise the errors of myb_ias15_step. */
 [[nodiscard]] myb_status myb_internal_ias15_retake(myb_ias15* integrator, double t_limit);
 
+/* As myb_internal_ias15_retake, but t_limit may also lie beyond the end of the last step, by at
+ * most its own length: the step is taken again from its beginning to end exactly at t_limit,
+ * from its own polynomial (continued past its end when it is lengthened), which converges in a
+ * sweep or two when t_limit is close to the end. Unlike a retake, the step after it is
+ * predicted as after any step, from the polynomial of the step reshaped, and it is planned as
+ * the step reshaped had planned it (or shorter, if the reshaped step says so). For a step
+ * aimed at an instant predicted before it was taken — the edge of a shadow, the beginning of a
+ * contact — and brought to that instant once it is known better (myb_orbit). MYB_E_DOMAIN,
+ * with nothing changed, if t_limit is not within those bounds or equals the end of the step;
+ * otherwise the errors of myb_ias15_step. */
+[[nodiscard]] myb_status myb_internal_ias15_reshape(myb_ias15* integrator, double t_limit);
+
+/* The first `count` (<= n) coordinates and their rates at the time t from the polynomial of
+ * the last accepted step, which may be carried beyond its end (an extrapolation, for a
+ * prediction); before any step (just after a start) from the Taylor polynomial of the state
+ * and its acceleration, x + v dt + a dt^2 / 2. y: x[0 .. count-1], then v[0 .. count-1]. */
+void myb_internal_ias15_extrapolate(const myb_ias15* integrator, double t, size_t count,
+                                    double* y);
+
+/* The length of the step the integrator means to take next (unsigned; infinity when it has no
+ * timescale), after a start as after a step. */
+double myb_internal_ias15_next_step(const myb_ias15* integrator);
+
+/* The timescale of the step (myb_ias15_options.timescale) of an integrator already made: for
+ * the integrators made inside other objects (the variational equations of myb/uncert.h). */
+void myb_internal_ias15_set_timescale(myb_ias15* integrator, myb_ias15_timescale timescale);
+
 /* The length of the step the integrator would take next (0 before its first step), and a
  * length to take instead of the one a start has chosen: for a start that continues an
  * integration, where the automatic first step — made for a fresh problem, in which the

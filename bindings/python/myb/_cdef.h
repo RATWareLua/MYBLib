@@ -180,6 +180,12 @@ enum { MYB_MODEL_MAX_BREAKS = 32 };
         size_t myb_force_model_break_count(const myb_force_model* model);
         void myb_force_model_break(const myb_force_model* model, size_t index,
                                    myb_break_function* g, void** context);
+typedef enum myb_break_scheme {
+  MYB_BREAKS_RETAKE = 0,
+  MYB_BREAKS_PREDICT = 1
+} myb_break_scheme;
+        void myb_force_model_set_break_scheme(myb_force_model* model, myb_break_scheme scheme);
+        myb_break_scheme myb_force_model_break_scheme(const myb_force_model* model);
                       myb_status myb_force_model_set_scales(myb_force_model* model,
                                                             double length_scale,
                                                             double velocity_scale);
@@ -1035,6 +1041,10 @@ typedef struct myb_dop853_stats {
 typedef myb_status (*myb_accel_function)(void* context, double t, const double* x,
                                          const double* v, double* a);
 typedef struct myb_ias15 myb_ias15;
+typedef enum myb_ias15_timescale {
+  MYB_IAS15_TIMESCALE_ACCELERATION = 0,
+  MYB_IAS15_TIMESCALE_JERK = 1
+} myb_ias15_timescale;
 typedef struct myb_ias15_options {
   double epsilon;
   double h_initial;
@@ -1044,6 +1054,7 @@ typedef struct myb_ias15_options {
   size_t block;
   const size_t* groups;
   size_t group_count;
+  myb_ias15_timescale timescale;
 } myb_ias15_options;
 typedef struct myb_ias15_stats {
   int64_t accepted;
@@ -1165,6 +1176,7 @@ typedef struct myb_orbit_options {
   myb_orbit_integrator integrator;
   double rtol;
   double atol;
+  myb_ias15_timescale timescale;
 } myb_orbit_options;
                       myb_status myb_orbit_create(myb_force_model* model,
                                                   const myb_orbit_options* options,
@@ -1620,7 +1632,11 @@ enum {
   MYB_PN_4RR = 256,
   MYB_PN_SO25 = 512,
   MYB_PN_SO35 = 1024,
-  MYB_PN_SORR = 2048
+  MYB_PN_SORR = 2048,
+  MYB_PN_SS3 = 4096,
+  MYB_PN_SORR5 = 8192,
+  MYB_PN_SOTAIL = 16384,
+  MYB_PN_TAILX = 32768
 };
 typedef struct myb_pn_binary {
   double gm1;
@@ -1874,12 +1890,19 @@ typedef struct myb_contact_surface {
                                                              const double position[3],
                                                              double point[3], double normal[3],
                                                              double* height);
+typedef enum myb_contact_friction {
+  MYB_CONTACT_FRICTION_SMOOTH = 0,
+  MYB_CONTACT_FRICTION_STICK = 1
+} myb_contact_friction;
 typedef struct myb_contact_law {
   double stiffness;
   double exponent;
   double damping;
   double friction;
   double slip;
+  myb_contact_friction kind;
+  double tangential_stiffness;
+  double tangential_damping;
 } myb_contact_law;
 typedef struct myb_contact_point {
   double offset[3];
@@ -1898,6 +1921,11 @@ typedef struct myb_contact_result {
                                                    const double x[3], const double v[3],
                                                    const double attitude[9], const double omega[3],
                                                    myb_contact_result* result);
+                      myb_status myb_contact_force_stick(
+    const myb_contact_surface* surface, const myb_contact_law* law,
+    const myb_contact_point* points, size_t count, const double x[3], const double v[3],
+    const double attitude[9], const double omega[3], const double* deflection,
+    double* deflection_rate, myb_contact_result* result);
                       myb_status myb_contact_restitution(double damping, double speed,
                                                          double* restitution);
                       myb_status myb_contact_damping(double restitution, double speed,
@@ -3154,6 +3182,12 @@ typedef struct myb_system_contact {
                       myb_status myb_system_unpack_spins(const myb_system* system, size_t pair,
                                                          const double* y, double chi1[3],
                                                          double chi2[3]);
+                      myb_status myb_system_pack_contact(const myb_system* system,
+                                                         size_t contact,
+                                                         const double* deflection, double* y);
+                      myb_status myb_system_unpack_contact(const myb_system* system,
+                                                           size_t contact, const double* y,
+                                                           double* deflection);
                       myb_status myb_system_integrator(const myb_system* system,
                                                        const myb_ias15_options* options,
                                                        const myb_allocator* allocator,

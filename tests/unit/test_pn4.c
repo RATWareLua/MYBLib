@@ -1236,7 +1236,7 @@ static void test_domain(void) {
   const double v9[3] = {0.0, sqrt(1.9 / 10.0), 0.0};
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v8, NULL, NULL, a, NULL, NULL) == MYB_OK);
   MT_CHECK(myb_pn_binary_evaluate(&b, x, v9, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
-  b.orders = 4096;
+  b.orders = 1u << 20; /* an unknown bit */
   MT_CHECK(myb_pn_binary_evaluate(&b, x, vb, NULL, NULL, a, NULL, NULL) == MYB_E_DOMAIN);
   /* the spin terms without spins vanish; the old entry point refuses 4PN (no r0) */
   b.orders = MYB_PN_SO25 | MYB_PN_SO35 | MYB_PN_SORR;

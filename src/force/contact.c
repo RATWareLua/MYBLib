@@ -21,6 +21,10 @@ enum {
 
 static const double SERIES_LIMIT = 0.25;
 
+/* The friction that sticks: the anchor starts to slip when the spring pulls with 1 - slip_band
+ * of the limit and is dragged wholly at the limit (myb/contact.h). */
+static const double slip_band = 0.05;
+
 /* ---- Validity ------------------------------------------------------------------------------ */
 
 static int finite_scalar(double x) {
@@ -43,10 +47,21 @@ static int valid_surface(const myb_contact_surface* s) {
 }
 
 static int valid_law(const myb_contact_law* law) {
-  return law->stiffness > 0.0 && finite_scalar(law->stiffness) && law->exponent >= 1.0 &&
-         finite_scalar(law->exponent) && law->damping >= 0.0 && finite_scalar(law->damping) &&
-         law->friction >= 0.0 && finite_scalar(law->friction) &&
-         (law->friction == 0.0 || (law->slip > 0.0 && finite_scalar(law->slip)));
+  if (!(law->stiffness > 0.0 && finite_scalar(law->stiffness) && law->exponent >= 1.0 &&
+        finite_scalar(law->exponent) && law->damping >= 0.0 && finite_scalar(law->damping) &&
+        law->friction >= 0.0 && finite_scalar(law->friction))) {
+    return 0;
+  }
+  switch (law->kind) {
+    case MYB_CONTACT_FRICTION_SMOOTH:
+      return law->friction == 0.0 || (law->slip > 0.0 && finite_scalar(law->slip));
+    case MYB_CONTACT_FRICTION_STICK:
+      return law->friction == 0.0 ||
+             (law->tangential_stiffness > 0.0 && finite_scalar(law->tangential_stiffness) &&
+              law->tangential_damping >= 0.0 && finite_scalar(law->tangential_damping));
+    default:
+      return 0;
+  }
 }
 
 static int valid_point(const myb_contact_point* point) {
@@ -143,16 +158,64 @@ static double depth_power(double d, double n) {
   return myb_exp(n * myb_log(d));
 }
 
-myb_status myb_contact_force(const myb_contact_surface* surface, const myb_contact_law* law,
-                             const myb_contact_point* points, size_t count, const double x[3],
-                             const double v[3], const double attitude[9], const double omega[3],
-                             myb_contact_result* result) {
-  MYB_CHECK(surface != NULL && law != NULL && (points != NULL || count == 0) && x != NULL &&
-            v != NULL && result != NULL);
-  if (!myb_internal_contact_valid(surface, law, points, count) || !myb_vec3_finite(x) ||
-      !myb_vec3_finite(v)) {
-    return MYB_E_DOMAIN;
+/* The friction that sticks at one point that presses in (myb/contact.h): the force, added to
+ * f; the rate of the deflection z (3 values); u the velocity of the point, its normal part
+ * `along`, fn the normal force. */
+static void stick_friction(const myb_contact_law* law, const double normal[3], const double u[3],
+                           double along, double fn, const double z[3], double f[3],
+                           double rate[3]) {
+  double slide[3];
+  double zt[3];
+  const double zn = myb_vec3_dot(z, normal);
+  for (int i = 0; i < 3; ++i) {
+    slide[i] = u[i] - along * normal[i];
+    zt[i] = z[i] - zn * normal[i];
   }
+  const double limit = law->friction * fn;
+  const double kt = law->tangential_stiffness;
+  double trial[3];
+  for (int i = 0; i < 3; ++i) {
+    trial[i] = kt * zt[i] + law->tangential_damping * slide[i];
+  }
+  const double size = myb_vec3_norm(trial);
+  const double scale = size > limit ? limit / size : 1.0; /* P_L: never beyond the limit */
+  for (int i = 0; i < 3; ++i) {
+    f[i] -= scale * trial[i];
+  }
+  /* the anchor holds while the spring pulls with less than 1 - slip_band of the limit; above,
+   * it is dragged along the spring by the part phi of the motion away from it, phi rising to 1
+   * at the limit (and beyond, so that the spring never stretches past the cap while the point
+   * moves on); a spring stretched beyond twice the limit (the normal force has fallen under it)
+   * is drawn back at the rate k_t / c_t */
+  const double stretch = myb_vec3_norm(zt);
+  double pull = 0.0;
+  double direction[3] = {0.0, 0.0, 0.0};
+  if (stretch > 0.0) {
+    const double spring = kt * stretch;
+    double phi = limit > 0.0 ? (spring / limit - (1.0 - slip_band)) / slip_band : 1.0;
+    phi = phi < 0.0 ? 0.0 : (phi > 1.0 ? 1.0 : phi);
+    for (int i = 0; i < 3; ++i) {
+      direction[i] = zt[i] / stretch;
+    }
+    const double away = myb_vec3_dot(direction, slide);
+    pull = away > 0.0 ? phi * away : 0.0;
+    if (spring > 2.0 * limit && law->tangential_damping > 0.0) {
+      pull += (spring - 2.0 * limit) / law->tangential_damping;
+    }
+  }
+  for (int i = 0; i < 3; ++i) {
+    rate[i] = slide[i] - pull * direction[i];
+  }
+}
+
+/* The force of the surface, with the state of the friction that sticks when the law has one
+ * (deflection and rate, 3 values a point; rate may be NULL). */
+static myb_status contact_force(const myb_contact_surface* surface, const myb_contact_law* law,
+                                const myb_contact_point* points, size_t count, const double x[3],
+                                const double v[3], const double attitude[9],
+                                const double omega[3], const double* deflection, double* rate,
+                                myb_contact_result* result) {
+  const int sticks = law->kind == MYB_CONTACT_FRICTION_STICK;
   /* m: surface axes -> body axes; w: the angular velocity in the axes of the surface */
   double m[9] = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
   double w[3] = {0.0, 0.0, 0.0};
@@ -194,6 +257,19 @@ myb_status myb_contact_force(const myb_contact_surface* surface, const myb_conta
     }
     const double clearance = h - cp->radius;
     gap = clearance < gap ? clearance : gap;
+    if (sticks) {
+      /* the spring of every point, on the surface or off it (where it is held) */
+      const double* z = deflection + 3 * k;
+      const double zn = myb_vec3_dot(z, normal);
+      double zt[3];
+      for (int i = 0; i < 3; ++i) {
+        zt[i] = z[i] - zn * normal[i];
+      }
+      energy += 0.5 * law->tangential_stiffness * myb_vec3_dot(zt, zt);
+      if (rate != NULL) {
+        memset(rate + 3 * k, 0, 3 * sizeof *rate);
+      }
+    }
     if (!(clearance < 0.0)) {
       continue;
     }
@@ -218,7 +294,15 @@ myb_status myb_contact_force(const myb_contact_surface* surface, const myb_conta
     for (int i = 0; i < 3; ++i) {
       f[i] = fn * normal[i];
     }
-    if (law->friction > 0.0) {
+    if (sticks) {
+      if (law->friction > 0.0) {
+        double z_rate[3];
+        stick_friction(law, normal, u, along, fn, deflection + 3 * k, f, z_rate);
+        if (rate != NULL) {
+          memcpy(rate + 3 * k, z_rate, sizeof z_rate);
+        }
+      }
+    } else if (law->friction > 0.0) {
       double slide[3];
       for (int i = 0; i < 3; ++i) {
         slide[i] = u[i] - along * normal[i];
@@ -246,6 +330,45 @@ myb_status myb_contact_force(const myb_contact_surface* surface, const myb_conta
   result->gap = gap;
   result->touching = touching;
   return MYB_OK;
+}
+
+myb_status myb_contact_force(const myb_contact_surface* surface, const myb_contact_law* law,
+                             const myb_contact_point* points, size_t count, const double x[3],
+                             const double v[3], const double attitude[9], const double omega[3],
+                             myb_contact_result* result) {
+  MYB_CHECK(surface != NULL && law != NULL && (points != NULL || count == 0) && x != NULL &&
+            v != NULL && result != NULL);
+  if (!myb_internal_contact_valid(surface, law, points, count) || !myb_vec3_finite(x) ||
+      !myb_vec3_finite(v) || law->kind == MYB_CONTACT_FRICTION_STICK) {
+    return MYB_E_DOMAIN;
+  }
+  return contact_force(surface, law, points, count, x, v, attitude, omega, NULL, NULL, result);
+}
+
+myb_status myb_contact_force_stick(const myb_contact_surface* surface, const myb_contact_law* law,
+                                   const myb_contact_point* points, size_t count,
+                                   const double x[3], const double v[3], const double attitude[9],
+                                   const double omega[3], const double* deflection,
+                                   double* deflection_rate, myb_contact_result* result) {
+  MYB_CHECK(surface != NULL && law != NULL && (points != NULL || count == 0) && x != NULL &&
+            v != NULL && result != NULL);
+  if (!myb_internal_contact_valid(surface, law, points, count) || !myb_vec3_finite(x) ||
+      !myb_vec3_finite(v)) {
+    return MYB_E_DOMAIN;
+  }
+  if (law->kind != MYB_CONTACT_FRICTION_STICK) {
+    return contact_force(surface, law, points, count, x, v, attitude, omega, NULL, NULL, result);
+  }
+  if (deflection == NULL) {
+    return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < count; ++k) {
+    if (!myb_vec3_finite(deflection + 3 * k)) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  return contact_force(surface, law, points, count, x, v, attitude, omega, deflection,
+                       deflection_rate, result);
 }
 
 /* ---- The restitution of the law ---------------------------------------------------------------

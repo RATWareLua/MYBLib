@@ -46,7 +46,9 @@
  *                       frame. The velocities are dq/dt and that angular velocity. The
  *                       quaternion obeys q'' = (q' w + q w') / 2 with w = 2 conj(q) q', the
  *                       angular velocity of the mantle in its own frame;
- *   6 per PN pair       with spins: values whose rates are the two dimensionless spins.
+ *   6 per PN pair       with spins: values whose rates are the two dimensionless spins;
+ *   3 per contact point with a friction that sticks (after all the others): values whose rates
+ *                       are the deflections of its spring (myb/contact.h).
  * myb_system_pack_rotation and its relatives fill and read these parts of a state.
  *
  * A system is used by one thread at a time. */
@@ -186,14 +188,16 @@ MYB_API MYB_NODISCARD myb_status myb_system_add_distortion(myb_system* system, s
                                                            size_t raiser);
 
 /* The terms beyond 1PN of two bodies (myb_pn_binary_evaluate of myb/rel.h: `orders` of
- * MYB_PN_2 ... MYB_PN_SORR, r0 for MYB_PN_3 and MYB_PN_4, kappa for MYB_PN_SS; the tails of
- * MYB_PN_4 and MYB_PN_4RR are those of the pair's own osculating Kepler orbit, which must stay
- * bound: the integration fails otherwise), added to what the point
+ * MYB_PN_2 ... MYB_PN_TAILX, r0 for MYB_PN_3 and MYB_PN_4, kappa for MYB_PN_SS and MYB_PN_SS3;
+ * the tails of MYB_PN_4 and MYB_PN_4RR are those of the pair's own osculating Kepler orbit,
+ * which must stay bound with e below about 0.83 unless MYB_PN_TAILX is set: the integration
+ * fails otherwise), added to what the point
  * masses give: the relative acceleration is shared by the masses, a_a += m_b / (m_a + m_b) a,
  * a_b -= m_a / (m_a + m_b) a, which keeps the Newtonian momentum. Ask for MYB_PN_1 only if
  * the point masses do not carry the 1PN terms of this pair already (its level in the
  * myb_nbody is Newtonian): it would be counted twice. With any spin term (MYB_PN_SO,
- * MYB_PN_SS, MYB_PN_SO25, MYB_PN_SO35, MYB_PN_SORR) the two spins are integrated. The speed of
+ * MYB_PN_SS, MYB_PN_SO25, MYB_PN_SO35, MYB_PN_SORR, MYB_PN_SS3, MYB_PN_SORR5, MYB_PN_SOTAIL)
+ * the two spins are integrated. The speed of
  * light is `c`, or that of myb_nbody_set_relativity when `c` is 0. Errors: MYB_E_DOMAIN
  * (indices, a body without mass, unknown orders, no speed of light, MYB_PN_3 or MYB_PN_4
  * without r0, a negative kappa), MYB_E_OVERFLOW. */
@@ -307,11 +311,16 @@ MYB_API MYB_NODISCARD myb_status myb_system_light_action(void* light, double t,
  * is pushed back by the ratio of the masses at the same points, so that the momentum and the
  * angular momentum are kept (a ground of gm 0 is not pushed: its mass counts as infinite
  * beside the body's); the torques turn the bodies whose rotation is integrated. The surface,
- * the law and the count are copied; the points must outlive the system. Errors: MYB_E_DOMAIN
- * (the bodies, the same body twice, an invalid surface, law or point, no points),
- * MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_CONTACTS). A contact against gravity stalls the steps
- * of IAS15 (myb/contact.h): integrate such a system with DOP853, myb_system_acceleration as a
- * system of the first order (x, v)' = (v, a). */
+ * the law and the count are copied; the points must outlive the system. A friction that
+ * sticks (MYB_CONTACT_FRICTION_STICK) adds 3 coordinates a point to the state, after every
+ * other kind, whose rates are the deflections of the springs in the axes of the surface
+ * (myb_system_pack_contact; zero: the springs at rest), and whose accelerations are the rates
+ * of the deflections; they stay in the state, meaning nothing, if a merger drops the contact.
+ * Errors: MYB_E_DOMAIN (the bodies, the same body twice, an invalid surface, law or point, no
+ * points), MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_CONTACTS). Integrate a system with
+ * contacts with DOP853, myb_system_acceleration as a system of the first order
+ * (x, v)' = (v, a): IAS15 needs its steps ended at the touches (myb/contact.h), which the
+ * system does not do. */
 typedef struct myb_system_contact {
   myb_contact_surface surface;     /* of the ground, in its frame */
   myb_contact_law law;             /* per unit mass of the body */
@@ -325,8 +334,9 @@ MYB_API MYB_NODISCARD myb_status myb_system_add_contact(myb_system* system, size
 
 /* ---- The state ------------------------------------------------------------------------------- */
 
-/* Coordinates of the state: 3 per body, 9 per integrated rotation, 6 per PN pair with spins;
- * a state y holds the coordinates and then their rates, 2 n values. */
+/* Coordinates of the state: 3 per body, 9 per integrated rotation, 6 per PN pair with spins, 3
+ * per point of a contact whose friction sticks; a state y holds the coordinates and then their
+ * rates, 2 n values. */
 MYB_API size_t myb_system_coordinates(const myb_system* system);
 
 /* The rotation of `body` into a state y and out of it: the attitude q (unit; scaled to unit
@@ -350,6 +360,16 @@ MYB_API MYB_NODISCARD myb_status myb_system_pack_spins(const myb_system* system,
 MYB_API MYB_NODISCARD myb_status myb_system_unpack_spins(const myb_system* system, size_t pair,
                                                          const double* y, double chi1[3],
                                                          double chi2[3]);
+
+/* The deflections of the springs of the contact number `contact` (among those in place, in the
+ * order of myb_system_add_contact): 3 values a point, in the axes of its surface (m). Errors:
+ * MYB_E_DOMAIN (no such contact, a friction that does not stick). */
+MYB_API MYB_NODISCARD myb_status myb_system_pack_contact(const myb_system* system,
+                                                         size_t contact,
+                                                         const double* deflection, double* y);
+MYB_API MYB_NODISCARD myb_status myb_system_unpack_contact(const myb_system* system,
+                                                           size_t contact, const double* y,
+                                                           double* deflection);
 
 /* An IAS15 integrator for the system as it stands (levels that add coordinates — rotations,
  * pairs with spins — must be in place): n coordinates, blocks of three, and the groups of
@@ -412,8 +432,13 @@ MYB_API MYB_NODISCARD myb_status myb_system_inertia(myb_system* system, size_t b
  * between t0 and t1). Cost: one propagation of the state with 2 n + count columns, and per
  * evaluation the analytic levels once and two evaluations of the differenced levels per
  * coordinate they depend on — against two whole propagations per column: 2.6 .. 3.5 times
- * cheaper for two bodies, 1.3 .. 2 times for the system with every level. A contact, which
- * IAS15 does not integrate well (myb/contact.h), is not smooth where it starts.
+ * cheaper for two bodies, 1.3 .. 2 times for the system with every level. A system with
+ * contacts (myb_system_add_contact) is taken by central differences of whole propagations, as
+ * before phase 21: a contact is stiff where the state is quiet (a body resting on its springs,
+ * a smooth friction steep in the velocity), and the variations, which ride on the steps of the
+ * state, drift there (a block resting on a plane: 1e-4 of the largest element with a friction
+ * that sticks, all of it with the smooth one, against 2e-8 for the differences). Contacts under
+ * IAS15 need MYB_IAS15_TIMESCALE_JERK (myb/integ.h).
  *
  * phi (2 n x 2 n, row-major: d y1_i / d y0_j, n = myb_system_coordinates) and sensitivity
  * (2 n x count: d y1_i / d gm_k) may be NULL; y1 (may be NULL) the state at t1. The system

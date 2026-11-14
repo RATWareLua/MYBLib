@@ -177,8 +177,47 @@ MYB_API double myb_rel_proper_time_rate(double c, double v2, double potential);
  * B5/2 it loses the energy and angular momentum of Kidder's spin-orbit fluxes (on a circular
  * orbit dE/dt has the factor 1 + x^(3/2) (-4 S_l - 5/4 (dm/m) Sigma_l) / (G m^2)); it leaves the
  * spins alone (Will, eq. 1.6: radiation reaction moves neither their norm nor their direction at
- * this order). Not included: the spin-orbit tail and the higher spin-orbit radiation reaction,
- * the spin-spin terms beyond the leading order. */
+ * this order).
+ *
+ * The spin-spin terms at next-to-leading order (A. Bohe, G. Faye, S. Marsat, E. K. Porter,
+ * Class. Quantum Grav. 32, 195010, 2015, App. A; same frame, coordinates and spin variables):
+ * the relative acceleration quadratic in the spins at 1/c^6 relative to Newton (3PN for maximal
+ * spins; S1 S2, S1^2 and S2^2 terms, the latter with and without the constants kappa_A of the
+ * spin-induced quadrupoles), and the precession linear in the spins at the next order,
+ * Omega_1 += (G / (c^3 r^3)) [w_{5,0} + (G m / r) w_{5,1}] (S = c S_true). With MYB_PN_1,
+ * MYB_PN_SO and MYB_PN_SS they keep the paper's energy E_SS conserved through 1/c^6; on circular
+ * orbits with aligned spins they give the S^2 coefficients of E(x) of the paper at x^2 and x^3.
+ *
+ * The spin-orbit radiation reaction at next-to-leading order (MYB_PN_SORR5, 1/c^10 with S =
+ * c S_true: 5PN for maximal spins), harmonic coordinates, conserved-norm spins. It is not
+ * published in harmonic coordinates (Zeng and Will, GRG 39, 1661, 2007, and Maia, Galley,
+ * Leibovich and Porto, PRD 96, 084064, 2017, are the leading order, Will's term up to gauge),
+ * so it is built here by energy and angular-momentum balance, exactly, against the fluxes of the
+ * radiative moments of the published source moments (A. Bohe, S. Marsat, L. Blanchet, CQG 30,
+ * 135009, 2013): the acceleration over the vectors n x S, S x v, n (n, S, v), v (n, S, v) and
+ * the same with Sigma, polynomial in n.v, v^2, G m / r, nu (to nu^2) and dm, satisfying
+ * dE/dt = -F - dE_S/dt and dJ/dt = -G - dJ_S/dt with Schott terms E_S, J_S; the free (gauge)
+ * parameters of the construction are set to zero. The spins are not moved by it. On circular
+ * orbits the energy loss linear in the spins has the published factor 1 + x^(3/2) (-4 S_l - 5/4
+ * dm Sigma_l) + x^(5/2) ((-9/2 + 272/9 nu) S_l + (-13/16 + 43/4 nu) dm Sigma_l) (BBF 2006,
+ * eq. FxK, G m^2 = 1), and on eccentric orbits the energy lost over a radial period follows the
+ * published general-orbit flux to the next order.
+ *
+ * The spin-orbit part of the tail: it enters the dynamics at 1/c^11 (5.5PN for maximal spins),
+ * conservative and dissipative, from the spin parts of the mass and current quadrupoles inside
+ * the hereditary integrals and from the spin-orbit change of the orbit over which they are
+ * taken. The conservative part is meaningful only with the local spin-orbit terms of that order,
+ * not published in harmonic coordinates; MYB_PN_SOTAIL is the dissipative part on quasi-circular
+ * orbits, built by balance with the published tail-induced spin-orbit flux (L. Blanchet,
+ * A. Buonanno, G. Faye, CQG 28, 135005, 2011: F has the term (32/5) nu^2 x^8 (-16 pi S_l -
+ * 31/6 pi dm Sigma_l)) as a force along -v, net of what MYB_PN_4RR already radiates on such an
+ * orbit (its tail is taken on the osculating Kepler orbit, which is not the spin-orbit circle);
+ * on an eccentric orbit it is a model (an error of O(e) of a 1/c^11 term).
+ *
+ * MYB_PN_TAILX takes the tails of MYB_PN_4 and MYB_PN_4RR on any osculating conic where the
+ * Fourier series stops (unbound, parabolic, and bound with e above about 0.83), by a quadrature
+ * in the time domain over the whole conic (rel/pn_higher.c): the same tail, continuous in e
+ * through the switch and through e = 1, its error still 5PN; 0.2 to 2 ms per evaluation. */
 
 enum {
   MYB_PN_1 = 1,       /* 1PN, conservative */
@@ -193,7 +232,11 @@ enum {
   MYB_PN_4RR = 256,   /* 4PN radiation reaction: the dissipative tail (needs a bound orbit) */
   MYB_PN_SO25 = 512,  /* spin-orbit at next-to-leading order, 2PN precession */
   MYB_PN_SO35 = 1024, /* spin-orbit at next-to-next-to-leading order, 3PN precession */
-  MYB_PN_SORR = 2048  /* spin-orbit radiation reaction */
+  MYB_PN_SORR = 2048, /* spin-orbit radiation reaction */
+  MYB_PN_SS3 = 4096,  /* spin-spin at next-to-leading order (1/c^6), with its precession */
+  MYB_PN_SORR5 = 8192,   /* spin-orbit radiation reaction at next-to-leading order (1/c^10) */
+  MYB_PN_SOTAIL = 16384, /* the spin-orbit part of the dissipative tail, quasi-circular orbits */
+  MYB_PN_TAILX = 32768   /* the tails of MYB_PN_4, MYB_PN_4RR on any osculating conic */
 };
 
 typedef struct myb_pn_binary {
@@ -210,8 +253,10 @@ typedef struct myb_pn_binary {
  * (m) and velocity v (m/s), and the rates (1/s) of the dimensionless spins chi1, chi2. chi1,
  * chi2 may be NULL (no spin); dchi1, dchi2 may be NULL (not wanted). Errors: MYB_E_DOMAIN
  * (r = 0, gm1 or gm2 <= 0, c <= 0, non-finite input, unknown bits in orders, MYB_PN_3 or
- * MYB_PN_4 without r0 > 0, MYB_PN_SS with a negative kappa, MYB_PN_4 or MYB_PN_4RR when the
- * osculating Newtonian orbit is unbound or has e above about 0.83). */
+ * MYB_PN_4 without r0 > 0, MYB_PN_SS or MYB_PN_SS3 with a negative kappa, MYB_PN_4 or MYB_PN_4RR
+ * when the osculating Newtonian orbit is unbound or has e above about 0.83 and MYB_PN_TAILX is
+ * not set, or, with MYB_PN_TAILX, when it is rectilinear), MYB_E_NOCONV (the quadrature budget
+ * of MYB_PN_TAILX exhausted; not expected). */
 MYB_API MYB_NODISCARD myb_status myb_pn_binary_evaluate(const myb_pn_binary* binary,
                                                         const double x[3], const double v[3],
                                                         const double chi1[3],

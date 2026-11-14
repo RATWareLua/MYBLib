@@ -175,6 +175,33 @@ myb_status myb_internal_variational_retake(myb_variational* variational, double 
   return myb_internal_ias15_retake(variational->ias, t_limit);
 }
 
+myb_status myb_internal_variational_reshape(myb_variational* variational, double t_limit) {
+  MYB_CHECK(variational != NULL);
+  return myb_internal_ias15_reshape(variational->ias, t_limit);
+}
+
+void myb_internal_variational_extrapolate(const myb_variational* variational, double t,
+                                          double y[6]) {
+  MYB_CHECK(variational != NULL && y != NULL);
+  myb_internal_ias15_extrapolate(variational->ias, t, 3, y);
+}
+
+double myb_internal_variational_next_step(const myb_variational* variational) {
+  MYB_CHECK(variational != NULL);
+  return myb_internal_ias15_next_step(variational->ias);
+}
+
+void myb_internal_variational_plan_step(myb_variational* variational, double h) {
+  MYB_CHECK(variational != NULL);
+  myb_internal_ias15_plan_step(variational->ias, h);
+}
+
+void myb_internal_variational_set_timescale(myb_variational* variational,
+                                            myb_ias15_timescale timescale) {
+  MYB_CHECK(variational != NULL);
+  myb_internal_ias15_set_timescale(variational->ias, timescale);
+}
+
 myb_status myb_variational_integrate(myb_variational* variational, double t_end) {
   MYB_CHECK(variational != NULL);
   return myb_ias15_integrate(variational->ias, t_end);
