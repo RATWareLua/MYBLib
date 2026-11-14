@@ -152,11 +152,15 @@ static myb_status reserve(myb_spk_writer* w, size_t extra) {
   return MYB_OK;
 }
 
-/* A segment's name: printable, and not ending in a blank — the reader drops trailing blanks
- * (they pad the record of the names), so such a name would not read back as written. */
+/* A segment's name (SPK, PCK and CK): printable, and not ending in a blank — the readers drop
+ * trailing blanks (they pad the record of the names), so such a name would not read back as
+ * written. */
+static int segment_name_ok(const char* name) {
+  return name != NULL && printable(name, NAME_CHARS) && name[strlen(name) - 1] != ' ';
+}
+
 static int valid_header(const myb_spk_segment_header* h) {
-  return h->name != NULL && printable(h->name, NAME_CHARS) &&
-         h->name[strlen(h->name) - 1] != ' ';
+  return segment_name_ok(h->name);
 }
 
 /* The header of an SPK segment: a body relative to another one (a segment of a body relative
@@ -807,7 +811,7 @@ myb_status myb_ck_writer_add_pointings(myb_ck_writer* writer,
                                        const double* interval_starts, size_t interval_count) {
   MYB_CHECK(writer != NULL && header != NULL && ticks != NULL && quaternions != NULL);
   myb_spk_writer* w = &writer->w;
-  if (header->name == NULL || !printable(header->name, NAME_CHARS) || (type != 1 && type != 3) ||
+  if (!segment_name_ok(header->name) || (type != 1 && type != 3) ||
       count == 0 || count > SIZE_MAX / 16) {
     return MYB_E_DOMAIN;
   }
@@ -887,7 +891,7 @@ myb_status myb_ck_writer_add_intervals(myb_ck_writer* writer,
   MYB_CHECK(writer != NULL && header != NULL && starts != NULL && stops != NULL &&
             quaternions != NULL && rates != NULL && seconds_per_tick != NULL);
   myb_spk_writer* w = &writer->w;
-  if (header->name == NULL || !printable(header->name, NAME_CHARS) || count == 0 ||
+  if (!segment_name_ok(header->name) || count == 0 ||
       count > SIZE_MAX / 16) {
     return MYB_E_DOMAIN;
   }
@@ -943,7 +947,7 @@ myb_status myb_ck_writer_add_chebyshev(myb_ck_writer* writer,
   MYB_CHECK(writer != NULL && header != NULL && starts != NULL && stops != NULL &&
             counts != NULL && coefficients != NULL);
   myb_spk_writer* w = &writer->w;
-  if (header->name == NULL || !printable(header->name, NAME_CHARS) || count == 0 ||
+  if (!segment_name_ok(header->name) || count == 0 ||
       count > SIZE_MAX / 64) {
     return MYB_E_DOMAIN;
   }
@@ -1105,7 +1109,7 @@ myb_status myb_ck_writer_add_packets(myb_ck_writer* writer, const myb_ck_segment
                                      size_t interval_count) {
   MYB_CHECK(writer != NULL && header != NULL && packets != NULL);
   myb_spk_writer* w = &writer->w;
-  if (header->name == NULL || !printable(header->name, NAME_CHARS) ||
+  if (!segment_name_ok(header->name) ||
       !valid_packets(packets, 1) || !isfinite(start) || !isfinite(stop) || !(stop >= start)) {
     return MYB_E_DOMAIN;
   }
@@ -1156,7 +1160,7 @@ myb_status myb_ck_writer_add_minisegments(myb_ck_writer* writer,
                                           int select_last, double start, double stop) {
   MYB_CHECK(writer != NULL && header != NULL && minisegments != NULL && boundaries != NULL);
   myb_spk_writer* w = &writer->w;
-  if (header->name == NULL || !printable(header->name, NAME_CHARS) || count == 0 ||
+  if (!segment_name_ok(header->name) || count == 0 ||
       count > SIZE_MAX / 64 || !isfinite(start) || !isfinite(stop) || !(stop >= start) ||
       !(boundaries[0] <= start) || !(boundaries[count] >= stop)) {
     return MYB_E_DOMAIN;

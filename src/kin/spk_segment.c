@@ -718,6 +718,8 @@ static myb_status state_type19(const myb_internal_spk_segment* s, myb_time t, do
 static myb_status parse_type5(myb_internal_spk_segment* s, myb_diag* diag) {
   const uint64_t length = s->end - s->begin + 1;
   uint64_t n = 0;
+  /* N / 100 directory epochs, as spkw05 writes them (a hundredth epoch of 100 or 200 states is
+   * in the directory; types 9, 13, 18 leave it out: (N - 1) / 100) */
   if (length < 2 + 7 || !as_count(word(s, s->end), length, &n) || n == 0 ||
       n > (length - 2) / 7 || n * 7 + n / 100 + 2 != length) {
     return format_error(diag, s, "inconsistent directory");

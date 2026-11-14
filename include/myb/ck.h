@@ -168,7 +168,8 @@ MYB_API void myb_ck_writer_destroy(myb_ck_writer* writer); /* accepts NULL */
 typedef struct myb_ck_segment_header {
   int32_t instrument;
   int32_t frame;    /* the base frame (NAIF code, 1 = J2000) */
-  const char* name; /* 1 .. 40 printable ASCII characters */
+  const char* name; /* 1 .. 40 printable ASCII characters, the last not a blank (readers drop
+                       trailing blanks) */
 } myb_ck_segment_header;
 
 /* A segment of `count` pointings at increasing ticks: quaternions (4 a pointing; made unit

@@ -1309,6 +1309,63 @@ static void test_audited_clocks(void) {
   }
 }
 
+/* Found by review in phase 21: a segment name ending in a blank, which the reader drops (blanks
+ * pad the record of the names), so that the name read back differed from the one written. Each
+ * writer of segments refuses it; the same arguments with the name without the blank are taken,
+ * and the names, a blank inside one of them, come back as written. */
+static void test_name_blanks(void) {
+  myb_ck_writer* writer = NULL;
+  MT_CHECK(myb_ck_writer_create("myb test: names", NULL, &writer) == MYB_OK);
+  const myb_ck_segment_header good[5] = {{-77101, 1, "POINTINGS"},
+                                         {-77102, 1, "INTERVALS"},
+                                         {-77103, 1, "CHEBYSHEV"},
+                                         {-77104, 1, "PACKETS"},
+                                         {-77105, 1, "MINI SEGMENTS"}};
+  const myb_ck_segment_header blank[5] = {{-77101, 1, "POINTINGS "},
+                                          {-77102, 1, "INTERVALS "},
+                                          {-77103, 1, "CHEBYSHEV "},
+                                          {-77104, 1, "PACKETS "},
+                                          {-77105, 1, "MINI SEGMENTS "}};
+  const double ticks[2] = {1.0e6, 1.0e6 + 100.0};
+  const double q[8] = {1.0, 0.0, 0.0, 0.0, 0.9, 0.1, 0.0, 0.0};
+  const double stops[1] = {1.0e6 + 50.0};
+  const double rates[3] = {0.0, 0.0, 1.0e-3};
+  const double per_tick[1] = {1.0 / 256.0};
+  const int counts[7] = {1, 1, 1, 1, 0, 0, 0};
+  double packets[16];
+  make_packets(0, ticks, 2, 0.1, 0.2, packets);
+  const myb_ck_packets set = {0, 2, 0.1, ticks, packets, 2};
+  for (int pass = 0; pass < 2; ++pass) {
+    const myb_ck_segment_header* h = pass == 0 ? blank : good;
+    const myb_status expected = pass == 0 ? MYB_E_DOMAIN : MYB_OK;
+    MT_CHECK(myb_ck_writer_add_pointings(writer, &h[0], 1, ticks, q, NULL, 2, NULL, 0) ==
+             expected);
+    MT_CHECK(myb_ck_writer_add_intervals(writer, &h[1], ticks, stops, q, rates, per_tick, 1) ==
+             expected);
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h[2], ticks, stops, counts, q, 1, 0) ==
+             expected);
+    MT_CHECK(myb_ck_writer_add_packets(writer, &h[3], &set, 1, ticks[0], ticks[1], NULL, 0) ==
+             expected);
+    MT_CHECK(myb_ck_writer_add_minisegments(writer, &h[4], &set, ticks, 1, 1, 0, ticks[0],
+                                            ticks[1]) == expected);
+    if (pass == 0) {
+      MT_CHECK(myb_ck_writer_size(writer) == 0);
+    }
+  }
+  myb_ck* ck = NULL;
+  MT_CHECK(load_damaged(writer, 0.0, 0.0, &ck) == MYB_OK);
+  if (ck != NULL) {
+    MT_CHECK(myb_ck_segment_count(ck) == 5);
+    for (size_t k = 0; k < 5 && k < myb_ck_segment_count(ck); ++k) {
+      myb_ck_segment_info info;
+      myb_ck_segment(ck, k, &info);
+      MT_CHECK(strcmp(info.name, good[k].name) == 0);
+    }
+    myb_ck_destroy(ck);
+  }
+  myb_ck_writer_destroy(writer);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_reference();
@@ -1318,5 +1375,6 @@ int main(void) {
   test_reviewed_edges();
   test_audited_edges();
   test_audited_clocks();
+  test_name_blanks();
   return mt_finish("test_ck");
 }
