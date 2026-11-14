@@ -104,8 +104,9 @@ typedef struct myb_oem_data {
  * written keeps the numbers as they were written (7000 km stays 7000). Seconds of epochs get
  * as many decimals as they need, three at least. *length (may be NULL): the characters of the
  * whole text without the NUL. Errors: MYB_E_OVERFLOW (the buffer; call again with length + 1
- * bytes), MYB_E_DOMAIN (no segments, a segment without states, a missing text, values not
- * finite, an invalid date). */
+ * bytes), MYB_E_DOMAIN (no segments, a segment without states, a missing text or one with
+ * blanks at its ends — the reader trims them —, values not finite or not finite in the unit
+ * they are written in, an invalid date or one whose seconds need more than 60 decimals). */
 MYB_API MYB_NODISCARD myb_status myb_oem_write(const myb_oem_data* data, char* buffer,
                                                size_t size, size_t* length);
 /* The same in the notation given (myb_oem_write: KVN). */
@@ -158,8 +159,8 @@ typedef struct myb_opm {
 } myb_opm;
 
 /* Errors: MYB_E_FORMAT (diag gives the line: not an OPM, a missing mandatory keyword, a value
- * that is not a number or a date, more than MYB_OPM_MAX_MANEUVERS manoeuvres); the structure
- * is then unspecified. */
+ * that is not a number or a date, a number that is not finite in SI — 1e306 km —, more than
+ * MYB_OPM_MAX_MANEUVERS manoeuvres); the structure is then unspecified. */
 MYB_API MYB_NODISCARD myb_status myb_opm_parse(const char* text, size_t size, myb_opm* opm,
                                                myb_diag* diag);
 /* As myb_oem_write and myb_oem_write_as. */
@@ -273,7 +274,8 @@ MYB_API MYB_NODISCARD myb_status myb_ocm_line(const myb_ocm* ocm, myb_ocm_kind k
                                               double* values, size_t max, size_t* count);
 
 /* A line of a trajectory of TRAJ_TYPE CARTP, CARTPV or CARTPVA in m, m/s and m/s^2: *count is
- * 3, 6 or 9, the rest of state is zero. Errors: MYB_E_DOMAIN (another type), MYB_E_FORMAT. */
+ * 3, 6 or 9, the rest of state is zero. Errors: MYB_E_DOMAIN (another type), MYB_E_FORMAT (as
+ * myb_ocm_line, another count, a number of km that is not finite in m). */
 MYB_API MYB_NODISCARD myb_status myb_ocm_state(const myb_ocm* ocm, size_t index, size_t line,
                                                int* absolute, myb_calendar* epoch,
                                                double* offset, double state[9], int* count);
@@ -304,8 +306,10 @@ typedef struct myb_ocm_data {
 } myb_ocm_data;
 
 /* The message (version 3.0) as text, as myb_oem_write_as. Errors: MYB_E_OVERFLOW,
- * MYB_E_DOMAIN (a keyword or a value that cannot be written, metadata without TIME_SYSTEM or
- * EPOCH_TZERO, lines in a block that has none). */
+ * MYB_E_DOMAIN (a keyword or a value that cannot be written — COMMENT is no keyword the reader
+ * keeps —, a line that the reader would take for something else: a comment, a keyword =
+ * value line, the word of a section, metadata without TIME_SYSTEM or EPOCH_TZERO, lines in a
+ * block that has none). */
 MYB_API MYB_NODISCARD myb_status myb_ocm_write(const myb_ocm_data* data,
                                                myb_odm_notation notation, char* buffer,
                                                size_t size, size_t* length);

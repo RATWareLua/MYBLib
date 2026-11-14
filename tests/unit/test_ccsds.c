@@ -1130,6 +1130,201 @@ static void test_ocm(void) {
   printf("OCM: 8 blocks of the 7 kinds read, written in both notations and read back\n");
 }
 
+/* Defects found by review (regressions): numbers that overflow on the way to SI, entities and
+ * the order of the keywords of a covariance, and values that the writers wrote but the reader
+ * refused or read otherwise. */
+static void test_reviewed_edges(void) {
+  myb_diag diag = {0};
+  static myb_opm opm;
+  static myb_opm back;
+  static char text[2][8192];
+  size_t length = 0;
+  MT_CHECK(myb_opm_parse(opm_text, strlen(opm_text), &opm, &diag) == MYB_OK);
+  /* a finite number of km whose metres are infinite: refused, not an infinite state */
+  {
+    static char big[4096];
+    snprintf(big, sizeof big, "%s", opm_text);
+    char* x = strstr(big, "X = 6655.9942");
+    memcpy(x, "X = 1e306    ", 13);
+    MT_CHECK(myb_opm_parse(big, strlen(big), &back, &diag) == MYB_E_FORMAT && diag.line == 11);
+    static const char head[] =
+        "CCSDS_OEM_VERS = 2.0\nCREATION_DATE = 1996-11-04T17:22:31\nORIGINATOR = A\nMETA_START\n"
+        "OBJECT_NAME = B\nOBJECT_ID = C\nCENTER_NAME = EARTH\nREF_FRAME = EME2000\n"
+        "TIME_SYSTEM = UTC\nSTART_TIME = 1996-12-18T12:00:00\nSTOP_TIME = 1996-12-18T12:00:00\n"
+        "META_STOP\n";
+    static char ephemeris[2048];
+    snprintf(ephemeris, sizeof ephemeris, "%s1996-12-18T12:00:00 1 2 3 4 5 1e306\n", head);
+    myb_oem* oem = NULL;
+    MT_CHECK(myb_oem_load(ephemeris, strlen(ephemeris), NULL, &oem, &diag) == MYB_E_FORMAT &&
+             oem == NULL);
+    myb_oem_destroy(oem);
+    static char covariance[2048];
+    snprintf(covariance, sizeof covariance,
+             "%s1996-12-18T12:00:00 1 2 3 4 5 6\nCOVARIANCE_START\nEPOCH = 1996-12-18T12:00:00\n"
+             "1e303\n0 1\n0 0 1\n0 0 0 1\n0 0 0 0 1\n0 0 0 0 0 1\nCOVARIANCE_STOP\n",
+             head);
+    oem = NULL;
+    MT_CHECK(myb_oem_load(covariance, strlen(covariance), NULL, &oem, &diag) == MYB_E_FORMAT &&
+             oem == NULL);
+    myb_oem_destroy(oem);
+    static const char trajectory[] =
+        "CCSDS_OCM_VERS = 3.0\nMETA_START\nTIME_SYSTEM = UTC\nEPOCH_TZERO = 2020-001T00:00:00\n"
+        "META_STOP\nTRAJ_START\nTRAJ_TYPE = CARTP\n0 1 2 1e306\nTRAJ_STOP\n";
+    myb_ocm* ocm = NULL;
+    MT_CHECK(myb_ocm_load(trajectory, strlen(trajectory), NULL, &ocm, &diag) == MYB_OK);
+    if (ocm != NULL) {
+      double state[9];
+      int count = 0;
+      MT_CHECK(myb_ocm_state(ocm, 0, 0, NULL, NULL, NULL, state, &count) == MYB_E_FORMAT);
+      myb_ocm_destroy(ocm);
+    }
+  }
+  /* a frame of a covariance of the XML notation: its entities decoded as those of every
+   * value; the 21 keywords in their order, one number each */
+  {
+    const myb_calendar epoch = {2020, 1, 1, 0, 0, 0.0};
+    double state[6] = {7.0e6, 0.0, 0.0, 0.0, 7.5e3, 0.0};
+    double covariance[36] = {0.0};
+    for (int i = 0; i < 6; ++i) {
+      covariance[7 * i] = 1.0 + i;
+    }
+    const myb_oem_segment_data segment = {.object_name = "B",
+                                          .object_id = "C",
+                                          .center_name = "EARTH",
+                                          .ref_frame = "EME2000",
+                                          .time_system = "UTC",
+                                          .count = 1,
+                                          .epochs = &epoch,
+                                          .states = state,
+                                          .covariance_count = 1,
+                                          .covariance_epochs = &epoch,
+                                          .covariances = covariance,
+                                          .covariance_frame = "A&B<C>"};
+    const myb_oem_data data = {.originator = "A", .creation_date = epoch, .segment_count = 1,
+                               .segments = &segment};
+    MT_CHECK(myb_oem_write_as(&data, MYB_ODM_XML, text[0], sizeof text[0], &length) == MYB_OK);
+    myb_oem* oem = NULL;
+    MT_CHECK(myb_oem_load(text[0], length, NULL, &oem, &diag) == MYB_OK);
+    if (oem != NULL) {
+      const char* frame = NULL;
+      myb_oem_covariance(oem, 0, 0, NULL, &frame, NULL);
+      MT_CHECK(frame != NULL && strcmp(frame, "A&B<C>") == 0);
+      myb_oem_destroy(oem);
+    }
+    /* CY_X before CX_X: refused, not taken as the first number */
+    char* first = strstr(text[0], "<CX_X>");
+    char* second = strstr(text[0], "<CY_X>");
+    MT_CHECK(first != NULL && second != NULL);
+    if (first != NULL && second != NULL) {
+      memcpy(first, "<CY_X>", 6);
+      memcpy(first + strcspn(first, "/") + 1, "CY_X", 4);
+      memcpy(second, "<CX_X>", 6);
+      memcpy(second + strcspn(second, "/") + 1, "CX_X", 4);
+      oem = NULL;
+      MT_CHECK(myb_oem_load(text[0], length, NULL, &oem, &diag) == MYB_E_FORMAT && oem == NULL);
+      myb_oem_destroy(oem);
+    }
+    /* of the other notation a keyword in the place of the first row: not a number of the
+     * matrix whatever it is called */
+    MT_CHECK(myb_oem_write(&data, text[0], sizeof text[0], &length) == MYB_OK);
+    const char* row = strstr(text[0], "\n1e-06\n");
+    MT_CHECK(row != NULL);
+    if (row != NULL) {
+      const int before = (int)(row - text[0]) + 1;
+      snprintf(text[1], sizeof text[1], "%.*sSPEED = %s", before, text[0], row + 1);
+      oem = NULL;
+      MT_CHECK(myb_oem_load(text[1], strlen(text[1]), NULL, &oem, &diag) == MYB_E_FORMAT &&
+               oem == NULL);
+      myb_oem_destroy(oem);
+      snprintf(text[1], sizeof text[1], "%.*sCX_X = %s", before, text[0], row + 1);
+      oem = NULL;
+      MT_CHECK(myb_oem_load(text[1], strlen(text[1]), NULL, &oem, &diag) == MYB_OK);
+      myb_oem_destroy(oem);
+    }
+  }
+  /* what the writers refused to write as it is: blanks at the ends of a value, numbers that
+   * are not finite in the unit of the file, a seconds that needs more decimals than written */
+  {
+    myb_opm o = opm;
+    snprintf(o.originator, sizeof o.originator, "GSOC ");
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    snprintf(o.originator, sizeof o.originator, " ");
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o = opm;
+    o.gm = (double)NAN;
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o = opm;
+    o.inclination = 1e307; /* rad: infinite in degrees */
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o = opm;
+    o.maneuvers[1].dv[2] = (double)INFINITY;
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o = opm;
+    o.mass = (double)NAN;
+    MT_CHECK(myb_opm_write_as(&o, MYB_ODM_XML, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    /* a second of 1.5e-40 is written in full and comes back; one of 5e-324 cannot be */
+    o = opm;
+    o.epoch.second = 1.5e-40;
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_OK);
+    MT_CHECK(myb_opm_parse(text[0], length, &back, &diag) == MYB_OK &&
+             back.epoch.second == 1.5e-40);
+    o.epoch.second = 4.9406564584124654e-324;
+    MT_CHECK(myb_opm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+  }
+  {
+    myb_omm omm;
+    myb_omm again;
+    MT_CHECK(myb_omm_parse(omm_text, strlen(omm_text), &omm, &diag) == MYB_OK);
+    myb_omm o = omm;
+    o.has_gm = 1;
+    o.gm = (double)NAN;
+    MT_CHECK(myb_omm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o = omm;
+    o.bstar = (double)INFINITY;
+    MT_CHECK(myb_omm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o = omm;
+    o.classification_type = '\0';
+    MT_CHECK(myb_omm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    o.classification_type = ' ';
+    MT_CHECK(myb_omm_write(&o, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    /* '&' is written as an entity and read back as one character */
+    o.classification_type = '&';
+    for (int notation = 0; notation < 2; ++notation) {
+      MT_CHECK(myb_omm_write_as(&o, (myb_odm_notation)notation, text[0], sizeof text[0],
+                                &length) == MYB_OK);
+      MT_CHECK(myb_omm_parse(text[0], length, &again, &diag) == MYB_OK &&
+               again.classification_type == '&');
+    }
+  }
+  /* a message of blocks: COMMENT as a keyword and lines that the reader takes for something
+   * else were written and lost */
+  {
+    const myb_ocm_pair meta[2] = {{"TIME_SYSTEM", "UTC"}, {"EPOCH_TZERO", "2020-001T00:00:00"}};
+    const myb_ocm_pair comment = {"COMMENT", "lost"};
+    myb_ocm_block_data block = {.kind = MYB_OCM_PHYS, .pair_count = 1, .pairs = &comment};
+    myb_ocm_data data = {.originator = "A",
+                         .creation_date = {2020, 1, 1, 0, 0, 0.0},
+                         .meta_count = 2,
+                         .meta = meta,
+                         .block_count = 1,
+                         .blocks = &block};
+    MT_CHECK(myb_ocm_write(&data, MYB_ODM_KVN, text[0], sizeof text[0], &length) == MYB_E_DOMAIN);
+    static const char* const lines[6] = {"COMMENT 1 2", "SPEED = 3", "TRAJ_STOP",
+                                         " 0 1 2",      "0 1 2 ",    "META_START"};
+    for (int k = 0; k < 6; ++k) {
+      block = (myb_ocm_block_data){.kind = MYB_OCM_TRAJ, .line_count = 1, .lines = &lines[k]};
+      for (int notation = 0; notation < 2; ++notation) {
+        MT_CHECK(myb_ocm_write(&data, (myb_odm_notation)notation, text[0], sizeof text[0],
+                               &length) == MYB_E_DOMAIN);
+      }
+    }
+    static const char* const fine[1] = {"0 1 2"};
+    block = (myb_ocm_block_data){.kind = MYB_OCM_TRAJ, .line_count = 1, .lines = fine};
+    MT_CHECK(myb_ocm_write(&data, MYB_ODM_KVN, text[0], sizeof text[0], &length) == MYB_OK);
+  }
+  printf("reviewed edges of the messages: overflow to SI, covariance keywords, writers\n");
+}
+
 int main(void) {
   test_random();
   test_oem();
@@ -1138,5 +1333,6 @@ int main(void) {
   test_covariance_and_xml();
   test_xml_sections();
   test_ocm();
+  test_reviewed_edges();
   return mt_finish("test_ccsds");
 }

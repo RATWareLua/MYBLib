@@ -2,6 +2,8 @@
 /* CCSDS comprehensive messages, KVN and XML (myb_ocm_load): the keywords of the header, the
  * metadata and the blocks of every kind, each line of data as text, as numbers and, for
  * trajectories, as a state in SI. */
+#include <math.h>
+
 #include "fuzz.h"
 #include "myb/ccsds.h"
 
@@ -49,6 +51,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           int n = 0;
           if (myb_ocm_state(ocm, b, l, &absolute, &epoch, &offset, state, &n) == MYB_OK) {
             MYB_CHECK(n == 3 || n == 6 || n == 9);
+            for (int i = 0; i < 9; ++i) {
+              MYB_CHECK(isfinite(state[i])); /* a number of km is a number of m, or an error */
+            }
           }
         }
       }

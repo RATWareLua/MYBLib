@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- the keywords of a covariance out of their order (CY_X first: it was taken as the first
+     number), and a frame with entities (it was not decoded) -->
+<oem id="CCSDS_OEM_VERS" version="2.0">
+  <header>
+    <CREATION_DATE>2020-01-01T00:00:00.000</CREATION_DATE>
+    <ORIGINATOR>A</ORIGINATOR>
+  </header>
+  <body>
+    <segment>
+      <metadata>
+        <OBJECT_NAME>B</OBJECT_NAME>
+        <OBJECT_ID>C</OBJECT_ID>
+        <CENTER_NAME>EARTH</CENTER_NAME>
+        <REF_FRAME>EME2000</REF_FRAME>
+        <TIME_SYSTEM>UTC</TIME_SYSTEM>
+        <START_TIME>2020-01-01T00:00:00.000</START_TIME>
+        <STOP_TIME>2020-01-01T00:00:00.000</STOP_TIME>
+      </metadata>
+      <data>
+        <stateVector>
+          <EPOCH>2020-01-01T00:00:00.000</EPOCH>
+          <X>7000</X><Y>0</Y><Z>0</Z><X_DOT>0</X_DOT><Y_DOT>7.5</Y_DOT><Z_DOT>0</Z_DOT>
+        </stateVector>
+        <covarianceMatrix>
+          <EPOCH>2020-01-01T00:00:00.000</EPOCH>
+          <COV_REF_FRAME>A&amp;B&lt;C&gt;</COV_REF_FRAME>
+          <CY_X>1e-06</CY_X><CX_X>0</CX_X><CY_Y>2e-06</CY_Y>
+          <CZ_X>0</CZ_X><CZ_Y>0</CZ_Y><CZ_Z>3e-06</CZ_Z>
+          <CX_DOT_X>0</CX_DOT_X><CX_DOT_Y>0</CX_DOT_Y><CX_DOT_Z>0</CX_DOT_Z>
+          <CX_DOT_X_DOT>4e-06</CX_DOT_X_DOT>
+          <CY_DOT_X>0</CY_DOT_X><CY_DOT_Y>0</CY_DOT_Y><CY_DOT_Z>0</CY_DOT_Z>
+          <CY_DOT_X_DOT>0</CY_DOT_X_DOT><CY_DOT_Y_DOT>5e-06</CY_DOT_Y_DOT>
+          <CZ_DOT_X>0</CZ_DOT_X><CZ_DOT_Y>0</CZ_DOT_Y><CZ_DOT_Z>0</CZ_DOT_Z>
+          <CZ_DOT_X_DOT>0</CZ_DOT_X_DOT><CZ_DOT_Y_DOT>0</CZ_DOT_Y_DOT>
+          <CZ_DOT_Z_DOT>6e-06</CZ_DOT_Z_DOT>
+        </covarianceMatrix>
+      </data>
+    </segment>
+  </body>
+</oem>

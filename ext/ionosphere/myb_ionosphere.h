@@ -60,7 +60,9 @@ typedef struct myb_ionex myb_ionex;
  * HGT2 / DHGT, the height in each LAT/LON1/LON2/DLON/H record; an EXPONENT holds until the
  * next one). The values of three-dimensional maps are the densities at the nodes times DHGT
  * (IONEX 1.0, table 2): the reader keeps the densities, value / DHGT. Errors: MYB_E_FORMAT
- * (with the line in diag; a dimension other than 2 and 3, a height off the grid),
+ * (with the line in diag; a dimension other than 2 and 3, a height off the grid, a radius or
+ * a grid definition that is not finite, an exponent, a map number, an epoch field or a value
+ * that is not a whole number of its range — the exponent within -22 .. 22, the values I5),
  * MYB_E_NOMEM. */
 MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_load(const char* text, size_t size,
                                                 const myb_allocator* allocator,
@@ -80,7 +82,8 @@ MYB_EXT_API int myb_ionex_dimension(const myb_ionex* maps);
  * description, eq. 3: E_i at longitude + (t - T_i) 360 deg / day). Of three-dimensional maps
  * the content of the column: the sum over the heights of density times DHGT, as the file
  * gives it. Errors: MYB_E_RANGE (time outside the maps, latitude outside the grid, a missing
- * value of the map). */
+ * value of the map — of a node around the place with a weight: on a node or an edge of the
+ * grid the nodes beside it are not needed). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
                                                 double latitude, double longitude, double* vtec);
 
@@ -116,8 +119,10 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_iono_layer_density(void* layer, double 
  * longitudes span a turn, or a turn and a step with the last column the first again (the
  * global maps of IONEX). myb_iono_grid_density is a myb_electron_density (context: const
  * myb_iono_grid*). Errors: MYB_E_RANGE (the date or the latitude outside the grid, a node
- * around the place that is not a number — a missing value), MYB_E_DOMAIN (a grid that is
- * none). */
+ * around the place that is not a number — a missing value; a node of no weight, on a node or
+ * an edge, is not needed), MYB_E_DOMAIN (a grid that is none: places and steps not finite,
+ * epochs that do not increase; a longitude of so many turns that its place in the turn is
+ * lost). */
 typedef struct myb_iono_grid {
   double radius;         /* of the sphere the heights are counted from, m */
   double latitude;       /* of the first node, and the step (either sign) */

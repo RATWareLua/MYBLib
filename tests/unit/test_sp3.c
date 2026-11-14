@@ -489,9 +489,143 @@ static void test_clocks(void) {
   myb_sp3_destroy(sp3);
 }
 
+/* Defects found by review (regressions): epochs after EOF, accuracy codes beyond their base, a
+ * satellite listed twice; and what the writer wrote but the reader refused or read otherwise. */
+static void test_reviewed_edges(void) {
+  static char text[8192];
+  myb_diag diag = {0};
+  /* an epoch after EOF: counted, never read, its label left unset */
+  {
+    snprintf(text, sizeof text, "%s*  2001  8  8  0 30  0.00000000\n", clocks_text);
+    myb_sp3* sp3 = NULL;
+    MT_CHECK(myb_sp3_load(text, strlen(text), NULL, &sp3, &diag) == MYB_OK);
+    if (sp3 != NULL) {
+      MT_CHECK(myb_sp3_epoch_count(sp3) == 2);
+      myb_sp3_destroy(sp3);
+    }
+  }
+  /* a base of the codes that makes their power infinite: refused, no infinite sigma */
+  {
+    snprintf(text, sizeof text, "%s", clocks_text);
+    char* base = strstr(text, "%f  1.2500000");
+    MT_CHECK(base != NULL);
+    if (base != NULL) {
+      memcpy(base, "%f       1e99", 13);
+      myb_sp3* sp3 = NULL;
+      MT_CHECK(myb_sp3_load(text, strlen(text), NULL, &sp3, &diag) == MYB_E_FORMAT && sp3 == NULL);
+      myb_sp3_destroy(sp3);
+    }
+  }
+  /* a satellite listed twice: the records of the second would be the first's */
+  {
+    snprintf(text, sizeof text, "%s", clocks_text);
+    /* bound: the names in the text */
+    for (char* g = strstr(text, "G03"); g != NULL; g = strstr(g, "G03")) {
+      g[2] = '1';
+    }
+    myb_sp3* sp3 = NULL;
+    MT_CHECK(myb_sp3_load(text, strlen(text), NULL, &sp3, &diag) == MYB_E_FORMAT && sp3 == NULL);
+    myb_sp3_destroy(sp3);
+  }
+  /* what the writer must refuse */
+  enum { SATELLITES = 2, EPOCHS = 2, CELLS = SATELLITES * EPOCHS };
+  const char* ids[SATELLITES] = {"L51", "L52"};
+  myb_calendar labels[EPOCHS] = {{2025, 6, 7, 0, 0, 0.0}, {2025, 6, 7, 0, 2, 0.0}};
+  double positions[3 * CELLS];
+  double velocities[3 * CELLS];
+  double clocks[CELLS];
+  unsigned char flags[CELLS] = {0};
+  for (int k = 0; k < CELLS; ++k) {
+    positions[3 * k] = 7.0e6 + 1000.0 * k;
+    positions[3 * k + 1] = -1.0e6;
+    positions[3 * k + 2] = 2.0e6;
+    velocities[3 * k] = 1.0;
+    velocities[3 * k + 1] = 7.5e3;
+    velocities[3 * k + 2] = -2.0;
+    clocks[k] = 1e-4;
+  }
+  const myb_sp3_data data = {.version = 'd',
+                             .file_type = 'L',
+                             .time_system = "UTC",
+                             .frame = "SLR20",
+                             .orbit_type = "FIT",
+                             .agency = "MYB",
+                             .data_used = "SLR",
+                             .satellite_count = SATELLITES,
+                             .satellites = ids,
+                             .epoch_count = EPOCHS,
+                             .epochs = labels,
+                             .interval = 120.0,
+                             .positions = positions,
+                             .velocities = velocities,
+                             .clocks = clocks,
+                             .flags = flags};
+  size_t length = 0;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_OK);
+  myb_sp3_data bad = data;
+  flags[1] = 16; /* no flag of the format: the columns of the flags were all blank */
+  MT_CHECK(myb_sp3_write(&bad, text, sizeof text, &length) == MYB_E_DOMAIN);
+  flags[1] = 0;
+  const char* twice[SATELLITES] = {"L51", "L51"};
+  bad.satellites = twice;
+  MT_CHECK(myb_sp3_write(&bad, text, sizeof text, &length) == MYB_E_DOMAIN);
+  const char* blank[SATELLITES] = {"L51", "G 1"};
+  bad.satellites = blank;
+  MT_CHECK(myb_sp3_write(&bad, text, sizeof text, &length) == MYB_E_DOMAIN);
+  bad = data;
+  bad.frame = " SLR";
+  MT_CHECK(myb_sp3_write(&bad, text, sizeof text, &length) == MYB_E_DOMAIN);
+  /* epochs the reader refuses */
+  labels[1].year = 1899;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  labels[1].year = 2025;
+  labels[1].second = 60.999999999; /* "61.00000000" */
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  labels[1].second = (double)NAN;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  labels[1].second = 0.0;
+  labels[1].day = 31; /* of June */
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  labels[1].day = 7;
+  /* numbers wider than their fields, records that read back as missing ones */
+  positions[3] = -1.0e13;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  positions[3] = 1.0e-7;
+  positions[4] = 0.0;
+  positions[5] = -1.0e-7;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  positions[3] = 7.0e6;
+  positions[4] = -1.0e6;
+  positions[5] = 2.0e6;
+  velocities[0] = 2.0e6;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  velocities[0] = 0.0;
+  velocities[1] = 0.0;
+  velocities[2] = 0.0;
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  velocities[0] = 1.0;
+  velocities[1] = 7.5e3;
+  velocities[2] = -2.0;
+  clocks[2] = 0.9999989999999; /* "999999.000000": the mark of a missing clock */
+  MT_CHECK(myb_sp3_write(&data, text, sizeof text, &length) == MYB_E_DOMAIN);
+  clocks[2] = 1e-4;
+  /* a time system of two letters comes back as two */
+  bad = data;
+  bad.time_system = "GP";
+  MT_CHECK(myb_sp3_write(&bad, text, sizeof text, &length) == MYB_OK);
+  myb_sp3* sp3 = NULL;
+  MT_CHECK(myb_sp3_load(text, length, NULL, &sp3, &diag) == MYB_OK);
+  if (sp3 != NULL) {
+    MT_CHECK(strcmp(myb_sp3_time_system(sp3), "GP") == 0);
+    myb_sp3_destroy(sp3);
+  }
+  printf("SP3: reviewed edges of the reader and the writer\n");
+}
+
 int main(void) {
   test_excerpt();
   test_small();
   test_clocks();
+  test_reviewed_edges();
   return mt_finish("test_sp3");
 }

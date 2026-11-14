@@ -1,0 +1,17 @@
+CCSDS_OPM_VERS = 2.0
+CREATION_DATE = 2000-06-03T05:33:00.123
+ORIGINATOR = GSOC
+COMMENT a finite number of km whose metres are infinite: it gave an infinite state
+OBJECT_NAME = EUTELSAT W4
+OBJECT_ID = 2000-028A
+CENTER_NAME = EARTH
+REF_FRAME = TOD
+TIME_SYSTEM = UTC
+EPOCH = 2006-06-03T00:00:00.000
+X = 1e306 [km]
+Y = -40218.5751 [km]
+Z = -82.9177 [km]
+X_DOT = 3.11548208 [km/s]
+Y_DOT = 0.47042605 [km/s]
+Z_DOT = -0.00101495 [km/s]
+GM = 1e300 [km**3/s**2]

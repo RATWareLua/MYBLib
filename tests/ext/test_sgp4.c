@@ -935,6 +935,162 @@ static void test_fit(void) {
   MT_CHECK(myb_tle_from_state(here, fast, MYB_SGP4_WGS72, &tle) == MYB_E_DOMAIN);
 }
 
+/* Defects found by review (regressions): a day 366 of a common year, lines the formatter wrote
+ * but the parser refused or read otherwise, conversions that passed a NaN on, a reference epoch
+ * of a type-10 segment that made the blend NaN, options of the fit that stopped the process. */
+static void test_reviewed_edges(void) {
+  static const char l1[] = "1 25544U 98067A   20153.14072786  .00000907  00000-0  24949-4 0  9994";
+  static const char l2[] = "2 25544  51.6443  93.0000 0002335  45.4201 314.6988 15.49438371229542";
+  myb_diag diag = {0};
+  myb_tle iss;
+  MT_CHECK(myb_tle_parse(l1, l2, 0, &iss, &diag) == MYB_OK);
+  /* day 366 of 2021 is no day (it was 32 December); of 2020 it is the last */
+  char line[80];
+  snprintf(line, sizeof line, "%s", l1);
+  memcpy(line + 18, "21366.50000000", 14);
+  myb_tle tle;
+  MT_CHECK(myb_tle_parse(line, l2, MYB_TLE_NO_CHECKSUM, &tle, &diag) == MYB_E_FORMAT);
+  memcpy(line + 18, "20366.50000000", 14);
+  MT_CHECK(myb_tle_parse(line, l2, MYB_TLE_NO_CHECKSUM, &tle, &diag) == MYB_OK);
+  myb_calendar utc;
+  myb_tle_epoch(&tle, &utc);
+  MT_CHECK(utc.year == 2020 && utc.month == 12 && utc.day == 31 && utc.hour == 12);
+  /* lines that the parser refuses or reads otherwise: refused by the formatter */
+  char a[70];
+  char b[70];
+  tle = iss;
+  tle.epoch_year = 2020;
+  tle.epoch_day = 366.9999999999; /* "367.00000000" */
+  MT_CHECK(myb_tle_format(&tle, a, b) == MYB_E_DOMAIN);
+  tle.epoch_year = 2021;
+  tle.epoch_day = 365.999999999; /* "366.00000000" of a common year */
+  MT_CHECK(myb_tle_format(&tle, a, b) == MYB_E_DOMAIN);
+  tle = iss;
+  memcpy(tle.satnum, "2554+", 6);
+  MT_CHECK(myb_tle_format(&tle, a, b) == MYB_E_DOMAIN);
+  tle = iss;
+  tle.classification = ' ';
+  MT_CHECK(myb_tle_format(&tle, a, b) == MYB_E_DOMAIN);
+  tle = iss;
+  memcpy(tle.designator, "98067A ", 8);
+  MT_CHECK(myb_tle_format(&tle, a, b) == MYB_E_DOMAIN);
+  MT_CHECK(myb_tle_format(&iss, a, b) == MYB_OK && strcmp(a, l1) == 0 && strcmp(b, l2) == 0);
+  /* conversions: an epoch that is no date, a NaN second */
+  myb_omm omm;
+  MT_CHECK(myb_omm_from_tle(&iss, &omm) == MYB_OK);
+  myb_omm o = omm;
+  o.epoch.second = (double)NAN;
+  MT_CHECK(myb_tle_from_omm(&o, &tle) == MYB_E_DOMAIN);
+  o = omm;
+  o.epoch.day = 40;
+  MT_CHECK(myb_tle_from_omm(&o, &tle) == MYB_E_DOMAIN);
+  o = omm;
+  o.mean_motion = (double)INFINITY;
+  MT_CHECK(myb_tle_from_omm(&o, &tle) == MYB_E_DOMAIN);
+  MT_CHECK(myb_tle_from_omm(&omm, &tle) == MYB_OK && fabs(tle.epoch_day - iss.epoch_day) < 1e-9);
+  tle = iss;
+  tle.epoch_day = 400.0;
+  MT_CHECK(myb_omm_from_tle(&tle, &o) == MYB_E_DOMAIN);
+  /* elements far outside the catalogue's (finite numbers of a packet of type 10): their state
+   * overflowed inside the theory and came back as NaN with MYB_OK */
+  {
+    myb_sgp4_constants model;
+    myb_sgp4_constants_of(MYB_SGP4_WGS72, &model);
+    myb_sgp4 theory;
+    MT_CHECK(myb_sgp4_init_elements(&model, MYB_SGP4_AFSPC, 25000.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                                    1e-300, 0.0, &theory) == MYB_OK);
+    double r[3] = {1.0, 2.0, 3.0};
+    double v[3] = {4.0, 5.0, 6.0};
+    myb_sgp4_error error = MYB_SGP4_DECAYED;
+    MT_CHECK(myb_sgp4_propagate_km(&theory, 0.0, r, v, &error) == MYB_E_DOMAIN &&
+             error == MYB_SGP4_OK && r[0] == 1.0 && v[2] == 6.0);
+    MT_CHECK(myb_sgp4_propagate(&theory, 1440.0, r, v, NULL) == MYB_E_DOMAIN);
+  }
+  /* a type-10 segment whose last reference epoch is not a number */
+  {
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    const char* kernels[] = {MYB_DATA_DIR "/time/time-scales.tk",
+                             MYB_DATA_DIR "/time/tdb-tt-fb1990.tk", MYB_DATA_DIR "/time/utc-tai.tk",
+                             MYB_DATA_DIR "/frames/iau1980.tk"};
+    for (int i = 0; i < 4; ++i) {
+      MT_CHECK(myb_kpool_load_file(pool, kernels[i], &diag) == MYB_OK);
+    }
+    myb_timesys* sys = NULL;
+    myb_equinox* eq = NULL;
+    MT_CHECK(myb_timesys_create(pool, NULL, &sys, &diag) == MYB_OK);
+    MT_CHECK(myb_equinox_create(pool, "IAU1980", NULL, &eq, &diag) == MYB_OK);
+    myb_kpool_destroy(pool);
+    myb_spk* spk = NULL;
+    MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+    MT_CHECK(myb_spk_load_file(spk, MYB_TEST_DATA_DIR "/spk/t10.bsp", &diag) == MYB_OK);
+    enum { MOST_WORDS = 1024 };
+    static double words[MOST_WORDS];
+    static unsigned char image[16384];
+    myb_spk_segment_info info;
+    myb_spk_segment(spk, 0, &info);
+    const size_t size = myb_spk_segment_size(spk, 0);
+    MT_CHECK(info.type == 10 && size <= MOST_WORDS);
+    if (sys != NULL && eq != NULL && info.type == 10 && size <= MOST_WORDS) {
+      MT_CHECK(myb_spk_segment_data(spk, 0, 0, size, words) == MYB_OK);
+      const size_t n = (size_t)words[size - 17 + 6];
+      const size_t references = (size_t)words[size - 17 + 5];
+      MT_CHECK(n >= 2 && references + n <= size);
+      const double before = words[references + n - 2];
+      const double last = words[references + n - 1];
+      words[references + n - 1] = (double)NAN;
+      myb_spk_writer* writer = NULL;
+      MT_CHECK(myb_spk_writer_create("damaged", NULL, &writer) == MYB_OK);
+      const myb_spk_segment_header header = {
+          .target = info.target, .center = info.center, .frame = info.frame, .name = info.name};
+      MT_CHECK(myb_spk_writer_add_raw(writer, &header, 10, info.start, info.stop, words, size) ==
+               MYB_OK);
+      const size_t bytes = myb_spk_writer_size(writer);
+      MT_CHECK(bytes > 0 && bytes <= sizeof image);
+      MT_CHECK(myb_spk_writer_write(writer, image, sizeof image) == MYB_OK);
+      myb_spk* damaged = NULL;
+      MT_CHECK(myb_spk_create(NULL, &damaged) == MYB_OK);
+      MT_CHECK(myb_spk_load_memory(damaged, image, bytes, &diag) == MYB_OK);
+      double state[6];
+      const double et = 0.5 * (before + last);
+      MT_CHECK(myb_sgp4_spk10_state(damaged, 0, sys, eq, myb_time_from_seconds(et), state) ==
+               MYB_E_FORMAT);
+      /* before it the segment answers */
+      MT_CHECK(myb_sgp4_spk10_state(damaged, 0, sys, eq, myb_time_from_seconds(words[references]),
+                                    state) == MYB_OK);
+      myb_spk_destroy(damaged);
+      myb_spk_writer_destroy(writer);
+    }
+    myb_spk_destroy(spk);
+    myb_equinox_destroy(eq);
+    myb_timesys_destroy(sys);
+  }
+  /* the fit: positions that are not numbers, options of no enumeration */
+  {
+    enum { POINTS = 5 };
+    double minutes[POINTS];
+    double positions[3 * POINTS];
+    myb_sgp4 theory;
+    MT_CHECK(myb_sgp4_init(&iss, MYB_SGP4_WGS72, MYB_SGP4_IMPROVED, &theory) == MYB_OK);
+    for (int i = 0; i < POINTS; ++i) {
+      double v[3];
+      minutes[i] = 20.0 * i;
+      MT_CHECK(myb_sgp4_propagate(&theory, minutes[i], positions + 3 * i, v, NULL) == MYB_OK);
+    }
+    positions[4] = (double)NAN;
+    tle = iss;
+    double rms = 0.0;
+    MT_CHECK(myb_tle_fit(minutes, positions, POINTS, NULL, &tle, &rms, NULL) == MYB_E_DOMAIN);
+    positions[4] = 1.0e6;
+    myb_tle_fit_options options = {.gravity = (myb_sgp4_gravity)7};
+    tle = iss;
+    MT_CHECK(myb_tle_fit(minutes, positions, POINTS, &options, &tle, &rms, NULL) == MYB_E_DOMAIN);
+    options = (myb_tle_fit_options){.gravity = MYB_SGP4_WGS72, .mode = (myb_sgp4_mode)5};
+    MT_CHECK(myb_tle_fit(minutes, positions, POINTS, &options, &tle, &rms, NULL) == MYB_E_DOMAIN);
+  }
+  printf("SGP4: reviewed edges of the element sets, the conversions, type 10 and the fit\n");
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   run_verification();
@@ -944,5 +1100,6 @@ int main(void) {
   test_spk10();
   test_spk10_writer();
   test_fit();
+  test_reviewed_edges();
   return mt_finish("test_sgp4");
 }

@@ -1031,8 +1031,13 @@ myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude, double 
   const double columns = (double)grid->longitudes;
   if (grid->round) {
     x -= columns * floor(x / columns);
-    if (x >= columns) {
-      x = 0.0;
+    if (x >= columns && x < columns + 1.0) {
+      x = 0.0; /* a turn by rounding */
+    }
+    if (!(x > -1.0 && x < columns)) {
+      /* so many turns that the place within the turn is lost (or infinite in degrees): the
+       * column would come from a NaN or a huge negative number, outside the grid */
+      return MYB_E_DOMAIN;
     }
   } else {
     if (x < -tiny || x > columns - 1.0 + tiny) {
@@ -1059,11 +1064,18 @@ myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude, double 
   const size_t n = grid->values;
   const double* low = grid->data + j0 * grid->longitudes * n;
   const double* high = low + grid->longitudes * n;
+  double out[MYB_SITE_GRID_MAX_VALUES];
   for (size_t k = 0; k < n; ++k) {
     const double south = low[i0 * n + k] + fx * (low[i1 * n + k] - low[i0 * n + k]);
     const double north = high[i0 * n + k] + fx * (high[i1 * n + k] - high[i0 * n + k]);
-    values[k] = south + fy * (north - south);
+    out[k] = south + fy * (north - south);
+    /* finite values of the file whose difference overflows (1e308 beside -1e308: a damaged
+     * grid) give no value */
+    if (!finite(out[k])) {
+      return MYB_E_DOMAIN;
+    }
   }
+  memcpy(values, out, n * sizeof(double));
   return MYB_OK;
 }
 

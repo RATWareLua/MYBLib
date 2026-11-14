@@ -1,0 +1,13 @@
+Number_longitude_Grid_Points = 3
+First_longitude_degrees = 0
+Longitude_step_degrees = 120
+Number_latitude_grid_points = 2
+First_latitude_degrees = -10
+Latitude_step_degrees = 20
+-----
+0 -10 1
+120 -10 2
+240 -10 3
+0 10 4
+120 10 5
+240 10 6

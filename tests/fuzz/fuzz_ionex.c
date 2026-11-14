@@ -3,6 +3,8 @@
  * content at places and times around the epoch of the first map the header states, and for
  * three-dimensional maps the grid of densities (myb_ionex_density_grid) and a density from
  * it and from the layer over the maps. */
+#include <math.h>
+
 #include "fuzz.h"
 #include "myb/time.h"
 #include "myb_ionosphere.h"
@@ -58,21 +60,28 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const double mjd = first_epoch(data, size);
   const double latitudes[4] = {-1.5, -0.3, 0.7, 1.57};
   const double longitudes[4] = {-3.1, 0.0, 1.0, 3.14};
+  /* what is given is a number: the shell of the file, every value and density */
+  MYB_CHECK(isfinite(radius) && radius > 0.0 && isfinite(height));
   for (int t = -1; t <= 9; ++t) {
     for (int i = 0; i < 4; ++i) {
       double vtec = 0.0;
-      (void)myb_ionex_vtec(maps, mjd + t / 8.0, latitudes[i], longitudes[(i + t + 4) & 3],
-                           &vtec);
+      if (myb_ionex_vtec(maps, mjd + t / 8.0, latitudes[i], longitudes[(i + t + 4) & 3],
+                         &vtec) == MYB_OK) {
+        MYB_CHECK(isfinite(vtec));
+      }
     }
   }
   const double r[3] = {radius + height, 1.0e5, 2.0e5};
   myb_iono_layer layer = {.maps = maps, .peak = 350.0e3, .scale = 70.0e3};
   double density = 0.0;
-  (void)myb_iono_layer_density(&layer, mjd + 0.1, r, &density);
+  if (myb_iono_layer_density(&layer, mjd + 0.1, r, &density) == MYB_OK) {
+    MYB_CHECK(isfinite(density));
+  }
   if (dimension == 3) {
     myb_iono_grid grid;
-    if (myb_ionex_density_grid(maps, &grid) == MYB_OK) {
-      (void)myb_iono_grid_density(&grid, mjd + 0.1, r, &density);
+    if (myb_ionex_density_grid(maps, &grid) == MYB_OK &&
+        myb_iono_grid_density(&grid, mjd + 0.1, r, &density) == MYB_OK) {
+      MYB_CHECK(isfinite(density));
     }
   }
   myb_ionex_destroy(maps);

@@ -309,7 +309,11 @@ typedef struct myb_sp3_data {
 
 /* The file as text. *length (may be NULL): its characters without the NUL. Errors:
  * MYB_E_OVERFLOW (the buffer; call again with length + 1 bytes), MYB_E_DOMAIN (an invalid
- * description). */
+ * description — anything the reader would not read back as given: an epoch outside 1900 ..
+ * 2999 or whose seconds round to 61, a number wider than its field, a position or velocity
+ * that rounds to the zeros of a missing one, a clock that rounds to the mark of a missing one,
+ * a satellite twice or with a blank, a time system or frame with blanks at its ends, flags
+ * other than MYB_SP3_*). */
 MYB_API MYB_NODISCARD myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer,
                                                size_t size, size_t* length);
 

@@ -1,0 +1,15 @@
+Number_longitude_Grid_Points = 4
+First_longitude_degrees = 45
+Longitude_step_degrees = 90
+Number_latitude_grid_points = 2
+First_latitude_degrees = -10
+Latitude_step_degrees = 20
+-----
+45 -10 1e308
+135 -10 -1e308
+225 -10 1e308
+315 -10 -1e308
+45 10 -1e308
+135 10 1e308
+225 10 -1e308
+315 10 1e308

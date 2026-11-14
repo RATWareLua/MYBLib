@@ -146,7 +146,8 @@ MYB_API size_t myb_site_grid_values(const myb_site_grid* grid); /* per node */
 
 /* The values at a longitude and a latitude (rad), linear between the four nodes around; a
  * grid that goes round the body is continued across its first meridian. Errors: MYB_E_RANGE
- * (outside the grid), MYB_E_DOMAIN (not finite). */
+ * (outside the grid), MYB_E_DOMAIN (not finite, or a longitude of so many turns that its
+ * place in the turn is lost; values of the grid whose differences overflow). */
 MYB_API MYB_NODISCARD myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude,
                                                   double latitude, double* values);
 

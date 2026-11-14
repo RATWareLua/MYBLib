@@ -147,7 +147,9 @@ typedef struct myb_gpt3_values {
 /* GPT3 at the modified Julian date, geodetic latitude, longitude and ellipsoidal height: the
  * values of the four nodes around the point, each brought to the height of the point, linear
  * between them (within half a step of a pole: the node itself); constant != 0 gives the
- * means without the seasons. Errors: MYB_E_DOMAIN. */
+ * means without the seasons. Errors: MYB_E_DOMAIN (arguments not finite, a latitude beyond
+ * a pole, a longitude of so many turns that its place in the turn is lost, values that are
+ * not finite: a height so far below the nodes that the barometric law overflows). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_gpt3_at(const myb_gpt3* grid, double mjd, double latitude,
                                              double longitude, double height, int constant,
                                              myb_gpt3_values* values);

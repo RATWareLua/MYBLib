@@ -1,0 +1,20 @@
+     1.0            IONOSPHERE MAPS     GNS                 IONEX VERSION / TYPE
+On a node beside a missing one: the value (it was missing). COMMENT
+     1                                                      # OF MAPS IN FILE
+  6371.0                                                    BASE RADIUS
+     2                                                      MAP DIMENSION
+   450.0 450.0   0.0                                        HGT1 / HGT2 / DHGT
+    10.0 -10.0 -10.0                                        LAT1 / LAT2 / DLAT
+  -180.0 180.0 180.0                                        LON1 / LON2 / DLON
+    -1                                                      EXPONENT
+                                                            END OF HEADER
+     1                                                      START OF TEC MAP
+  2024     1     1     0     0     0                        EPOCH OF CURRENT MAP
+    10.0-180.0 180.0 180.0 450.0                            LAT/LON1/LON2/DLON/H
+  100  110  100
+     0.0-180.0 180.0 180.0 450.0                            LAT/LON1/LON2/DLON/H
+  120  130  120
+   -10.0-180.0 180.0 180.0 450.0                            LAT/LON1/LON2/DLON/H
+  100 9999  100
+     1                                                      END OF TEC MAP
+                                                            END OF FILE

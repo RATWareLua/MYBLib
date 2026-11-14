@@ -252,10 +252,55 @@ static void test_gpt3(void) {
   free(text);
 }
 
+/* Defects found by review (regressions), on a made grid of GPT3 of 90 degrees: a longitude of
+ * so many turns, or infinite in degrees, made the cell from a NaN or a huge negative number
+ * (a read outside the grid); a height far below the nodes or a node of zero temperature gave
+ * infinite values with MYB_OK. */
+static void test_reviewed_edges(void) {
+  static char text[16384];
+  size_t used = 0;
+  used += (size_t)snprintf(text, sizeof text, "%% lat lon p:a0 A1 B1 A2 B2 T:a0 ...\n");
+  for (int node = 0; node < 8; ++node) {
+    const double latitude = node < 4 ? 45.0 : -45.0;
+    const double longitude = 45.0 + 90.0 * (node % 4);
+    /* the temperature of the last node is zero: a damaged grid */
+    const double temperature = node == 7 ? 0.0 : 288.0;
+    used += (size_t)snprintf(text + used, sizeof text - used,
+                             "%.1f %.1f 101325 0 0 0 0 %.1f 0 0 0 0 5 0 0 0 0 -6.5 0 0 0 0 0 0 "
+                             "1.2 0 0 0 0 0.6 0 0 0 0 3 0 0 0 0 270 0 0 0 0",
+                             latitude, longitude, temperature);
+    for (int k = 0; k < 20; ++k) {
+      used += (size_t)snprintf(text + used, sizeof text - used, " 0");
+    }
+    used += (size_t)snprintf(text + used, sizeof text - used, "\n");
+  }
+  myb_gpt3* grid = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_gpt3_load(text, used, NULL, &grid, &diag) == MYB_OK);
+  if (grid == NULL) {
+    printf("line %ld: %s\n", diag.line, diag.message);
+    return;
+  }
+  myb_gpt3_values v;
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 45.0 * DEG, 45.0 * DEG, 100.0, 1, &v) == MYB_OK &&
+           v.pressure > 1000.0 && v.pressure < 1013.25);
+  /* 1e18 rad reduces to -8192 and 8192 degrees, 1e307 rad is infinite in degrees */
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 45.0 * DEG, -1.0e18, 100.0, 1, &v) == MYB_E_DOMAIN);
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 45.0 * DEG, 1.0e18, 100.0, 1, &v) == MYB_E_DOMAIN);
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 45.0 * DEG, 1.0e307, 100.0, 1, &v) == MYB_E_DOMAIN);
+  /* the barometric law at 10 000 km below the nodes overflows */
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, 45.0 * DEG, 45.0 * DEG, -1.0e7, 1, &v) == MYB_E_DOMAIN);
+  /* at the node of zero temperature, below it: no values */
+  MT_CHECK(myb_gpt3_at(grid, 59000.0, -45.0 * DEG, 315.0 * DEG, -100.0, 1, &v) == MYB_E_DOMAIN);
+  myb_gpt3_destroy(grid);
+  printf("GPT3: reviewed edges of the evaluation\n");
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_iers_cases();
   test_properties();
   test_gpt3();
+  test_reviewed_edges();
   return mt_finish("test_troposphere");
 }

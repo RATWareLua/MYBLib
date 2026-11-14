@@ -111,8 +111,20 @@ myb_status myb_tle_fit(const double* minutes, const double* positions, size_t co
   const myb_tle_fit_options none = {.gravity = MYB_SGP4_WGS72};
   const myb_tle_fit_options* o = options != NULL ? options : &none;
   const size_t unknowns = o->bstar ? 7 : 6;
-  if (count < 3 || !(o->tolerance >= 0.0) || o->max_iterations < 0 || count > SIZE_MAX / 64) {
+  /* the options the theory takes (another gravity or mode stops it at its checks), and times
+   * and positions that are numbers: a NaN residual is never lowered, so the fit would end at
+   * once with the first guess and a NaN root mean square */
+  if (count < 3 || !(o->tolerance >= 0.0) || o->max_iterations < 0 || count > SIZE_MAX / 64 ||
+      (o->gravity != MYB_SGP4_WGS72_OLD && o->gravity != MYB_SGP4_WGS72 &&
+       o->gravity != MYB_SGP4_WGS84) ||
+      (o->mode != MYB_SGP4_IMPROVED && o->mode != MYB_SGP4_AFSPC)) {
     return MYB_E_DOMAIN;
+  }
+  for (size_t k = 0; k < count; ++k) {
+    if (!isfinite(minutes[k]) || !isfinite(positions[3 * k]) ||
+        !isfinite(positions[3 * k + 1]) || !isfinite(positions[3 * k + 2])) {
+      return MYB_E_DOMAIN;
+    }
   }
   const double tolerance = o->tolerance > 0.0 ? o->tolerance : 1e-9;
   const int budget = o->max_iterations > 0 ? o->max_iterations : 40;
@@ -135,6 +147,9 @@ myb_status myb_tle_fit(const double* minutes, const double* positions, size_t co
   unknowns_of(tle, x);
   double squares = 0.0;
   st = residuals(&f, x, r, &squares);
+  if (st == MYB_OK && !isfinite(squares)) {
+    st = MYB_E_DOMAIN; /* positions so far from the orbit that the squares overflow */
+  }
   int pass = 0;
   int settled = 0;
   /* bound: the budget of iterations */

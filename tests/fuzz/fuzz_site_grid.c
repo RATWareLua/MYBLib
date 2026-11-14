@@ -2,6 +2,8 @@
 /* Grids of coefficients on the globe: the ocean pole tide load (myb_site_grid_load) and the
  * atmospheric tides of TU Wien (myb_site_atmosphere_grid_load), both readers on every input,
  * each grid read asked for its values at places inside, at its edges and outside. */
+#include <math.h>
+
 #include "fuzz.h"
 #include "myb/site.h"
 
@@ -10,12 +12,19 @@ MYB_FUZZ_NO_INITIALIZE
 static void use_grid(const myb_site_grid* grid) {
   const size_t values = myb_site_grid_values(grid);
   MYB_CHECK(values >= 1 && values <= MYB_SITE_GRID_MAX_VALUES);
-  const double longitudes[6] = {-3.141592653589793, -0.001, 0.0, 1.0, 3.141592653589793, 6.3};
+  /* the last: longitudes of so many turns that the column of a grid round the body came out
+   * negative or of NaN */
+  const double longitudes[9] = {-3.141592653589793, -0.001, 0.0, 1.0, 3.141592653589793, 6.3,
+                                -3.0e17, 1.0e30, 1.0e307};
   const double latitudes[6] = {-1.5707963267948966, -1.56, 0.0, 0.5, 1.56, 1.5707963267948966};
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < 9; ++i) {
     for (int j = 0; j < 6; ++j) {
       double out[MYB_SITE_GRID_MAX_VALUES];
-      (void)myb_site_grid_at(grid, longitudes[i], latitudes[j], out);
+      if (myb_site_grid_at(grid, longitudes[i], latitudes[j], out) == MYB_OK) {
+        for (size_t k = 0; k < values; ++k) {
+          MYB_CHECK(isfinite(out[k]));
+        }
+      }
     }
   }
 }

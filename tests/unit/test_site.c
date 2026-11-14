@@ -432,6 +432,32 @@ static void test_ocean_pole(void) {
   MT_CHECK(myb_site_grid_at(grid, -pi / 2.0, -10.0 * pi / 180.0, v) == MYB_OK &&
            fabs(v[0] - 3.5) < 1e-13);
   myb_site_grid_destroy(grid);
+  /* reviewed: a longitude of so many turns that its column came out negative (-3e17 rad on
+   * three columns: -16) or of NaN (1e307 rad is infinite in degrees) was read outside the
+   * grid; refused */
+  const char* thirds = "Number_longitude_Grid_Points = 3\nFirst_longitude_degrees = 0\n"
+                       "Longitude_step_degrees = 120\nNumber_latitude_grid_points = 2\n"
+                       "First_latitude_degrees = -10\nLatitude_step_degrees = 20\n-----\n"
+                       "0 -10 1\n120 -10 2\n240 -10 3\n0 10 4\n120 10 5\n240 10 6\n";
+  MT_CHECK(myb_site_grid_load(thirds, strlen(thirds), NULL, &grid, &diag) == MYB_OK);
+  if (grid != NULL) {
+    MT_CHECK(myb_site_grid_at(grid, 0.0, 0.0, v) == MYB_OK && fabs(v[0] - 2.5) < 1e-13);
+    MT_CHECK(myb_site_grid_at(grid, -3.0e17, 0.0, v) == MYB_E_DOMAIN);
+    MT_CHECK(myb_site_grid_at(grid, 3.0e17, 0.0, v) == MYB_E_DOMAIN);
+    MT_CHECK(myb_site_grid_at(grid, 1.0e307, 0.0, v) == MYB_E_DOMAIN);
+    myb_site_grid_destroy(grid);
+  }
+  /* reviewed: finite values whose difference overflows gave an infinite value with MYB_OK */
+  const char* extreme = "Number_longitude_Grid_Points = 3\nFirst_longitude_degrees = 0\n"
+                        "Longitude_step_degrees = 120\nNumber_latitude_grid_points = 2\n"
+                        "First_latitude_degrees = -10\nLatitude_step_degrees = 20\n-----\n"
+                        "0 -10 1e308\n120 -10 -1e308\n240 -10 1\n0 10 1\n120 10 1\n240 10 1\n";
+  MT_CHECK(myb_site_grid_load(extreme, strlen(extreme), NULL, &grid, &diag) == MYB_OK);
+  if (grid != NULL) {
+    MT_CHECK(myb_site_grid_at(grid, 60.0 * pi / 180.0, -10.0 * pi / 180.0, v) == MYB_E_DOMAIN);
+    MT_CHECK(myb_site_grid_at(grid, 180.0 * pi / 180.0, 0.0, v) == MYB_OK && isfinite(v[0]));
+    myb_site_grid_destroy(grid);
+  }
   /* grids that are refused */
   const char* brief = "Number_longitude_Grid_Points = 4\n-----\n45 -10 1\n";
   MT_CHECK(myb_site_grid_load(brief, strlen(brief), NULL, &grid, &diag) == MYB_E_FORMAT);

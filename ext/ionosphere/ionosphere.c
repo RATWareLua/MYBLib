@@ -101,15 +101,37 @@ static int label_is(const char* line, size_t len, const char* label) {
   return memcmp(line + 60, label, n) == 0;
 }
 
+/* A field that holds a whole number within [lo, hi] (the I-fields of the format). */
+static int whole_field(const char* line, size_t len, size_t start, size_t width, double lo,
+                       double hi, double* value) {
+  return field(line, len, start, width, value) && *value >= lo && *value <= hi &&
+         *value == floor(*value);
+}
+
+/* The epoch of a map (6I6: year, month, day, hour, minute, second): each field a whole number
+ * of its range before it is converted (a NaN or 1e300 has no long). */
 static int read_epoch(const char* line, size_t len, double* mjd) {
+  static const double lo[6] = {1000.0, 1.0, 1.0, 0.0, 0.0, 0.0};
+  static const double hi[6] = {9999.0, 12.0, 31.0, 24.0, 59.0, 60.0};
+  static const double month_days[12] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   double f[6];
   for (int i = 0; i < 6; ++i) {
-    if (!field(line, len, (size_t)(6 * i), 6, &f[i])) {
+    if (!whole_field(line, len, (size_t)(6 * i), 6, lo[i], hi[i], &f[i])) {
       return 0;
     }
   }
+  const long year = (long)f[0];
+  const int leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+  if (f[2] > month_days[(int)f[1] - 1] - (f[1] == 2.0 && !leap ? 1.0 : 0.0)) {
+    return 0;
+  }
   *mjd = mjd_of((long)f[0], (long)f[1], (long)f[2], (long)f[3], (long)f[4], f[5]);
   return 1;
+}
+
+/* The exponent of the values: a whole number whose power of ten the reader makes exactly. */
+static int read_exponent(const char* line, size_t len, double* exponent) {
+  return whole_field(line, len, 0, 6, -22.0, 22.0, exponent);
 }
 
 static long count_of(double first, double last, double step) {
@@ -212,7 +234,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
         in_header = 0;
       } else if (label_is(line, len, "# OF MAPS IN FILE")) {
         double n = 0.0;
-        if (!field(line, len, 0, 6, &n) || !(n >= 1.0 && n <= 10000.0)) {
+        if (!whole_field(line, len, 0, 6, 1.0, 10000.0, &n)) {
           myb_internal_diag(diag, line_number, "invalid number of maps");
           st = MYB_E_FORMAT;
           goto fail;
@@ -221,7 +243,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
         have |= 1;
       } else if (label_is(line, len, "BASE RADIUS")) {
         double r = 0.0;
-        if (!field(line, len, 0, 8, &r) || !(r > 0.0)) {
+        if (!field(line, len, 0, 8, &r) || !(r > 0.0) || !isfinite(r)) {
           myb_internal_diag(diag, line_number, "invalid base radius");
           st = MYB_E_FORMAT;
           goto fail;
@@ -234,7 +256,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
           goto fail;
         }
       } else if (label_is(line, len, "EXPONENT")) {
-        if (!field(line, len, 0, 6, &exponent)) {
+        if (!read_exponent(line, len, &exponent)) {
           st = MYB_E_FORMAT;
           goto fail;
         }
@@ -243,7 +265,8 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
                  label_is(line, len, "LON1 / LON2 / DLON")) {
         double* f = label_is(line, len, "HGT1") ? hgt : label_is(line, len, "LAT1") ? lat : lon;
         for (int i = 0; i < 3; ++i) {
-          if (!field(line, len, (size_t)(2 + 6 * i), 6, &f[i])) {
+          /* finite: of two-dimensional maps HGT1 is the height of the shell, never counted */
+          if (!field(line, len, (size_t)(2 + 6 * i), 6, &f[i]) || !isfinite(f[i])) {
             myb_internal_diag(diag, line_number, "invalid grid definition");
             st = MYB_E_FORMAT;
             goto fail;
@@ -262,7 +285,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
     if (!in_tec) {
       if (label_is(line, len, "START OF TEC MAP")) {
         double n = 0.0;
-        if (!field(line, len, 0, 6, &n) || !(n >= 1.0 && n <= (double)x->nmaps)) {
+        if (!whole_field(line, len, 0, 6, 1.0, (double)x->nmaps, &n)) {
           myb_internal_diag(diag, line_number, "invalid map number");
           st = MYB_E_FORMAT;
           goto fail;
@@ -275,7 +298,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
                  label_is(line, len, "START OF HEIGHT MAP")) {
         in_other = 1;
       } else if (label_is(line, len, "EXPONENT")) {
-        if (!field(line, len, 0, 6, &exponent)) {
+        if (!read_exponent(line, len, &exponent)) {
           st = MYB_E_FORMAT;
           goto fail;
         }
@@ -296,7 +319,7 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
       continue;
     }
     if (label_is(line, len, "EXPONENT")) {
-      if (!field(line, len, 0, 6, &exponent)) {
+      if (!read_exponent(line, len, &exponent)) {
         st = MYB_E_FORMAT;
         goto fail;
       }
@@ -311,7 +334,14 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
           goto fail;
         }
       }
+      /* the row and the level within the grid before they are converted (a NaN or 1e300 has
+       * no long) */
       const double q = (f[0] - x->lat1) / x->dlat;
+      if (!(q > -0.5 && q < (double)x->nlat - 0.5)) {
+        myb_internal_diag(diag, line_number, "latitude record off the grid");
+        st = MYB_E_FORMAT;
+        goto fail;
+      }
       row = (long)floor(q + 0.5);
       if (row < 0 || row >= x->nlat || fabs(q - (double)row) > 1e-6 || f[1] != lon[0] ||
           f[2] != lon[1] || f[3] != lon[2]) {
@@ -321,6 +351,11 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
       }
       if (x->dimension == 3) {
         const double z = (f[4] - hgt[0]) / hgt[2];
+        if (!(z > -0.5 && z < (double)x->nhgt - 0.5)) {
+          myb_internal_diag(diag, line_number, "a height off the grid");
+          st = MYB_E_FORMAT;
+          goto fail;
+        }
         level = (long)floor(z + 0.5);
         if (level < 0 || level >= x->nhgt || fabs(z - (double)level) > 1e-6) {
           myb_internal_diag(diag, line_number, "a height off the grid");
@@ -346,6 +381,12 @@ myb_status myb_ionex_load(const char* text, size_t size, const myb_allocator* al
       double v = 0.0;
       if (!field(line, len, 5 * k, 5, &v)) {
         break;
+      }
+      /* an I5 value: a whole number of five places ("1e200" or "nan" in five columns is none) */
+      if (!(fabs(v) <= 99999.0) || v != floor(v)) {
+        myb_internal_diag(diag, line_number, "a value that is not a whole number of I5");
+        st = MYB_E_FORMAT;
+        goto fail;
       }
       const size_t idx =
           (((size_t)map * (size_t)x->nhgt + (size_t)level) * (size_t)x->nlat + (size_t)row) *
@@ -422,12 +463,18 @@ static double level_value(const myb_ionex* x, int m, int k, double lat_deg, doub
   const size_t n = (size_t)x->nlon;
   const size_t i0 = (size_t)i;
   const size_t j0 = (size_t)j;
-  const double e00 = t[j0 * n + i0];
-  const double e10 = t[j0 * n + i0 + 1];
-  const double e01 = t[(j0 + 1) * n + i0];
-  const double e11 = t[(j0 + 1) * n + i0 + 1];
-  return (1.0 - fp) * (1.0 - fq) * e00 + fp * (1.0 - fq) * e10 + fq * (1.0 - fp) * e01 +
-         fp * fq * e11;
+  const double e[4] = {t[j0 * n + i0], t[j0 * n + i0 + 1], t[(j0 + 1) * n + i0],
+                       t[(j0 + 1) * n + i0 + 1]};
+  const double w[4] = {(1.0 - fp) * (1.0 - fq), fp * (1.0 - fq), fq * (1.0 - fp), fp * fq};
+  /* a node of no weight takes no part: on a node or an edge of the grid a missing value
+   * beside it is not needed (0 x NaN would make the value missing) */
+  double sum = 0.0;
+  for (int corner = 0; corner < 4; ++corner) {
+    if (w[corner] != 0.0) {
+      sum += w[corner] * e[corner];
+    }
+  }
+  return sum;
 }
 
 /* the vertical content of map m: of three-dimensional maps the sum of the densities times
@@ -533,6 +580,9 @@ static myb_status grid_value(const myb_iono_grid* g, int m, double h, double q, 
   const double turn = (double)period;
   if (round) {
     p -= turn * floor(p / turn);
+    if (!(p > -1.0 && p <= turn)) {
+      return MYB_E_DOMAIN; /* so many turns that the place within the turn is lost */
+    }
   } else if (!(p >= -1e-9 && p <= turn - 1.0 + 1e-9)) {
     return MYB_E_RANGE;
   }
@@ -549,12 +599,20 @@ static myb_status grid_value(const myb_iono_grid* g, int m, double h, double q, 
   const size_t row = (size_t)g->longitudes;
   const size_t level = row * (size_t)g->latitudes;
   const double* d = g->density + (size_t)m * level * (size_t)g->heights;
+  /* nodes of no weight take no part, as in level_value: a missing value beside a node or an
+   * edge is not needed */
   double sum = 0.0;
   for (int a = 0; a < 2; ++a) {
     for (int b = 0; b < 2; ++b) {
+      const double weight = (a ? fh : 1.0 - fh) * (b ? fq : 1.0 - fq);
+      if (weight == 0.0) {
+        continue;
+      }
       const double* line = d + (size_t)(k + a) * level + (size_t)(j + b) * row;
-      const double along = (1.0 - fp) * line[i] + fp * line[i1];
-      sum += (a ? fh : 1.0 - fh) * (b ? fq : 1.0 - fq) * along;
+      const double along = fp == 0.0   ? line[i]
+                           : fp == 1.0 ? line[i1]
+                                       : (1.0 - fp) * line[i] + fp * line[i1];
+      sum += weight * along;
     }
   }
   if (!isfinite(sum)) {
@@ -591,9 +649,13 @@ myb_status myb_iono_grid_density(void* grid, double mjd, const double r[3], doub
   double latitude = 0.0;
   double longitude = 0.0;
   double distance = 0.0;
+  /* the places of the grid finite: a NaN there made indices of NaN steps */
   if (g->epochs == NULL || g->density == NULL || g->maps < 1 || g->latitudes < 2 ||
       g->longitudes < 2 || g->heights < 2 || !(g->longitude_step > 0.0) ||
-      !(g->height_step > 0.0) || g->latitude_step == 0.0 || !isfinite(mjd) ||
+      !(g->height_step > 0.0) || g->latitude_step == 0.0 || !isfinite(g->radius) ||
+      !isfinite(g->height) || !isfinite(g->latitude) || !isfinite(g->longitude) ||
+      !isfinite(g->latitude_step) || !isfinite(g->longitude_step) ||
+      !isfinite(g->height_step) || !isfinite(mjd) ||
       !spherical(r, &latitude, &longitude, &distance)) {
     return MYB_E_DOMAIN;
   }
@@ -616,6 +678,9 @@ myb_status myb_iono_grid_density(void* grid, double mjd, const double r[3], doub
   /* each map rotated with the Sun to the date, as the maps of the vertical content */
   const double t0 = g->epochs[i];
   const double t1 = g->epochs[i + 1];
+  if (!(t1 > t0)) {
+    return MYB_E_DOMAIN; /* epochs that do not increase: no time between them to divide */
+  }
   const double turn = TWO_PI / g->longitude_step; /* steps of longitude in a day */
   double first = 0.0;
   double second = 0.0;

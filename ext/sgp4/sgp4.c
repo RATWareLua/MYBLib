@@ -7,6 +7,7 @@
  * resonance integrator restarts from the epoch on every call (its steps of 720 minutes are fixed,
  * so the cached restart point of the original gave the same values); the per-call fields of the
  * original (con41, x1mth2, x7thm1, xlcof, aycof in deep space) are local. */
+#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
@@ -972,12 +973,21 @@ myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes, double r[
   const double vz = sini * cossu;
 
   /* position and velocity (km, km/s) */
-  r[0] = (mrt * ux) * s->radius;
-  r[1] = (mrt * uy) * s->radius;
-  r[2] = (mrt * uz) * s->radius;
-  v[0] = (mvt * ux + rvdot * vx) * vkmpersec;
-  v[1] = (mvt * uy + rvdot * vy) * vkmpersec;
-  v[2] = (mvt * uz + rvdot * vz) * vkmpersec;
+  const double position[3] = {(mrt * ux) * s->radius, (mrt * uy) * s->radius,
+                              (mrt * uz) * s->radius};
+  const double velocity[3] = {(mvt * ux + rvdot * vx) * vkmpersec,
+                              (mvt * uy + rvdot * vy) * vkmpersec,
+                              (mvt * uz + rvdot * vz) * vkmpersec};
+  /* elements far outside those of the catalogue (finite numbers of a file of type 10: a mean
+   * motion of 1e-300 rad/min) overflow inside the theory, which none of its codes catches:
+   * no state rather than one of NaN */
+  for (int i = 0; i < 3; ++i) {
+    if (!isfinite(position[i]) || !isfinite(velocity[i])) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  memcpy(r, position, sizeof position);
+  memcpy(v, velocity, sizeof velocity);
 
   if (mrt < 1.0 && error != NULL) {
     *error = MYB_SGP4_DECAYED;
@@ -992,6 +1002,11 @@ myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes, double r[3],
   const myb_status st = myb_sgp4_propagate_km(sgp4, minutes, rk, vk, error);
   if (st != MYB_OK) {
     return st;
+  }
+  for (int i = 0; i < 3; ++i) {
+    if (!isfinite(1000.0 * rk[i]) || !isfinite(1000.0 * vk[i])) {
+      return MYB_E_DOMAIN; /* km that are no number of m */
+    }
   }
   for (int i = 0; i < 3; ++i) {
     r[i] = 1000.0 * rk[i];
@@ -1102,6 +1117,15 @@ static myb_status bad(myb_diag* diag, int line, size_t column, const char* what)
   return MYB_E_FORMAT;
 }
 
+static int leap_year(int y) {
+  return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+}
+
+/* A day of the year and its fraction that is a moment of that year: 1 <= day < 366 or 367. */
+static int day_of_its_year(int year, double day) {
+  return day >= 1.0 && day < (leap_year(year) ? 367.0 : 366.0);
+}
+
 myb_status myb_tle_parse(const char* line1, const char* line2, unsigned flags, myb_tle* tle,
                          myb_diag* diag) {
   MYB_CHECK(line1 != NULL && line2 != NULL && tle != NULL);
@@ -1159,8 +1183,9 @@ myb_status myb_tle_parse(const char* line1, const char* line2, unsigned flags, m
     return bad(diag, 1, 18, "epoch year");
   }
   t.epoch_year = (int)(year2 < 57 ? year2 + 2000 : year2 + 1900);
-  if (field_double(line1, 20, 32, &t.epoch_day) != MYB_OK || !(t.epoch_day >= 1.0) ||
-      !(t.epoch_day < 367.0)) {
+  /* a day of that year: day 366 of a common year would be 32 December */
+  if (field_double(line1, 20, 32, &t.epoch_day) != MYB_OK ||
+      !day_of_its_year(t.epoch_year, t.epoch_day)) {
     return bad(diag, 1, 20, "epoch day");
   }
   if (field_double(line1, 33, 43, &t.ndot) != MYB_OK) {
@@ -1215,10 +1240,6 @@ myb_status myb_tle_parse(const char* line1, const char* line2, unsigned flags, m
   t.revolution = revolution;
   *tle = t;
   return MYB_OK;
-}
-
-static int leap_year(int y) {
-  return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
 }
 
 /* The epoch in days since 1949 December 31 0h as the reference code computes it (days2mdhms,
@@ -1473,7 +1494,9 @@ myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index, const myb_time
     /* W(t) = 0.5 + 0.5 cos(pi (t - t1) / (t2 - t1)), as SPKE10 */
     const double t1 = epoch10(&g, first);
     const double t2 = epoch10(&g, second);
-    if (!usable_epoch(t1)) {
+    /* both ends of the blend (the search keeps t1 <= et < t2 whatever the order of the
+     * reference values; a NaN or infinite t2 made a NaN weight) */
+    if (!usable_epoch(t1) || !usable_epoch(t2)) {
       return MYB_E_FORMAT;
     }
     const double numer = myb_dd_to_double(myb_time_diff(et, myb_time_from_seconds(t1)));
@@ -1496,6 +1519,11 @@ myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index, const myb_time
   myb_rotation_invert(&to_teme, &from_teme);
   double j2000[6];
   myb_rotation_apply_state(&from_teme, teme, j2000);
+  for (int i = 0; i < 6; ++i) {
+    if (!isfinite(1000.0 * j2000[i])) {
+      return MYB_E_DOMAIN; /* two states of the theory whose blend or metres overflow */
+    }
+  }
   for (int i = 0; i < 6; ++i) {
     state[i] = 1000.0 * j2000[i];
   }
@@ -1644,11 +1672,18 @@ myb_status myb_tle_format(const myb_tle* tle, char line1[70], char line2[70]) {
   } else if (satnum_of(tle->catalog_number, satnum) != MYB_OK) {
     return MYB_E_DOMAIN;
   }
+  /* the designator and the classification as the reader gives them back: visible characters,
+   * no blank at the end (it is trimmed) and no blank classification (read as 'U') */
   const size_t designator = strlen(tle->designator);
-  if (designator > 8 || tle->classification < 32 || tle->classification > 126 ||
-      tle->epoch_year < 1957 || tle->epoch_year > 2056 || !(tle->epoch_day >= 1.0) ||
-      !(tle->epoch_day < 367.0) || !(fabs(tle->ndot) < 1.0) || tle->ephemeris_type < 0 ||
-      tle->ephemeris_type > 9 || !(tle->eccentricity >= 0.0) || !(tle->eccentricity < 1.0)) {
+  int visible = designator <= 8 && (designator == 0 || tle->designator[designator - 1] != ' ');
+  for (size_t i = 0; i < designator && visible; ++i) {
+    visible = tle->designator[i] >= 32 && tle->designator[i] <= 126;
+  }
+  if (!visible || tle->classification <= 32 || tle->classification > 126 ||
+      tle->epoch_year < 1957 || tle->epoch_year > 2056 ||
+      !day_of_its_year(tle->epoch_year, tle->epoch_day) || !(fabs(tle->ndot) < 1.0) ||
+      tle->ephemeris_type < 0 || tle->ephemeris_type > 9 || !(tle->eccentricity >= 0.0) ||
+      !(tle->eccentricity < 1.0)) {
     return MYB_E_DOMAIN;
   }
   memset(line1, ' ', 69);
@@ -1719,6 +1754,13 @@ myb_status myb_tle_format(const myb_tle* tle, char line1[70], char line2[70]) {
   }
   line1[68] = checksum_of(line1);
   line2[68] = checksum_of(line2);
+  /* lines the reader reads: a field rounded past its limit (day 366.999999999 written as
+   * 367.00000000, or 366 of a common year) or a catalogue number of characters it refuses
+   * are no element set */
+  myb_tle back;
+  if (myb_tle_parse(line1, line2, 0, &back, NULL) != MYB_OK) {
+    return MYB_E_DOMAIN;
+  }
   return MYB_OK;
 }
 
@@ -1730,8 +1772,22 @@ static int day_of_year(const myb_calendar* c) {
 
 myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle) {
   MYB_CHECK(omm != NULL && tle != NULL);
-  if (!omm->has_mean_motion || !omm->has_tle || omm->epoch.month < 1 || omm->epoch.month > 12 ||
-      omm->epoch.year < 1957 || omm->epoch.year > 2056) {
+  static const int days[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const myb_calendar* c = &omm->epoch;
+  if (!omm->has_mean_motion || !omm->has_tle || c->month < 1 || c->month > 12 ||
+      c->year < 1957 || c->year > 2056) {
+    return MYB_E_DOMAIN;
+  }
+  /* a date of the calendar (a NaN second would give a NaN day of the year) and the numbers of
+   * an element set */
+  if (c->day < 1 || c->day > days[c->month - 1] + (c->month == 2 && leap_year((int)c->year)) ||
+      c->hour < 0 || c->hour > 23 || c->minute < 0 || c->minute > 59 || !(c->second >= 0.0) ||
+      !(c->second < 61.0) || !isfinite(omm->mean_motion) || !isfinite(omm->eccentricity) ||
+      !isfinite(omm->inclination) || !isfinite(omm->ra_of_asc_node) ||
+      !isfinite(omm->arg_of_pericenter) || !isfinite(omm->mean_anomaly) ||
+      !isfinite(omm->bstar) || !isfinite(omm->mean_motion_dot) ||
+      !isfinite(omm->mean_motion_ddot) || omm->element_set_no < INT_MIN ||
+      omm->element_set_no > INT_MAX) {
     return MYB_E_DOMAIN;
   }
   myb_tle t;
@@ -1777,6 +1833,11 @@ myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle) {
 
 myb_status myb_omm_from_tle(const myb_tle* tle, myb_omm* omm) {
   MYB_CHECK(tle != NULL && omm != NULL);
+  /* an epoch that is a moment of its year: myb_tle_epoch makes a calendar date of it */
+  if (tle->epoch_year < 1 || tle->epoch_year > 9999 ||
+      !day_of_its_year(tle->epoch_year, tle->epoch_day)) {
+    return MYB_E_DOMAIN;
+  }
   memset(omm, 0, sizeof *omm);
   myb_tle_epoch(tle, &omm->epoch);
   omm->creation_date = omm->epoch;

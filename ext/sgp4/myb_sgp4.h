@@ -62,7 +62,8 @@ enum {
 /* Parses the two lines (at least 68 characters each; a trailing newline and anything after
  * column 69 are ignored). When column 69 holds a digit it must equal the modulo-10 checksum
  * (digits, '-' = 1) unless flags has MYB_TLE_NO_CHECKSUM. Errors: MYB_E_FORMAT (diag tells the
- * line and column). */
+ * line and column; among others an epoch day that is not a day of its year: 366 of a common
+ * year). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_tle_parse(const char* line1, const char* line2,
                                                unsigned flags, myb_tle* tle, myb_diag* diag);
 
@@ -70,12 +71,16 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tle_parse(const char* line1, const char
  * rounding; the theory itself counts days since 1949 December 31 0h UTC). */
 MYB_EXT_API void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc);
 
-/* The two lines of an element set, 69 characters each and a NUL, with their checksums: what
- * myb_tle_parse reads back to the same values. The catalogue number is written from satnum
+/* The two lines of an element set, 69 characters each and a NUL, with their checksums: the
+ * numbers rounded to the decimals of their fields, so that an element set that myb_tle_parse
+ * read is written back as the same numbers. The catalogue number is written from satnum
  * when that holds 5 characters, otherwise from catalog_number (Alpha-5 above 99 999). Errors:
  * MYB_E_DOMAIN (a value that does not fit its field: an eccentricity outside [0, 1), an angle
  * outside [0, 1000), a derivative of the mean motion of 1 or more, a drag term whose decimal
- * exponent has two digits, a number above the width of its field, values not finite). */
+ * exponent has two digits, a number above the width of its field, values not finite; lines
+ * that myb_tle_parse would refuse: an epoch day that rounds past the end of its year, a
+ * satnum of other characters than a catalogue number has; a blank classification or
+ * characters of the designator that would not read back). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_tle_format(const myb_tle* tle, char line1[70],
                                                     char line2[70]);
 
@@ -86,7 +91,9 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tle_format(const myb_tle* tle, char lin
  * division. From an element set the message gets the object's identifiers, centre EARTH,
  * frame TEME, time UTC and theory SGP4; the originator, the name and the creation date are
  * the caller's to fill. Errors: MYB_E_DOMAIN (a message without those values, a catalogue
- * number above 339 999). */
+ * number above 339 999, an epoch that is no date of the calendar, numbers that are not finite,
+ * an element set number beyond an int; of an element set an epoch day that is not a day of its
+ * year). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle);
 MYB_EXT_API MYB_NODISCARD myb_status myb_omm_from_tle(const myb_tle* tle, myb_omm* omm);
 
@@ -160,7 +167,10 @@ typedef enum myb_sgp4_error {
 
 /* TEME position (m) and velocity (m/s) at the given minutes since the epoch of the record.
  * *error (may be NULL) receives the code; codes 1..4 return MYB_E_DOMAIN and leave r, v
- * unchanged, code 6 returns MYB_OK with the state. Thread-safe. */
+ * unchanged, code 6 returns MYB_OK with the state. MYB_E_DOMAIN with the code MYB_SGP4_OK:
+ * minutes that are not finite, or elements far outside those of the catalogue (as finite
+ * numbers of myb_sgp4_init_elements may be) whose state overflows — r, v unchanged.
+ * Thread-safe. */
 MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes,
                                                     double r[3], double v[3],
                                                     myb_sgp4_error* error);
@@ -187,7 +197,8 @@ typedef struct myb_tle_fit_options {
  * epoch and what identifies the object, and receives the result; *rms (may be NULL) the root
  * mean square of the residuals of the positions (m), *iterations (may be NULL) the steps
  * taken. options may be NULL (WGS-72, improved mode, no B*). Errors: MYB_E_DOMAIN (fewer than
- * three positions, invalid options, elements that are no orbit of the theory, unknowns that
+ * three positions, invalid options — a gravity or mode not of the enumerations —, times or
+ * positions that are not finite, elements that are no orbit of the theory, unknowns that
  * the positions do not determine), MYB_E_NOCONV (the budget of steps; *tle holds the best so
  * far), MYB_E_NOMEM, those of myb_sgp4_propagate. */
 MYB_EXT_API MYB_NODISCARD myb_status myb_tle_fit(const double* minutes, const double* positions,

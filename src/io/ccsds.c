@@ -600,6 +600,17 @@ static myb_status number_of(const char* s, size_t n, double* value) {
   return MYB_OK;
 }
 
+/* A number of a message in its own unit (km, km^2, km^3/s^2) taken to SI: 0 if the product
+ * is not finite — a finite number of the file can overflow on the way (1e306 km). */
+static int to_si(double value, double scale, double* out) {
+  const double product = value * scale;
+  if (!isfinite(product)) {
+    return 0;
+  }
+  *out = product;
+  return 1;
+}
+
 static myb_status integer_of(const char* s, size_t n, long* value) {
   double v = 0.0;
   if (number_of(s, n, &v) != MYB_OK || v != floor(v) || fabs(v) > 2.0e9) {
@@ -699,40 +710,13 @@ static myb_status text_of(const char* s, size_t n, char out[MYB_ODM_TEXT]) {
 
 /* ---- Writing --------------------------------------------------------------------------------- */
 
-static int valid_calendar(const myb_calendar* c) {
-  return c->year >= 0 && c->year <= 9999 && c->month >= 1 && c->month <= 12 && c->day >= 1 &&
-         c->day <= month_days(c->year, c->month) && c->hour >= 0 && c->hour <= 23 &&
-         c->minute >= 0 && c->minute <= 59 && c->second >= 0.0 && c->second < 61.0;
-}
+enum { MAX_SECOND_DECIMALS = 60 };
 
-static int valid_text(const char* s) {
-  if (s == NULL || s[0] == '\0') {
-    return 0;
-  }
-  for (size_t i = 0; s[i] != '\0'; ++i) {
-    if (s[i] == '\n' || s[i] == '\r') {
-      return 0;
-    }
-  }
-  return 1;
-}
-
-/* YYYY-MM-DDThh:mm:ss.ddd: the seconds to 1e-15 s, trailing zeros beyond the third dropped. */
-static void put_calendar(myb_internal_text* t, const myb_calendar* c) {
-  myb_internal_text_int(t, c->year, 4, '0');
-  myb_internal_text_char(t, '-');
-  myb_internal_text_int(t, c->month, 2, '0');
-  myb_internal_text_char(t, '-');
-  myb_internal_text_int(t, c->day, 2, '0');
-  myb_internal_text_char(t, 'T');
-  myb_internal_text_int(t, c->hour, 2, '0');
-  myb_internal_text_char(t, ':');
-  myb_internal_text_int(t, c->minute, 2, '0');
-  myb_internal_text_char(t, ':');
-  /* the seconds: the shortest decimal that reads back to the same number, written without
-   * an exponent, with three decimals at least */
+/* The decimals of the shortest decimal of a number of seconds that reads back to it, written
+ * without an exponent (1e-05: five). */
+static int second_decimals(double second) {
   char shortest[MYB_DOUBLE_CHARS];
-  const size_t n = myb_format_double(c->second, shortest);
+  const size_t n = myb_format_double(second, shortest);
   size_t i = 0;
   while (i < n && shortest[i] != '.' && shortest[i] != 'e') {
     ++i;
@@ -752,8 +736,56 @@ static void put_calendar(myb_internal_text* t, const myb_calendar* c) {
     }
     decimals += exponent;
   }
-  decimals = decimals < 3 ? 3 : decimals > 30 ? 30 : decimals;
-  char seconds[48];
+  return decimals;
+}
+
+/* A date the writers write so that the reader reads it back: its seconds within the decimals
+ * a date is written with (a second of 1e-50 would come back as 0). */
+static int valid_calendar(const myb_calendar* c) {
+  return c->year >= 0 && c->year <= 9999 && c->month >= 1 && c->month <= 12 && c->day >= 1 &&
+         c->day <= month_days(c->year, c->month) && c->hour >= 0 && c->hour <= 23 &&
+         c->minute >= 0 && c->minute <= 59 && c->second >= 0.0 && c->second < 61.0 &&
+         second_decimals(c->second) <= MAX_SECOND_DECIMALS;
+}
+
+/* A value the reader gives back as written: not empty, on one line, and without blanks at
+ * its ends (the reader trims them). */
+static int valid_text(const char* s) {
+  if (s == NULL || s[0] == '\0' || blank(s[0])) {
+    return 0;
+  }
+  size_t i = 0;
+  for (; s[i] != '\0'; ++i) {
+    if (s[i] == '\n' || s[i] == '\r') {
+      return 0;
+    }
+  }
+  return !blank(s[i - 1]);
+}
+
+/* A number that the writers can write as value / scale and the reader read back. */
+static int writable(double value, double scale) {
+  return isfinite(value) && isfinite(value / scale);
+}
+
+/* YYYY-MM-DDThh:mm:ss.ddd: the seconds as their shortest decimal, three decimals at least. */
+static void put_calendar(myb_internal_text* t, const myb_calendar* c) {
+  myb_internal_text_int(t, c->year, 4, '0');
+  myb_internal_text_char(t, '-');
+  myb_internal_text_int(t, c->month, 2, '0');
+  myb_internal_text_char(t, '-');
+  myb_internal_text_int(t, c->day, 2, '0');
+  myb_internal_text_char(t, 'T');
+  myb_internal_text_int(t, c->hour, 2, '0');
+  myb_internal_text_char(t, ':');
+  myb_internal_text_int(t, c->minute, 2, '0');
+  myb_internal_text_char(t, ':');
+  /* the seconds: the shortest decimal that reads back to the same number, written without
+   * an exponent (valid_calendar kept the decimals within what is written) */
+  int decimals = second_decimals(c->second);
+  MYB_CHECK(decimals <= MAX_SECOND_DECIMALS);
+  decimals = decimals < 3 ? 3 : decimals;
+  char seconds[8 + MAX_SECOND_DECIMALS];
   size_t length = 0;
   const myb_status status = myb_format_fixed(c->second, decimals, seconds, sizeof seconds, &length);
   MYB_CHECK(status == MYB_OK);
@@ -1091,13 +1123,21 @@ static myb_status oem_pass(myb_oem* oem, size_t size, int fill, myb_diag* diag) 
       }
       if (l.kind == LINE_PAIR && key_is(&c, &l, "COV_REF_FRAME")) {
         if (fill) {
-          oem->text[l.value + l.value_length] = '\0';
+          /* its entities decoded, as those of every other value */
+          const size_t value_length =
+              c.xml && !l.raw ? xml_decode(oem->text + l.value, l.value_length) : l.value_length;
+          oem->text[l.value + value_length] = '\0';
           oem->covariance_frames[covariances - 1] = oem->text + l.value;
         }
         continue;
       }
-      /* numbers: the rows of the triangle, or one keyword each in XML; a row of one number
-       * that looks like a keyword ("1") is a number all the same */
+      /* numbers: the rows of the triangle, or one keyword each in XML — the next of the 21 in
+       * their order, with one number —; a row of one number that looks like a keyword ("1")
+       * is a number all the same */
+      if (l.kind == LINE_PAIR && !key_is(&c, &l, covariance_keys[filled])) {
+        return fail(diag, l.number, "OEM: a keyword of a covariance matrix out of its place");
+      }
+      const int before = filled;
       const size_t from = l.kind == LINE_MARK ? l.key : l.value;
       const size_t extent = l.kind == LINE_MARK ? l.key_length : l.value_length;
       size_t at = 0;
@@ -1106,13 +1146,18 @@ static myb_status oem_pass(myb_oem* oem, size_t size, int fill, myb_diag* diag) 
       /* bound: the words of the line */
       while (next_word(oem->text + from, extent, &at, &start, &length)) {
         double v = 0.0;
-        if (filled == 21 || number_of(oem->text + from + start, length, &v) != MYB_OK) {
+        double si = 0.0;
+        if (filled == 21 || number_of(oem->text + from + start, length, &v) != MYB_OK ||
+            !to_si(v, covariance_unit, &si)) {
           return fail(diag, l.number, "OEM: not the numbers of a covariance matrix");
         }
         if (fill) {
-          covariance_set(oem->covariances + 36 * (covariances - 1), filled, v * covariance_unit);
+          covariance_set(oem->covariances + 36 * (covariances - 1), filled, si);
         }
         ++filled;
+      }
+      if (l.kind == LINE_PAIR && filled != before + 1) {
+        return fail(diag, l.number, "OEM: a keyword of a covariance matrix with no number or more");
       }
       continue;
     }
@@ -1150,7 +1195,9 @@ static myb_status oem_pass(myb_oem* oem, size_t size, int fill, myb_diag* diag) 
         return fail(diag, l.number, "OEM: not an epoch and 6 or 9 numbers");
       }
       for (int i = 0; i < 9; ++i) {
-        oem->values[9 * states + (size_t)i] = v[i] * metres_per_km;
+        if (!to_si(v[i], metres_per_km, &oem->values[9 * states + (size_t)i])) {
+          return fail(diag, l.number, "OEM: a number beyond the range of a state in metres");
+        }
       }
       oem->accelerated[states] = count == 9;
       oem->segments[segments - 1].state_count++;
@@ -1471,7 +1518,9 @@ static myb_status scaled(const cursor* c, const line* l, double scale, double* o
   if (number_of(c->text + l->value, l->value_length, &v) != MYB_OK) {
     return fail(diag, l->number, "not a number");
   }
-  *out = v * scale;
+  if (!to_si(v, scale, out)) {
+    return fail(diag, l->number, "a number beyond the range of its quantity in SI");
+  }
   return MYB_OK;
 }
 
@@ -1690,9 +1739,28 @@ myb_status myb_opm_write_as(const myb_opm* opm, myb_odm_notation notation, char*
       return MYB_E_DOMAIN;
     }
   }
+  /* every number written, in the unit it is written in (an angle in degrees) */
+  if (opm->has_elements &&
+      (!writable(opm->semi_major_axis, metres_per_km) || !writable(opm->eccentricity, 1.0) ||
+       !writable(opm->inclination, degree) || !writable(opm->ra_of_asc_node, degree) ||
+       !writable(opm->arg_of_pericenter, degree) || !writable(opm->anomaly, degree) ||
+       !writable(opm->gm, gm_unit))) {
+    return MYB_E_DOMAIN;
+  }
+  if (opm->has_spacecraft &&
+      (!isfinite(opm->mass) || !isfinite(opm->solar_rad_area) ||
+       !isfinite(opm->solar_rad_coeff) || !isfinite(opm->drag_area) ||
+       !isfinite(opm->drag_coeff))) {
+    return MYB_E_DOMAIN;
+  }
+  if (opm->has_covariance && opm->cov_ref_frame[0] != '\0' && !valid_text(opm->cov_ref_frame)) {
+    return MYB_E_DOMAIN;
+  }
   for (size_t m = 0; m < opm->maneuver_count; ++m) {
-    if (!valid_calendar(&opm->maneuvers[m].epoch_ignition) ||
-        !valid_text(opm->maneuvers[m].ref_frame)) {
+    const myb_opm_maneuver* man = &opm->maneuvers[m];
+    if (!valid_calendar(&man->epoch_ignition) || !valid_text(man->ref_frame) ||
+        !isfinite(man->duration) || !isfinite(man->delta_mass) || !isfinite(man->dv[0]) ||
+        !isfinite(man->dv[1]) || !isfinite(man->dv[2])) {
       return MYB_E_DOMAIN;
     }
   }
@@ -1863,10 +1931,15 @@ myb_status myb_omm_parse(const char* text, size_t size, myb_omm* omm, myb_diag* 
       o.ephemeris_type = (int)v;
       o.has_tle = 1;
     } else if (key_is(&c, &l, "CLASSIFICATION_TYPE")) {
-      if (l.value_length != 1) {
+      /* one character, of XML after its entities ("&amp;" is one) */
+      char letter[1] = {'\0'};
+      const size_t length = c.xml && !l.raw
+                                ? xml_decode_to(text + l.value, l.value_length, letter, 1)
+                                : l.value_length;
+      if (length != 1) {
         return fail(diag, l.number, "OMM: the classification is one letter");
       }
-      o.classification_type = text[l.value];
+      o.classification_type = c.xml && !l.raw ? letter[0] : text[l.value];
       o.has_tle = 1;
     } else if (key_is(&c, &l, "NORAD_CAT_ID") || key_is(&c, &l, "ELEMENT_SET_NO") ||
                key_is(&c, &l, "REV_AT_EPOCH")) {
@@ -1932,7 +2005,19 @@ myb_status myb_omm_write_as(const myb_omm* omm, myb_odm_notation notation, char*
       !isfinite(omm->arg_of_pericenter) || !isfinite(omm->mean_anomaly) ||
       !isfinite(omm->has_mean_motion ? omm->mean_motion : omm->semi_major_axis) ||
       (omm->has_covariance && !covariance_finite(omm->covariance)) ||
+      (omm->has_covariance && omm->cov_ref_frame[0] != '\0' && !valid_text(omm->cov_ref_frame)) ||
+      (omm->has_gm && !isfinite(omm->gm)) ||
       (notation != MYB_ODM_KVN && notation != MYB_ODM_XML)) {
+    return MYB_E_DOMAIN;
+  }
+  /* the parameters of an element set as the reader takes them: a classification of one
+   * visible character, integers within its range, finite numbers */
+  if (omm->has_tle &&
+      (omm->classification_type <= ' ' || omm->classification_type > '~' ||
+       fabs((double)omm->ephemeris_type) > 2.0e9 || fabs((double)omm->norad_cat_id) > 2.0e9 ||
+       fabs((double)omm->element_set_no) > 2.0e9 || fabs((double)omm->rev_at_epoch) > 2.0e9 ||
+       !isfinite(omm->bstar) || !isfinite(omm->mean_motion_dot) ||
+       !isfinite(omm->mean_motion_ddot))) {
     return MYB_E_DOMAIN;
   }
   sink out = {.t = {.out = buffer, .size = size}, .xml = notation == MYB_ODM_XML};
@@ -2343,21 +2428,61 @@ myb_status myb_ocm_state(const myb_ocm* ocm, size_t index, size_t line, int* abs
   if (found != (size_t)expected) {
     return MYB_E_FORMAT;
   }
+  double si[9];
   for (int i = 0; i < 9; ++i) {
-    state[i] = v[i] * metres_per_km;
+    if (!to_si(v[i], metres_per_km, &si[i])) {
+      return MYB_E_FORMAT; /* a number of km beyond the range of metres */
+    }
   }
+  memcpy(state, si, sizeof si);
   if (count != NULL) {
     *count = expected;
   }
   return MYB_OK;
 }
 
+/* A keyword that the reader keeps: COMMENT is passed over. */
 static int valid_keyword(const char* s) {
-  if (s == NULL || s[0] == '\0') {
+  if (s == NULL || s[0] == '\0' || strcmp(s, "COMMENT") == 0) {
     return 0;
   }
   for (size_t i = 0; s[i] != '\0'; ++i) {
     if (!keyword_char(s[i])) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/* A line of data that the reader reads back as one: not a comment, not a keyword = value
+ * line, not a word that marks a section. */
+static int valid_line(const char* s) {
+  if (!valid_text(s)) {
+    return 0;
+  }
+  const size_t n = strlen(s);
+  if (n >= 7 && memcmp(s, "COMMENT", 7) == 0 && (n == 7 || blank(s[7]))) {
+    return 0;
+  }
+  size_t k = 0;
+  while (k < n && keyword_char(s[k])) {
+    ++k;
+  }
+  size_t after = k;
+  while (after < n && blank(s[after])) {
+    ++after;
+  }
+  if (k > 0 && after < n && s[after] == '=') {
+    return 0;
+  }
+  if (k == n) {
+    static const char* const marks[2] = {"META_START", "META_STOP"};
+    for (int i = 0; i < OCM_KINDS; ++i) {
+      if (strcmp(s, ocm_start[i]) == 0 || strcmp(s, ocm_stop[i]) == 0) {
+        return 0;
+      }
+    }
+    if (strcmp(s, marks[0]) == 0 || strcmp(s, marks[1]) == 0) {
       return 0;
     }
   }
@@ -2419,7 +2544,7 @@ myb_status myb_ocm_write(const myb_ocm_data* data, myb_odm_notation notation, ch
       return MYB_E_DOMAIN;
     }
     for (size_t i = 0; i < block->line_count; ++i) {
-      if (!valid_text(block->lines[i])) {
+      if (!valid_line(block->lines[i])) {
         return MYB_E_DOMAIN;
       }
     }

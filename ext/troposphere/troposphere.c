@@ -600,6 +600,11 @@ myb_status myb_gpt3_at(const myb_gpt3* grid, double mjd, double latitude, double
   const double degrees = 360.0 / TWO_PI;
   double east = longitude * degrees;
   east -= 360.0 * floor(east / 360.0);
+  if (!(east > -1.0 && east <= 360.0)) {
+    /* so many turns that the place within the turn is lost (or infinite in degrees): the
+     * cell below would come from a NaN or a huge negative number, outside the grid */
+    return MYB_E_DOMAIN;
+  }
   const double polar = 90.0 - latitude * degrees;
   /* the node of the cell the point is in, counted from 1, and where the point is in it */
   double row = floor((polar + step) / step);
@@ -638,6 +643,13 @@ myb_status myb_gpt3_at(const myb_gpt3* grid, double mjd, double latitude, double
     }
   } else {
     memcpy(out, p[0].v, sizeof out); /* by the pole: the node itself */
+  }
+  /* the barometric law overflows for a height far below the nodes, and a node whose
+   * temperature is zero (a damaged grid) divides by it: no values */
+  for (int k = 0; k < 13; ++k) {
+    if (!isfinite(out[k])) {
+      return MYB_E_DOMAIN;
+    }
   }
   values->pressure = out[0];
   values->temperature = out[1];

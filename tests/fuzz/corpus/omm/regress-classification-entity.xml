@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- a classification written as an entity: one character, read back (it was refused) -->
+<omm id="CCSDS_OMM_VERS" version="2.0">
+  <header>
+    <CREATION_DATE>2020-06-01T10:00:00.000</CREATION_DATE>
+    <ORIGINATOR>18 SPCS</ORIGINATOR>
+  </header>
+  <body>
+    <segment>
+      <metadata>
+        <OBJECT_NAME>ISS (ZARYA)</OBJECT_NAME>
+        <OBJECT_ID>1998-067A</OBJECT_ID>
+        <CENTER_NAME>EARTH</CENTER_NAME>
+        <REF_FRAME>TEME</REF_FRAME>
+        <TIME_SYSTEM>UTC</TIME_SYSTEM>
+        <MEAN_ELEMENT_THEORY>SGP4</MEAN_ELEMENT_THEORY>
+      </metadata>
+      <data>
+        <meanElements>
+          <EPOCH>2020-06-01T03:22:38.887392</EPOCH>
+          <MEAN_MOTION>15.49438371</MEAN_MOTION>
+          <ECCENTRICITY>0.0002335</ECCENTRICITY>
+          <INCLINATION>51.6443</INCLINATION>
+          <RA_OF_ASC_NODE>93.0</RA_OF_ASC_NODE>
+          <ARG_OF_PERICENTER>45.4201</ARG_OF_PERICENTER>
+          <MEAN_ANOMALY>314.6988</MEAN_ANOMALY>
+        </meanElements>
+        <tleParameters>
+          <EPHEMERIS_TYPE>0</EPHEMERIS_TYPE>
+          <CLASSIFICATION_TYPE>&amp;</CLASSIFICATION_TYPE>
+          <NORAD_CAT_ID>25544</NORAD_CAT_ID>
+          <ELEMENT_SET_NO>999</ELEMENT_SET_NO>
+          <REV_AT_EPOCH>22954</REV_AT_EPOCH>
+          <BSTAR>2.4949e-05</BSTAR>
+          <MEAN_MOTION_DOT>9.07e-06</MEAN_MOTION_DOT>
+          <MEAN_MOTION_DDOT>0.0</MEAN_MOTION_DDOT>
+        </tleParameters>
+      </data>
+    </segment>
+  </body>
+</omm>

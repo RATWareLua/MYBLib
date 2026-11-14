@@ -583,11 +583,150 @@ static void test_orders(void) {
   myb_ionex_destroy(maps);
 }
 
+/* A line of an IONEX header: the data in columns 1-60, the label after them. */
+static void header_line(char* text, size_t capacity, const char* data, const char* label) {
+  const size_t used = strlen(text);
+  snprintf(text + used, capacity - used, "%-60s%s\n", data, label);
+}
+
+/* A small global map of 3 x 3 nodes (latitudes 10, 0, -10; longitudes -180, 0, 180), the node
+ * at -10, 0 missing; the fields given replace those of the made file (NULL: as made; middle_row
+ * is the row of latitude 0). */
+static void small_ionex(char* text, size_t capacity, const char* radius, const char* exponent,
+                        const char* heights, const char* epoch, const char* maps,
+                        const char* middle_row) {
+  text[0] = '\0';
+  header_line(text, capacity, "     1.0            IONOSPHERE MAPS     GNS",
+              "IONEX VERSION / TYPE");
+  header_line(text, capacity, maps != NULL ? maps : "     1", "# OF MAPS IN FILE");
+  header_line(text, capacity, radius != NULL ? radius : "  6371.0", "BASE RADIUS");
+  header_line(text, capacity, "     2", "MAP DIMENSION");
+  header_line(text, capacity, heights != NULL ? heights : "   450.0 450.0   0.0",
+              "HGT1 / HGT2 / DHGT");
+  header_line(text, capacity, "    10.0 -10.0 -10.0", "LAT1 / LAT2 / DLAT");
+  header_line(text, capacity, "  -180.0 180.0 180.0", "LON1 / LON2 / DLON");
+  header_line(text, capacity, exponent != NULL ? exponent : "    -1", "EXPONENT");
+  header_line(text, capacity, "", "END OF HEADER");
+  header_line(text, capacity, "     1", "START OF TEC MAP");
+  header_line(text, capacity, epoch != NULL ? epoch : "  2024     1     1     0     0     0",
+              "EPOCH OF CURRENT MAP");
+  header_line(text, capacity, "    10.0-180.0 180.0 180.0 450.0", "LAT/LON1/LON2/DLON/H");
+  header_line(text, capacity, "  100  110  100", "");
+  header_line(text, capacity, "     0.0-180.0 180.0 180.0 450.0", "LAT/LON1/LON2/DLON/H");
+  header_line(text, capacity, middle_row != NULL ? middle_row : "  120  130  120", "");
+  header_line(text, capacity, "   -10.0-180.0 180.0 180.0 450.0", "LAT/LON1/LON2/DLON/H");
+  header_line(text, capacity, "  100 9999  100", "");
+  header_line(text, capacity, "     1", "END OF TEC MAP");
+}
+
+/* Defects found by review (regressions): fields converted before they were checked (an
+ * exponent, epoch fields, a latitude of NaN), values that are not finite or not whole, a
+ * missing node beside a node or an edge, grids of densities whose places are not finite. */
+static void test_reviewed_edges(void) {
+  static char text[4096];
+  myb_diag diag = {0};
+  const double mjd = 60310.0; /* 2024-01-01 */
+  /* on the node at 0, 0 the missing node below it has no weight: the value is there (it
+   * made the value missing) */
+  small_ionex(text, sizeof text, NULL, NULL, NULL, NULL, NULL, NULL);
+  myb_ionex* maps = NULL;
+  MT_CHECK(myb_ionex_load(text, strlen(text), NULL, &maps, &diag) == MYB_OK);
+  if (maps != NULL) {
+    double vtec = 0.0;
+    MT_CHECK(myb_ionex_vtec(maps, mjd, 0.0, 0.0, &vtec) == MYB_OK && fabs(vtec - 13.0e16) < 1e3);
+    /* between it and the missing node the missing node is needed */
+    MT_CHECK(myb_ionex_vtec(maps, mjd, -5.0 * DEG, 0.0, &vtec) == MYB_E_RANGE);
+    myb_ionex_destroy(maps);
+  }
+  /* what the reader refuses */
+  struct {
+    const char* radius;
+    const char* exponent;
+    const char* heights;
+    const char* epoch;
+    const char* maps;
+    const char* middle_row;
+  } bad[] = {
+      {NULL, "   nan", NULL, NULL, NULL, NULL},
+      {NULL, "   1.5", NULL, NULL, NULL, NULL},
+      {NULL, "   -30", NULL, NULL, NULL, NULL},
+      {"     inf", NULL, NULL, NULL, NULL, NULL},
+      {NULL, NULL, "     nan 450.0   0.0", NULL, NULL, NULL},
+      {NULL, NULL, NULL, "  2024    13     1     0     0     0", NULL, NULL},
+      {NULL, NULL, NULL, "  2024     2    30     0     0     0", NULL, NULL},
+      {NULL, NULL, NULL, "   nan     1     1     0     0     0", NULL, NULL},
+      {NULL, NULL, NULL, "  2024     1     1     0     0 1e300", NULL, NULL},
+      {NULL, NULL, NULL, NULL, "   1.5", NULL},
+      {NULL, NULL, NULL, NULL, NULL, "  1201e200  120"},
+      {NULL, NULL, NULL, NULL, NULL, "  120  1.5  120"},
+      {NULL, NULL, NULL, NULL, NULL, "  120  nan  120"},
+  };
+  for (size_t k = 0; k < sizeof bad / sizeof bad[0]; ++k) {
+    small_ionex(text, sizeof text, bad[k].radius, bad[k].exponent, bad[k].heights, bad[k].epoch,
+                bad[k].maps, bad[k].middle_row);
+    myb_ionex* none = NULL;
+    const myb_status status = myb_ionex_load(text, strlen(text), NULL, &none, &diag);
+    MT_CHECK(status == MYB_E_FORMAT && none == NULL);
+    if (status != MYB_E_FORMAT) {
+      printf("  case %zu: status %d\n", k, (int)status);
+    }
+    myb_ionex_destroy(none);
+  }
+  /* a latitude record whose latitude is not a number or far off the grid */
+  small_ionex(text, sizeof text, NULL, NULL, NULL, NULL, NULL, NULL);
+  char* record = strstr(text, "     0.0-180.0");
+  MT_CHECK(record != NULL);
+  if (record != NULL) {
+    memcpy(record, "     nan", 8);
+    myb_ionex* none = NULL;
+    MT_CHECK(myb_ionex_load(text, strlen(text), NULL, &none, &diag) == MYB_E_FORMAT);
+    memcpy(record, "   1e300", 8);
+    MT_CHECK(myb_ionex_load(text, strlen(text), NULL, &none, &diag) == MYB_E_FORMAT);
+    myb_ionex_destroy(none);
+  }
+  /* grids of densities that are none */
+  enum { HEIGHTS = 2, LATITUDES = 3, LONGITUDES = 4 };
+  static double densities[2 * HEIGHTS * LATITUDES * LONGITUDES];
+  for (size_t k = 0; k < sizeof densities / sizeof densities[0]; ++k) {
+    densities[k] = 1.0e11;
+  }
+  const double base = 6371.0e3;
+  const double epochs[2] = {mjd, mjd + 1.0};
+  myb_iono_grid grid = {.radius = base, .latitude = -10.0 * DEG,
+                              .latitude_step = 10.0 * DEG, .latitudes = LATITUDES,
+                              .longitude = 0.0, .longitude_step = 90.0 * DEG,
+                              .longitudes = LONGITUDES, .height = 300e3, .height_step = 100e3,
+                              .heights = HEIGHTS, .epochs = epochs, .maps = 2,
+                              .density = densities};
+  double r[3];
+  place(0.0, 0.3, base + 350e3, r);
+  double density = 0.0;
+  MT_CHECK(myb_iono_grid_density(&grid, mjd + 0.5, r, &density) == MYB_OK &&
+           fabs(density - 1.0e11) < 1.0);
+  myb_iono_grid none = grid;
+  none.radius = (double)NAN;
+  MT_CHECK(myb_iono_grid_density(&none, mjd + 0.5, r, &density) == MYB_E_DOMAIN);
+  none = grid;
+  none.longitude = (double)INFINITY;
+  MT_CHECK(myb_iono_grid_density(&none, mjd + 0.5, r, &density) == MYB_E_DOMAIN);
+  const double same[2] = {mjd, mjd};
+  none = grid;
+  none.epochs = same;
+  MT_CHECK(myb_iono_grid_density(&none, mjd, r, &density) == MYB_E_DOMAIN);
+  /* on a node beside a missing one */
+  densities[(0 * HEIGHTS + 0) * LATITUDES * LONGITUDES + 1 * LONGITUDES + 1] = (double)NAN;
+  place(0.0, 0.0, base + 300e3, r);
+  MT_CHECK(myb_iono_grid_density(&grid, mjd, r, &density) == MYB_OK &&
+           fabs(density - 1.0e11) < 1.0);
+  printf("IONEX: reviewed edges of the reader and of the interpolation\n");
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_ionex();
   test_ionex_3d();
   test_orders();
   test_pierce_point();
+  test_reviewed_edges();
   return mt_finish("test_ionosphere");
 }

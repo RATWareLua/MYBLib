@@ -124,14 +124,22 @@ static myb_status fail(myb_diag* diag, long line, const char* what) {
   return MYB_E_FORMAT;
 }
 
-/* base^n units: what an accuracy code stands for; 0 for a blank field or a base not given. */
-static double from_code(const char* s, size_t n, size_t from, size_t width, double base,
-                        double unit) {
+/* base^n units: what an accuracy code stands for, into *sigma; 0 for a blank field or a base
+ * not given. Returns 0 if the power is not finite: a base of the header too large for the
+ * codes of the records (10^99 m), which no file means. */
+static int from_code(const char* s, size_t n, size_t from, size_t width, double base,
+                     double unit, double* sigma) {
   long code = 0;
+  *sigma = 0.0;
   if (!(base > 1.0) || !integer(s, n, from, width, 0, 999, &code)) {
-    return 0.0;
+    return 1;
   }
-  return unit * myb_exp((double)code * myb_log(base));
+  const double value = unit * myb_exp((double)code * myb_log(base));
+  if (!isfinite(value)) {
+    return 0;
+  }
+  *sigma = value;
+  return 1;
 }
 
 /* The code nearest to a value: -1 if there is none to write. */
@@ -253,8 +261,11 @@ myb_status myb_sp3_load(const char* text, size_t size, const myb_allocator* allo
       continue;
     }
     if (n >= 12 && s[0] == '%' && s[1] == 'c' && percent_c++ == 0) {
-      memcpy(f->time_system, s + 9, 3);
-      f->time_system[3] = '\0';
+      const char* system = NULL;
+      size_t len = 0;
+      field(s, n, 9, 3, &system, &len); /* blanks trimmed, as of the frame */
+      memcpy(f->time_system, system, len);
+      f->time_system[len] = '\0';
     }
     if (n >= 26 && s[0] == '%' && s[1] == 'f' && percent_f++ == 0) {
       double base = 0.0;
@@ -277,12 +288,25 @@ myb_status myb_sp3_load(const char* text, size_t size, const myb_allocator* allo
     return status;
   }
   f->satellites = (size_t)count;
-  /* records: count the epochs, then fill */
+  /* the satellites once each: the records of a second one would be taken as the first's */
+  for (size_t i = 1; i < f->satellites; ++i) {
+    for (size_t k = 0; k < i; ++k) {
+      if (memcmp(f->ids[i], f->ids[k], 3) == 0) {
+        myb_sp3_destroy(f);
+        return fail(diag, 0, "a satellite listed twice");
+      }
+    }
+  }
+  /* records: count the epochs up to EOF as the filling below reads them (an epoch line after
+   * EOF would be counted and never read: its label unset), then fill */
   size_t epochs = 0;
   {
     cursor k = records;
     /* bound: one line per iteration */
     while (next_line(&k, &s, &n)) {
+      if (n >= 3 && memcmp(s, "EOF", 3) == 0) {
+        break;
+      }
       if (n >= 1 && s[0] == '*') {
         ++epochs;
       }
@@ -398,10 +422,15 @@ myb_status myb_sp3_load(const char* text, size_t size, const myb_allocator* allo
     double* sigma = f->sigma + 8 * cell + (is_position ? 0u : 4u);
     const double unit = is_position ? 1e-3 : 1e-7;         /* mm, 1e-4 mm/s */
     const double clock_unit = is_position ? 1e-12 : 1e-16; /* ps, 1e-4 ps/s */
+    int coded = 1;
     for (size_t i = 0; i < 3; ++i) {
-      sigma[i] = from_code(s, n, 61 + 3 * i, 2, f->base[0], unit);
+      coded &= from_code(s, n, 61 + 3 * i, 2, f->base[0], unit, &sigma[i]);
     }
-    sigma[3] = from_code(s, n, 70, 3, f->base[1], clock_unit);
+    coded &= from_code(s, n, 70, 3, f->base[1], clock_unit, &sigma[3]);
+    if (!coded) {
+      status = fail(diag, c.line, "an accuracy code beyond the range of its base");
+      break;
+    }
     if (is_position) {
       unsigned flags = 0;
       flags |= n > 74 && s[74] == 'E' ? (unsigned)MYB_SP3_CLOCK_EVENT : 0u;
@@ -563,8 +592,8 @@ static void record_tail(myb_internal_text* t, int have_clock, double clock, cons
                     flags & (unsigned)MYB_SP3_ORBIT_PREDICTED ? 'P' : ' ',
                     '\0'};
     size_t length = 7;
-    /* bound: the seven columns */
-    while (tail[length - 1] == ' ') {
+    /* bound: the seven columns (one of the four flags is set: the writer refuses others) */
+    while (length > 0 && tail[length - 1] == ' ') {
       --length;
     }
     tail[length] = '\0';
@@ -587,6 +616,50 @@ static int sp3_text(const char* s, size_t max) {
     }
   }
   return 1;
+}
+
+/* A name the reader gives back as written: as sp3_text, without blanks at its ends. */
+static int sp3_name(const char* s, size_t max) {
+  return sp3_text(s, max) && s[0] != ' ' && s[strlen(s) - 1] != ' ';
+}
+
+/* What the reader reads from a field that the writer fills with value to `decimals` digits:
+ * into *back; 0 if the number is wider than the field (it would run into the next one). */
+static int reads_back(double value, int decimals, size_t width, double* back) {
+  char text[448];
+  size_t length = 0;
+  size_t used = 0;
+  return isfinite(value) &&
+         myb_format_fixed(value, decimals, text, sizeof text, &length) == MYB_OK &&
+         length <= width && myb_parse_double(text, length, back, &used) == MYB_OK &&
+         used == length;
+}
+
+/* Three coordinates in the units of the file (km or dm/s) that read back within their fields
+ * and not as the three zeros that mark a missing record. */
+static int record_reads_back(double x, double y, double z) {
+  double back[3];
+  return reads_back(x, 6, 14, &back[0]) && reads_back(y, 6, 14, &back[1]) &&
+         reads_back(z, 6, 14, &back[2]) && (back[0] != 0.0 || back[1] != 0.0 || back[2] != 0.0);
+}
+
+/* A clock (microseconds) or a rate (1e-4 microseconds per second) that reads back as one: not
+ * as the 999999.999999 of a missing one, which the reader knows by 999999 or more. */
+static int clock_reads_back(double value) {
+  double back = 0.0;
+  return reads_back(value, 6, 14, &back) && fabs(back) < 999999.0;
+}
+
+/* An epoch label that the reader takes: its fields in their ranges, the seconds below 61 once
+ * rounded to the eight decimals they are written with. */
+static int sp3_epoch_valid(const myb_calendar* c) {
+  static const int days[12] = {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const int leap = (c->year % 4 == 0 && c->year % 100 != 0) || c->year % 400 == 0;
+  double second = 0.0;
+  return c->year >= 1900 && c->year <= 2999 && c->month >= 1 && c->month <= 12 && c->day >= 1 &&
+         c->day <= days[c->month - 1] - (c->month == 2 && !leap ? 1 : 0) && c->hour >= 0 &&
+         c->hour <= 23 && c->minute >= 0 && c->minute <= 59 && c->second >= 0.0 &&
+         reads_back(c->second, 8, 11, &second) && second < 61.0;
 }
 
 /* s left-justified in `width` characters. */
@@ -615,8 +688,8 @@ static void sp3_epoch(myb_internal_text* t, const myb_calendar* c) {
 myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer, size_t size, size_t* length) {
   MYB_CHECK(data != NULL && (buffer != NULL || size == 0));
   const myb_sp3_data* d = data;
-  if ((d->version != 'c' && d->version != 'd') || !sp3_text(d->time_system, 3) ||
-      !sp3_text(d->frame, 5) || !sp3_text(d->agency, 4) || !sp3_text(d->orbit_type, 3) ||
+  if ((d->version != 'c' && d->version != 'd') || !sp3_name(d->time_system, 3) ||
+      !sp3_name(d->frame, 5) || !sp3_text(d->agency, 4) || !sp3_text(d->orbit_type, 3) ||
       !sp3_text(d->data_used, 5) || d->file_type < 'A' || d->file_type > 'Z' ||
       d->satellite_count == 0 || d->satellite_count > MAX_SATELLITES ||
       (d->version == 'c' && d->satellite_count > 85) || d->epoch_count == 0 ||
@@ -625,20 +698,48 @@ myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer, size_t size, si
       (d->clock_rates != NULL && d->velocities == NULL)) {
     return MYB_E_DOMAIN;
   }
-  /* a clock of a second or more does not fit the field */
-  for (size_t k = 0; d->clocks != NULL && k < d->epoch_count * d->satellite_count; ++k) {
-    if (isfinite(d->clocks[k]) && !(fabs(d->clocks[k]) < 0.999999)) {
+  /* what is written must read back as itself: the epochs; the numbers within their fields,
+   * a position or a velocity not as the zeros of a missing one, a clock below a second and
+   * not as the mark of a missing one; the flags of MYB_SP3_*; each satellite once, without
+   * blanks (the reader takes "G 1" for G01) */
+  for (size_t e = 0; e < d->epoch_count; ++e) {
+    if (!sp3_epoch_valid(&d->epochs[e])) {
       return MYB_E_DOMAIN;
     }
   }
-  for (size_t k = 0; d->clock_rates != NULL && k < d->epoch_count * d->satellite_count; ++k) {
-    if (isfinite(d->clock_rates[k]) && !(fabs(d->clock_rates[k]) < 0.999999e-4)) {
+  const size_t cells = d->epoch_count * d->satellite_count;
+  for (size_t k = 0; k < cells; ++k) {
+    /* in the units of the file as the records below are written */
+    const double* r = d->positions + 3 * k;
+    if (isfinite(r[0]) && isfinite(r[1]) && isfinite(r[2]) &&
+        !record_reads_back(r[0] / 1000.0, r[1] / 1000.0, r[2] / 1000.0)) {
+      return MYB_E_DOMAIN;
+    }
+    const double* v = d->velocities != NULL ? d->velocities + 3 * k : NULL;
+    if (v != NULL && isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]) &&
+        !record_reads_back(v[0] * 10.0, v[1] * 10.0, v[2] * 10.0)) {
+      return MYB_E_DOMAIN;
+    }
+    if (d->clocks != NULL && isfinite(d->clocks[k]) && !clock_reads_back(d->clocks[k] * 1e6)) {
+      return MYB_E_DOMAIN;
+    }
+    if (d->clock_rates != NULL && isfinite(d->clock_rates[k]) &&
+        !clock_reads_back(d->clock_rates[k] * 1e10)) {
+      return MYB_E_DOMAIN;
+    }
+    if (d->flags != NULL && (d->flags[k] & ~15u) != 0) {
       return MYB_E_DOMAIN;
     }
   }
   for (size_t s = 0; s < d->satellite_count; ++s) {
-    if (!sp3_text(d->satellites[s], 3) || strlen(d->satellites[s]) != 3) {
+    if (!sp3_text(d->satellites[s], 3) || strlen(d->satellites[s]) != 3 ||
+        memchr(d->satellites[s], ' ', 3) != NULL) {
       return MYB_E_DOMAIN;
+    }
+    for (size_t k = 0; k < s; ++k) {
+      if (memcmp(d->satellites[s], d->satellites[k], 3) == 0) {
+        return MYB_E_DOMAIN;
+      }
     }
   }
   /* the first epoch as week and seconds of the GPS count and as a Julian date: labels of the
