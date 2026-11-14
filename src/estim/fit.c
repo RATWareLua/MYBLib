@@ -257,6 +257,12 @@ myb_status myb_fit_orbit(myb_force_model* model, double t0, double y0[6],
     } else if (fabs(rms - rms_last) <= tolerance * rms_last) {
       result->converged = 1;
     }
+    /* residuals already below `tolerance` of their sigmas: nothing is left to fit (with exact
+     * observations the RMS falls to the rounding of the propagation, where its relative
+     * change stays large and the test above would never hold) */
+    if (rms <= tolerance) {
+      result->converged = 1;
+    }
     if (nf == 0) {
       result->converged = 1;
     }

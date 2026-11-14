@@ -196,7 +196,8 @@ MYB_API MYB_NODISCARD myb_status myb_measure_light_azel(void* light, double t,
  * propagates the orbit with its variational equations through the observations, forms the
  * normal equations of the free unknowns (scaled by their diagonal, solved by Cholesky) and
  * corrects y0 and the parameters in place. It stops when the weighted RMS changes by less than
- * `tolerance` of itself, or after max_iterations corrections. */
+ * `tolerance` of itself or falls below `tolerance` (the residuals that small against their
+ * sigmas: exact observations), or after max_iterations corrections. */
 
 typedef struct myb_fit_options {
   int max_iterations;          /* corrections; 0 = 10 */
