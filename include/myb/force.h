@@ -411,8 +411,9 @@ MYB_API MYB_NODISCARD myb_status myb_magnetic_field_create(double radius, int de
  * of the header line "g/h n m 1900.0 ... 2025.0 2025-30" in nT, the last column the secular
  * variation in nT/year): linear in time between the epochs, the secular variation after the last
  * (the IGRF prescription), at the decimal year `year` (>= the first epoch). The reference radius
- * (6371.2 km for the IGRF) is the caller's. Errors: MYB_E_FORMAT (diag gives the line),
- * MYB_E_RANGE (year before the table), MYB_E_NOMEM. */
+ * (6371.2 km for the IGRF) is the caller's. Errors: MYB_E_FORMAT (diag gives the line; also
+ * epochs that are not 1 .. 64 increasing numbers, coefficients that are not finite or whose
+ * value at the year is not), MYB_E_RANGE (year before the table or not finite), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_magnetic_field_load_table(const char* text, size_t size,
                                                                double radius, double year,
                                                                const myb_allocator* allocator,

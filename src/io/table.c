@@ -243,18 +243,40 @@ const double* myb_table_row(const myb_table* table, size_t row) {
   return table->values + row * table->columns;
 }
 
+/* A name the reader gives back as it is: no separator, blank, line end or comment in it. */
+static int writable_name(const char* name) {
+  for (const char* c = name; *c != '\0'; ++c) {
+    if (separator(*c) || space(*c) || *c == '\n' || *c == '#') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 myb_status myb_table_write(const char* const* names, size_t columns, const double* values,
                            size_t rows, char* buffer, size_t size, size_t* length) {
   MYB_CHECK((values != NULL || rows == 0) && (buffer != NULL || size == 0));
-  if (columns == 0 || columns > MAX_COLUMNS) {
-    return MYB_E_DOMAIN;
+  if (columns == 0 || columns > MAX_COLUMNS || (rows == 0 && names == NULL)) {
+    return MYB_E_DOMAIN; /* no columns, or a text without a line, which reads as no table */
+  }
+  if (names != NULL) {
+    /* names the reader reads back: each one field, and not all of them numbers (a row of
+     * numbers, or of empty fields, would be read as a row of values) */
+    int numeric = 1;
+    for (size_t c = 0; c < columns; ++c) {
+      if (names[c] == NULL || !writable_name(names[c])) {
+        return MYB_E_DOMAIN;
+      }
+      double v = 0.0;
+      numeric = numeric && field_value(names[c], strlen(names[c]), &v);
+    }
+    if (numeric) {
+      return MYB_E_DOMAIN;
+    }
   }
   myb_internal_text t = {.out = buffer, .size = size};
   if (names != NULL) {
     for (size_t c = 0; c < columns; ++c) {
-      if (names[c] == NULL) {
-        return MYB_E_DOMAIN;
-      }
       if (c > 0) {
         myb_internal_text_char(&t, ',');
       }
@@ -268,8 +290,12 @@ myb_status myb_table_write(const char* const* names, size_t columns, const doubl
         myb_internal_text_char(&t, ',');
       }
       const double v = values[r * columns + c];
-      if (v == v) { /* a NaN is an empty field */
+      if (v == v) {
         myb_internal_text_double(&t, v);
+      } else if (columns == 1) {
+        /* a NaN is an empty field, but alone on its line that is an empty line, which the
+         * reader passes over */
+        myb_internal_text_put(&t, "nan");
       }
     }
     myb_internal_text_char(&t, '\n');

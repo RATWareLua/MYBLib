@@ -32,12 +32,13 @@ enum {
 
 /* What a kernel may give, so that every instant built from it stays far inside the range of a
  * myb_time (2^62 s): offsets, differences and epochs within 2^40 s (35 000 years) of J2000,
- * UTC days within 10^8 days, TAI - UTC within 10^6 s and its drift below 1 s a day. Values
- * beyond are not a time scale but a damaged kernel (MYB_E_FORMAT), or a series evaluated
- * where it no longer means anything (MYB_E_DOMAIN). */
+ * UTC days within 10^8 days, TAI - UTC within half a day (the UTC day of an instant is then
+ * found among three) and its drift below 1 s a day. Values beyond are not a time scale but a
+ * damaged kernel (MYB_E_FORMAT), or a series evaluated where it no longer means anything
+ * (MYB_E_DOMAIN). */
 static const double kernel_seconds = 0x1p40;
 static const double kernel_days = 1e8;
-static const double utc_offset_max = 1e6;
+static const double utc_offset_max = 43200.0;
 static const double utc_drift_max = 1.0;
 
 static int within(double x, double bound) {
@@ -227,8 +228,9 @@ static myb_status read_series(reader* r, const myb_allocator* a, scale_def* d) {
   if (status != MYB_OK) {
     return status;
   }
-  if (!(d->series_unit > 0.0)) {
-    myb_internal_diag(r->diag, 0, "%s: the unit must be positive", name);
+  if (!(d->series_unit > 0.0) || !within(d->series_unit, kernel_seconds)) {
+    /* an infinite unit put every instant at the argument 0: a constant difference */
+    myb_internal_diag(r->diag, 0, "%s: the unit must be positive and below 2^40 s", name);
     return MYB_E_FORMAT;
   }
   const double* terms = NULL;
@@ -342,6 +344,21 @@ static myb_status read_utc(reader* r, myb_timesys* s) {
       !(valid_until > start[n - 1])) {
     myb_internal_diag(r->diag, 0, "MYB_UTC_VALID_UNTIL_MJD: must be an integer after the last row");
     return MYB_E_FORMAT;
+  }
+  /* TAI - UTC (the base scale minus UTC) within half a day over the whole table, where a
+   * row's offset is linear in the day so that its values at the two ends of the row bound it:
+   * the UTC day of an instant is then the day of the instant on the base scale, the one before
+   * or the one after (myb_timesys_to_utc) */
+  for (size_t i = 0; i < n; ++i) {
+    const double ends[2] = {start[i], i + 1 < n ? start[i + 1] : valid_until};
+    for (int k = 0; k < 2; ++k) {
+      const double dat = column[0][i] + (ends[k] - column[1][i]) * column[2][i];
+      if (!within(dat, utc_offset_max)) {
+        myb_internal_diag(r->diag, 0, "MYB_UTC_OFFSET: row %zu gives TAI - UTC beyond half a "
+                          "day", i + 1);
+        return MYB_E_FORMAT;
+      }
+    }
   }
   void* block = NULL;
   status = myb_internal_alloc_array(&s->allocator, n, sizeof(utc_row), &block);
@@ -754,13 +771,16 @@ myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t, myb_scale f
   if (status != MYB_OK) {
     return status;
   }
-  /* TAI - UTC is positive and below a day: the UTC day is the base day or the one before. */
+  /* |TAI - UTC| is below half a day (read_utc): the UTC day is the base day, the one before or
+   * the one after (a negative offset, as of UTC from GPS before 1980, moves the instants
+   * after 0h of the base day into the next UTC day) — the latest of them that has begun. */
   const int64_t base_day = myb_internal_floor_div(base_time.s + 43200, 86400) + MJD_J2000_DAY;
   int64_t mjd = 0;
   utc_day day = {};
   myb_time midnight = {};
   status = MYB_E_RANGE;
-  for (int64_t candidate = base_day; candidate >= base_day - 1 && status != MYB_OK; --candidate) {
+  for (int64_t candidate = base_day + 1; candidate >= base_day - 1 && status != MYB_OK;
+       --candidate) {
     utc_day d;
     if (utc_day_of(system, candidate, &d) != MYB_OK) {
       continue;
@@ -779,6 +799,12 @@ myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t, myb_scale f
   myb_dd u = myb_time_diff(base_time, midnight);
   if (day.dlod != 0.0) {
     u = myb_dd_div(u, myb_dd_add_d(myb_dd_from_double(1.0), day.dlod / 86400.0));
+  }
+  /* past the 86400 label seconds of the last day of the table (it has no step at its end):
+   * the instant is on the day where the table ends, not a label of the last one */
+  if (mjd + 1 >= system->utc_valid_until &&
+      (u.hi > 86400.0 || (u.hi == 86400.0 && u.lo >= 0.0))) {
+    return MYB_E_RANGE;
   }
   /* Whole label seconds and fraction. */
   double whole = __builtin_floor(u.hi);

@@ -109,6 +109,30 @@ static void test_errors(void) {
   MT_CHECK(myb_wgccre_create(pool, 902, NULL, &model, &diag) == MYB_E_FORMAT);
   myb_kpool_destroy(pool);
   myb_wgccre_destroy(NULL);
+
+  /* finite numbers whose terms overflow 3.2 centuries from the epoch: a rotation rate of
+   * 1e306 deg/day and a phase angle of 1e308 deg/century (W or the angle infinite, the
+   * rotation NaN); the model was made, and the void functions returned NaN */
+  static const char* const overflowing[2] = {
+      "\\begindata\nBODY904_POLE_RA = ( 10 )\nBODY904_POLE_DEC = ( 20 )\n"
+      "BODY904_PM = ( 30 1e306 )\n",
+      "\\begindata\nBODY904_POLE_RA = ( 10 )\nBODY904_POLE_DEC = ( 20 )\n"
+      "BODY904_PM = ( 30 360 )\nBODY904_NUT_PREC_RA = ( 1 )\n"
+      "BODY9_NUT_PREC_ANGLES = ( 0 1e308 )\n"};
+  for (int k = 0; k < 2; ++k) {
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_text(pool, overflowing[k], strlen(overflowing[k]), &diag) == MYB_OK);
+    model = NULL;
+    const myb_status status = myb_wgccre_create(pool, 904, NULL, &model, &diag);
+    MT_CHECK(status == MYB_E_FORMAT && model == NULL);
+    if (model != NULL) {
+      myb_rotation rotation;
+      myb_wgccre_rotation(model, myb_time_from_seconds(1e10), &rotation);
+      printf("overflowing model %d: rotation m[0] = %g\n", k, rotation.m[0]);
+      myb_wgccre_destroy(model);
+    }
+    myb_kpool_destroy(pool);
+  }
 }
 
 static void test_rotations(void) {

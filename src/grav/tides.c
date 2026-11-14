@@ -100,6 +100,18 @@ static int finite(double x) {
   return x - x == 0.0;
 }
 
+/* The numbers of a tide kernel and of an ocean tide file (Love numbers, amplitudes, the
+ * coefficients of the pole tides, the parts of the table of admittance, coefficients in units
+ * of 1e-11) are at most 1e20 in magnitude — the conventional ones stay below 1e4. Then every
+ * change of a coefficient is a finite number for every instant myb_time holds, where larger
+ * finite numbers overflowed into infinities (myb_tides_apply stopped the process on them, or
+ * put them into the field). */
+static const double value_max = 1e20;
+
+static int bounded(double x) {
+  return x >= -value_max && x <= value_max;
+}
+
 static myb_status fixed(const myb_kpool* pool, const char* prefix, const char* key, size_t count,
                         double* out, myb_diag* diag) {
   const double* v = NULL;
@@ -112,8 +124,8 @@ static myb_status fixed(const myb_kpool* pool, const char* prefix, const char* k
     return bad(diag, prefix, key, "wrong number of values");
   }
   for (size_t i = 0; i < n; ++i) {
-    if (!finite(v[i])) {
-      return bad(diag, prefix, key, "non-finite value");
+    if (!bounded(v[i])) {
+      return bad(diag, prefix, key, "a value that is not finite or beyond 1e20");
     }
     out[i] = v[i];
   }
@@ -179,7 +191,7 @@ myb_status myb_tides_create(const myb_kpool* pool, const char* prefix,
   for (size_t r = 0; status == MYB_OK && r < n / 5; ++r) {
     const double* row = v + 5 * r;
     if (!(row[0] == 2.0 || row[0] == 3.0) || !(row[1] >= 0.0 && row[1] <= row[0]) ||
-        row[1] != floor(row[1]) || !finite(row[2]) || !finite(row[3]) || !finite(row[4]) ||
+        row[1] != floor(row[1]) || !bounded(row[2]) || !bounded(row[3]) || !bounded(row[4]) ||
         (row[0] == 3.0 && row[4] != 0.0)) {
       status = bad(diag, prefix, "LOVE", "invalid row (n = 2 or 3, 0 <= m <= n; k+ only for n = 2)");
       break;
@@ -318,8 +330,8 @@ static myb_status load_admittance(myb_tides* t, const myb_kpool* pool, const cha
     const double* row = v + 6 * r;
     admittance_row* a = &t->table[r];
     if (!doodson_number(row[0], a->wave) || !doodson_number(row[2], a->pivot[0]) ||
-        !doodson_number(row[4], a->pivot[1]) || !finite(row[1]) || !finite(row[3]) ||
-        !finite(row[5]) || row[3] == 0.0 || row[5] == 0.0) {
+        !doodson_number(row[4], a->pivot[1]) || !bounded(row[1]) || !bounded(row[3]) ||
+        !bounded(row[5]) || row[3] == 0.0 || row[5] == 0.0) {
       return bad(diag, prefix, "ADMITTANCE", "a row that is not three waves with amplitudes");
     }
     /* the rates of the three arguments, in any one unit */
@@ -335,6 +347,10 @@ static myb_status load_admittance(myb_tides* t, const myb_kpool* pool, const cha
     }
     a->part[0] = (rate[2] - rate[0]) / (rate[2] - rate[1]) * row[1] / row[3];
     a->part[1] = (rate[0] - rate[1]) / (rate[2] - rate[1]) * row[1] / row[5];
+    /* pivots of nearly one frequency, or a pivot of a tiny amplitude: no part to take */
+    if (!bounded(a->part[0]) || !bounded(a->part[1])) {
+      return bad(diag, prefix, "ADMITTANCE", "a part of a pivot that is not finite or beyond 1e20");
+    }
   }
   return MYB_OK;
 }
@@ -491,7 +507,7 @@ static myb_status read_waves(const myb_tides* tides, const char* text, size_t si
       double values[6];
       int ok = k == 8;
       for (int i = 0; ok && i < 6; ++i) {
-        ok = number(tok[2 + i], len[2 + i], &values[i]);
+        ok = number(tok[2 + i], len[2 + i], &values[i]) && bounded(values[i]);
       }
       if (!ok || values[0] != floor(values[0]) || values[1] != floor(values[1]) ||
           values[0] < 0.0 || values[1] < 0.0 || values[1] > values[0] ||
@@ -667,11 +683,25 @@ myb_status myb_tides_load_ocean_file(myb_tides* tides, const char* path, int max
 
 /* ---- Application ----------------------------------------------------------------------------- */
 
-static void add(myb_gravity_field* f, int degree, int n, int m, double dc, double ds) {
-  if (n <= degree) {
-    const myb_status status = myb_gravity_field_add_correction(f, n, m, dc, ds);
-    MYB_CHECK(status == MYB_OK);
-  }
+/* The changes of steps 1 to 3 and of the pole tides, collected and checked before the field
+ * changes: at most 11 + 3 + 1 of them. */
+enum { MAX_CHANGES = 16 };
+
+typedef struct change {
+  int n;
+  int m;
+  double dc;
+  double ds;
+} change;
+
+typedef struct changes {
+  change item[MAX_CHANGES];
+  int count;
+} changes;
+
+static void add(changes* list, int n, int m, double dc, double ds) {
+  MYB_CHECK(list->count < MAX_CHANGES);
+  list->item[list->count++] = (change){.n = n, .m = m, .dc = dc, .ds = ds};
 }
 
 myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
@@ -705,6 +735,7 @@ myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
       return MYB_E_DOMAIN;
     }
   }
+  changes list = {.count = 0};
   /* step 1: X_nm - i Y_nm = 1/(2n + 1) sum_j (GM_j / GM)(R / r_j)^(n+1) Pbar_nm e^(-i m lambda) */
   if (flags & MYB_TIDES_SOLID) {
     double x[4][4] = {{0.0}};
@@ -751,16 +782,14 @@ myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
         /* dC - i dS = (kR + i kI)(X - i Y) */
         const double kr = tides->k_re[n][m];
         const double ki = tides->k_im[n][m];
-        add(field, degree, n, m, kr * x[n][m] + ki * y[n][m],
-            m == 0 ? 0.0 : kr * y[n][m] - ki * x[n][m]);
+        add(&list, n, m, kr * x[n][m] + ki * y[n][m], m == 0 ? 0.0 : kr * y[n][m] - ki * x[n][m]);
         if (n == 2 && tides->k_plus[m] != 0.0) {
-          add(field, degree, 4, m, tides->k_plus[m] * x[2][m],
-              m == 0 ? 0.0 : tides->k_plus[m] * y[2][m]);
+          add(&list, 4, m, tides->k_plus[m] * x[2][m], m == 0 ? 0.0 : tides->k_plus[m] * y[2][m]);
         }
       }
     }
     if (remove_permanent) {
-      add(field, degree, 2, 0, -tides->permanent * tides->k_re[2][0], 0.0);
+      add(&list, 2, 0, -tides->permanent * tides->k_re[2][0], 0.0);
     }
   }
   const double centuries = myb_time_seconds(input->t) / seconds_per_century;
@@ -768,9 +797,9 @@ myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
     double v[MYB_POISSON_MAX_SERIES];
     double rates[MYB_POISSON_MAX_SERIES];
     myb_internal_poisson_eval(&tides->step2, centuries, v, rates);
-    add(field, degree, 2, 0, v[0], 0.0);
-    add(field, degree, 2, 1, v[1], v[2]);
-    add(field, degree, 2, 2, v[3], v[4]);
+    add(&list, 2, 0, v[0], 0.0);
+    add(&list, 2, 1, v[1], v[2]);
+    add(&list, 2, 2, v[3], v[4]);
   }
   if (flags & (MYB_TIDES_POLE_SOLID | MYB_TIDES_POLE_OCEAN)) {
     const double years = myb_time_seconds(input->t) / seconds_per_year;
@@ -790,7 +819,21 @@ myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
       dc += c[0] * (m1 + c[1] * m2);
       ds += c[2] * (m2 + c[3] * m1);
     }
-    add(field, degree, 2, 1, dc, ds);
+    add(&list, 2, 1, dc, ds);
+  }
+  /* finite inputs can still give no number (bodies very close or very massive, a polar motion
+   * of 1e306 rad): refused before the field changes, where they once stopped the process */
+  for (int k = 0; k < list.count; ++k) {
+    if (!finite(list.item[k].dc) || !finite(list.item[k].ds)) {
+      return MYB_E_DOMAIN;
+    }
+  }
+  for (int k = 0; k < list.count; ++k) {
+    const change* c = &list.item[k];
+    if (c->n <= degree) {
+      const myb_status status = myb_gravity_field_add_correction(field, c->n, c->m, c->dc, c->ds);
+      MYB_CHECK(status == MYB_OK); /* finite, n and m inside the field */
+    }
   }
   if ((flags & MYB_TIDES_OCEAN) && tides->entry_count > 0) {
     double angle[MYB_POISSON_MAX_ARGUMENTS];

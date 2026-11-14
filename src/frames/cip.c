@@ -43,8 +43,10 @@ static myb_status read_numbers(const myb_kpool* pool, const char* name, size_t e
     return MYB_E_FORMAT;
   }
   for (size_t i = 0; i < n; ++i) {
-    if (!isfinite(v[i])) {
-      myb_internal_diag(diag, 0, "%s: non-finite value", name);
+    /* at most 1e20, as the coefficients of the series: the turns of the ERA (a rate times up
+     * to 1e11 days) and s' stay finite at every instant, where larger rates made them NaN */
+    if (!(fabs(v[i]) <= 1e20)) {
+      myb_internal_diag(diag, 0, "%s: a value that is not finite or beyond 1e20", name);
       return MYB_E_FORMAT;
     }
     out[i] = v[i];

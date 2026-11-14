@@ -122,8 +122,36 @@ static void test_forms(void) {
   myb_kpool_destroy(pool);
 }
 
+/* Quaternions of any finite scale are the same rotation: the norm of components of 1e200
+ * overflowed (the components divided by infinity made the identity, MYB_OK) and that of
+ * components of 1e-200 underflowed (refused as a zero quaternion). */
+static void test_quaternion_scale(void) {
+  static const char text[] = "\\begindata\n"
+                             "TKFRAME_-7_RELATIVE = 'J2000'\nTKFRAME_-7_SPEC = 'QUATERNION'\n"
+                             "TKFRAME_-7_Q = ( 0 1 0 0 )\n"
+                             "TKFRAME_-8_RELATIVE = 'J2000'\nTKFRAME_-8_SPEC = 'QUATERNION'\n"
+                             "TKFRAME_-8_Q = ( 0 1e200 0 0 )\n"
+                             "TKFRAME_-9_RELATIVE = 'J2000'\nTKFRAME_-9_SPEC = 'QUATERNION'\n"
+                             "TKFRAME_-9_Q = ( 0 1e-200 0 0 )\n";
+  myb_kpool* pool = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_text(pool, text, strlen(text), &diag) == MYB_OK);
+  myb_rotation unit;
+  char relative[33];
+  MT_CHECK(myb_tkframe(pool, -7, &unit, relative, &diag) == MYB_OK);
+  MT_CHECK(unit.m[0] == 1.0 && unit.m[4] == -1.0 && unit.m[8] == -1.0); /* 180 deg about x */
+  for (int64_t id = -8; id >= -9; --id) {
+    myb_rotation r;
+    MT_CHECK(myb_tkframe(pool, id, &r, relative, &diag) == MYB_OK);
+    MT_CHECK(memcmp(r.m, unit.m, sizeof r.m) == 0);
+  }
+  myb_kpool_destroy(pool);
+}
+
 int main(void) {
   test_inertial();
   test_forms();
+  test_quaternion_scale();
   return mt_finish("test_tkframe");
 }

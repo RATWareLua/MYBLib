@@ -313,9 +313,78 @@ static void test_pck(void) {
   myb_pck_writer_destroy(writer);
 }
 
+/* ---- Found by review in phase 21 -------------------------------------------------------------- */
+
+/* The uniform rotation, but a NaN rotation at the end of [0, 1000], where max_error is
+ * checked and no node lies. */
+static myb_status hole_orientation(void* context, myb_time t, myb_orientation* orientation) {
+  const myb_status status = turning_orientation(context, t, orientation);
+  if (myb_time_seconds(t) >= 1000.0) {
+    orientation->rotation.m[4] = (double)NAN;
+  }
+  return status;
+}
+
+/* Found by review in phase 21: rates of a damaged file large enough for the derivative of the
+ * rotation to overflow, given with MYB_OK; a writer that accepted what its reader refuses or
+ * reads otherwise — a coverage beyond 2^51 s, parts too short for a positive radius, a name
+ * ending in a blank, raw words whose layout the reader refuses — and a provider's NaN at a
+ * check point of max_error, lost in the comparison. */
+static void test_reviewed_edges(void) {
+  /* type 2 of degree 1: the angles 0 at the midpoint, the first and the third turning at
+   * 1.7e308 rad/s */
+  const double words[12] = {0.0, 1.0, 0.0, 1.7e308, 0.0, 0.0, 0.0, 1.7e308, -1.0, 2.0, 8.0, 1.0};
+  myb_pck_writer* writer = NULL;
+  MT_CHECK(myb_pck_writer_create(NULL, NULL, &writer) == MYB_OK);
+  MT_CHECK(myb_pck_writer_add_raw(writer, 31095, 1, "fast", 2, -1.0, 1.0, words, 12) == MYB_OK);
+  const size_t bytes = myb_pck_writer_size(writer);
+  unsigned char* image = malloc(bytes);
+  MT_CHECK(image != NULL);
+  if (image != NULL) {
+    MT_CHECK(myb_pck_writer_write(writer, image, bytes) == MYB_OK);
+    myb_pck* pck = NULL;
+    myb_diag diag;
+    MT_CHECK(myb_pck_create(NULL, &pck) == MYB_OK);
+    MT_CHECK(myb_pck_load_memory(pck, image, bytes, &diag) == MYB_OK);
+    double angles[3];
+    double rates[3];
+    MT_CHECK(myb_pck_euler(pck, 31095, myb_time_from_seconds(0.0), angles, rates, NULL) ==
+             MYB_OK);
+    MT_CHECK(angles[0] == 0.0 && rates[0] == 1.7e308 && rates[2] == 1.7e308);
+    myb_rotation r;
+    MT_CHECK(myb_pck_rotation(pck, 31095, myb_time_from_seconds(0.0), &r, NULL) == MYB_E_FORMAT);
+    myb_pck_destroy(pck);
+    free(image);
+  }
+  /* what the writer refuses; nothing is added */
+  turning uniform = {.angles = {0.3, 0.4, 1.0}, .rates = {0.0, 0.0, 2.0 * pi / (0.9 * 86400.0)}};
+  MT_CHECK(myb_pck_writer_add_chebyshev(writer, 31094, 1, "far", turning_orientation, &uniform,
+                                        0x1p52, 0x1p52 + 86400.0, 2, 5, NULL) == MYB_E_DOMAIN);
+  MT_CHECK(myb_pck_writer_add_chebyshev(writer, 31094, 1, "short", turning_orientation,
+                                        &uniform, 0.0, 0x1p-1074, 1, 5, NULL) == MYB_E_DOMAIN);
+  MT_CHECK(myb_pck_writer_add_chebyshev(writer, 31094, 1, "blank ", turning_orientation,
+                                        &uniform, 0.0, 86400.0, 2, 5, NULL) == MYB_E_DOMAIN);
+  double error = -1.0;
+  MT_CHECK(myb_pck_writer_add_chebyshev(writer, 31094, 1, "hole", hole_orientation, &uniform,
+                                        0.0, 1000.0, 1, 5, &error) == MYB_E_DOMAIN);
+  const double garbage[3] = {1.0, 2.0, 3.0};
+  MT_CHECK(myb_pck_writer_add_raw(writer, 31094, 1, "garbage", 2, 0.0, 1.0, garbage, 3) ==
+           MYB_E_DOMAIN);
+  MT_CHECK(myb_pck_writer_add_raw(writer, 31094, 1, "far", 2, -0x1p52, 1.0, words, 12) ==
+           MYB_E_DOMAIN);
+  MT_CHECK(myb_pck_writer_size(writer) == bytes);
+  /* a type the reader does not evaluate takes any words; the hole is not asked about without
+   * max_error */
+  MT_CHECK(myb_pck_writer_add_raw(writer, 31094, 1, "other", 7, 0.0, 1.0, garbage, 3) == MYB_OK);
+  MT_CHECK(myb_pck_writer_add_chebyshev(writer, 31094, 1, "hole", hole_orientation, &uniform,
+                                        0.0, 1000.0, 1, 5, NULL) == MYB_OK);
+  myb_pck_writer_destroy(writer);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_raw_copy();
   test_pck();
+  test_reviewed_edges();
   return mt_finish("test_pck_writer");
 }

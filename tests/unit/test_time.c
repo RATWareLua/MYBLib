@@ -244,6 +244,50 @@ static void test_utc(const myb_timesys* s) {
   MT_CHECK(myb_timesys_to_utc(s, from_utc(s, cal(1972, 6, 30, 23, 59, 60.25), "TT", MYB_OK),
                               scale(s, "TT"), &k) == MYB_OK);
   MT_CHECK(k.minute == 59 && k.second == 60.25);
+
+  /* The end of the table: the last second of its last day is a label, two seconds later the
+   * instant is on the day of its expiry (once 23:59:59.999... of the last day with MYB_OK). */
+  const myb_time last = from_utc(s, cal(2027, 6, 27, 23, 59, 59.0), "TAI", MYB_OK);
+  myb_calendar end;
+  MT_CHECK(myb_timesys_to_utc(s, last, scale(s, "TAI"), &end) == MYB_OK && end.second == 59.0);
+  MT_CHECK(myb_timesys_to_utc(s, myb_time_add(last, 2.0), scale(s, "TAI"), &end) == MYB_E_RANGE);
+  MT_CHECK(myb_timesys_to_utc(s, myb_time_add(last, 1.0), scale(s, "TAI"), &end) == MYB_E_RANGE);
+}
+
+/* UTC ahead of its base scale (TAI - UTC < 0, as UTC from GPS before 1980): after 0h of the
+ * base day the UTC day is the next one (it was read as 23:59:59.999... of the base day). */
+static void test_negative_offset(void) {
+  static const char text[] = "\\begindata\nMYB_TIME_SCALES = ( 'TAI' )\nMYB_UTC_BASE = 'TAI'\n"
+                             "MYB_UTC_START_MJD = ( 50000 )\nMYB_UTC_OFFSET = ( -17.0 )\n"
+                             "MYB_UTC_DRIFT_MJD = ( 0.0 )\nMYB_UTC_DRIFT_RATE = ( 0.0 )\n"
+                             "MYB_UTC_VALID_UNTIL_MJD = 60000\n";
+  myb_kpool* pool = NULL;
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_text(pool, text, sizeof text - 1, NULL) == MYB_OK);
+  myb_timesys* system = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_timesys_create(pool, NULL, &system, &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  if (system == NULL) {
+    return;
+  }
+  const double seconds[4] = {0.0, 5.0, 16.5, 17.0};
+  for (int i = 0; i < 4; ++i) {
+    const myb_time t = from_utc(system, cal(2020, 1, 1, 0, 0, seconds[i]), "TAI", MYB_OK);
+    const myb_time expected = myb_time_add(from_cal(cal(2020, 1, 1, 0, 0, 0.0)), seconds[i] - 17.0);
+    MT_CHECK(myb_time_compare(t, expected) == 0);
+    myb_calendar back;
+    MT_CHECK(myb_timesys_to_utc(system, t, scale(system, "TAI"), &back) == MYB_OK);
+    mtest.checks++;
+    if (back.year != 2020 || back.month != 1 || back.day != 1 || back.hour != 0 ||
+        back.minute != 0 || back.second != seconds[i]) {
+      mtest.failures++;
+      fprintf(stderr, "UTC 2020-01-01T00:00:%g read back as %lld-%02d-%02dT%02d:%02d:%.17g\n",
+              seconds[i], (long long)back.year, back.month, back.day, back.hour, back.minute,
+              back.second);
+    }
+  }
+  myb_timesys_destroy(system);
 }
 
 static void test_bad_definitions(void) {
@@ -260,6 +304,16 @@ static void test_bad_definitions(void) {
        MYB_E_FORMAT, "unknown kind"},
       {"\\begindata\nMYB_TIME_SCALES = ( 'A' 'A' )\n", MYB_E_FORMAT, "not a new name"},
       {"\\begindata\nMYB_TIME_SCALES = ( 'A' 'b' )\n", MYB_E_FORMAT, "not a new name"},
+      /* an infinite unit put the series at the argument 0 for every instant */
+      {"\\begindata\nMYB_TIME_SCALES = ( 'TT' 'TDB' )\nMYB_TIME_TDB_FROM = 'TT'\n"
+       "MYB_TIME_TDB_KIND = 'SERIES'\nMYB_TIME_TDB_SERIES = 'X'\nMYB_SERIES_X_UNIT = 1e400\n"
+       "MYB_SERIES_X_TERMS = ( 0 1e-3 1.0 0.0 )\n",
+       MYB_E_FORMAT, "unit"},
+      /* TAI - UTC of 45000 s at the start of the row: the UTC day is not among the three */
+      {"\\begindata\nMYB_TIME_SCALES = ( 'TAI' )\nMYB_UTC_BASE = 'TAI'\n"
+       "MYB_UTC_START_MJD = ( 50000 )\nMYB_UTC_OFFSET = ( 0.0 )\nMYB_UTC_DRIFT_MJD = ( 0.0 )\n"
+       "MYB_UTC_DRIFT_RATE = ( 0.9 )\nMYB_UTC_VALID_UNTIL_MJD = 60000\n",
+       MYB_E_FORMAT, "half a day"},
   };
 
   for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
@@ -399,5 +453,6 @@ int main(void) {
   }
   myb_timesys_destroy(system);
   test_bad_definitions();
+  test_negative_offset();
   return mt_finish("test_time");
 }

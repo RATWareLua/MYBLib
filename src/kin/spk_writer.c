@@ -12,6 +12,7 @@
 
 #include "core/alloc.h"
 #include "core/base.h"
+#include "kin/spk_segment.h"
 #include "myb/ck.h"
 #include "myb/cmath.h"
 #include "myb/frames.h"
@@ -151,8 +152,45 @@ static myb_status reserve(myb_spk_writer* w, size_t extra) {
   return MYB_OK;
 }
 
+/* A segment's name: printable, and not ending in a blank — the reader drops trailing blanks
+ * (they pad the record of the names), so such a name would not read back as written. */
 static int valid_header(const myb_spk_segment_header* h) {
-  return h->name != NULL && printable(h->name, NAME_CHARS);
+  return h->name != NULL && printable(h->name, NAME_CHARS) &&
+         h->name[strlen(h->name) - 1] != ' ';
+}
+
+/* The header of an SPK segment: a body relative to another one (a segment of a body relative
+ * to itself would close the chain of centres on itself, and the reader refuses every state
+ * that needs it). */
+static int valid_spk_header(const myb_spk_segment_header* h) {
+  return valid_header(h) && h->target != h->center;
+}
+
+/* An epoch, or an end of the coverage, as the readers take it: within 2^51 s of J2000 (the
+ * bound of kin/segset.c and kin/spk_segment.c, under which differences of epochs stay exact). */
+static int epoch_ok(double t) {
+  return t >= -0x1p51 && t <= 0x1p51;
+}
+
+/* The polynomials of a Chebyshev record (`components` of n coefficients after the midpoint
+ * and the radius) evaluate within the range of doubles wherever a reader asks them (|x| <= 1):
+ * there the terms of Clenshaw's recurrence stay below S = sum (k + 1) |c_k| and those of its
+ * derivative below n (n + 1) S. With S at most 2^1000 / (4 n^2 scale) — scale the reader's
+ * factor, 1000 from km to m — and, for `derivative` (rates formed from the derivative divided
+ * by the radius), at most that times the radius, the values and the rates stay below 2^1000. */
+static int evaluable(const double* record, int components, int n, double scale, int derivative) {
+  const double radius = record[1];
+  const double limit = 0x1p1000 / (scale * 4.0 * (double)n * (double)n);
+  for (int c = 0; c < components; ++c) {
+    double sum = 0.0;
+    for (int k = 0; k < n; ++k) {
+      sum += (double)(k + 1) * fabs(record[2 + c * n + k]);
+    }
+    if (!(sum <= limit) || (derivative && !(sum <= limit * radius))) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 /* The segment whose `length` words were just appended to the data. */
@@ -176,8 +214,9 @@ myb_status myb_spk_writer_add_states(myb_spk_writer* writer,
                                      const myb_spk_segment_header* header, int type, int degree,
                                      const double* epochs, const double* states, size_t count) {
   MYB_CHECK(writer != NULL && header != NULL && epochs != NULL && states != NULL);
-  if (!valid_header(header) || (type != 9 && type != 13) || degree < 1 || degree > MAX_DEGREE ||
-      (type == 13 && degree % 2 == 0) || count < 2 || count > SIZE_MAX / 64) {
+  if (!valid_spk_header(header) || (type != 9 && type != 13) || degree < 1 ||
+      degree > MAX_DEGREE || (type == 13 && degree % 2 == 0) || count < 2 ||
+      count > SIZE_MAX / 64) {
     return MYB_E_DOMAIN;
   }
   /* type 9: a polynomial through degree + 1 states; type 13 (Hermite): through (degree + 1) / 2
@@ -187,7 +226,7 @@ myb_status myb_spk_writer_add_states(myb_spk_writer* writer,
     return MYB_E_DOMAIN;
   }
   for (size_t k = 0; k < count; ++k) {
-    if (!isfinite(epochs[k]) || (k > 0 && !(epochs[k] > epochs[k - 1]))) {
+    if (!epoch_ok(epochs[k]) || (k > 0 && !(epochs[k] > epochs[k - 1]))) {
       return MYB_E_DOMAIN;
     }
     for (int i = 0; i < 6; ++i) {
@@ -218,13 +257,35 @@ myb_status myb_spk_writer_add_states(myb_spk_writer* writer,
   return MYB_OK;
 }
 
-/* sum c_k T_k(x) by Clenshaw's recurrence. */
+/* The words of a segment pass the validation of its layout that the reader of the file makes
+ * when it loads it (kin/spk_segment.c), for the types it evaluates: every type of
+ * myb_spk_load_memory in an SPK, the types 2, 3 and 20 in a binary PCK; any words for the
+ * others. The words are read where they lie, in the byte order of the host. */
+static int readable(int kind, int type, const double* words, size_t count) {
+  if (kind == KIND_PCK && type != 2 && type != 3 && type != 20) {
+    return 1;
+  }
+  const double one = 1.0;
+  unsigned char bytes[sizeof one];
+  memcpy(bytes, &one, sizeof bytes);
+  myb_internal_spk_segment s;
+  memset(&s, 0, sizeof s);
+  s.daf.data = (const unsigned char*)words;
+  s.daf.words = count;
+  s.daf.big_endian = bytes[0] != 0; /* 1.0 is 3F F0 0 .. 0: its first byte is 0 in little-endian */
+  s.type = type;
+  s.begin = 1;
+  s.end = count;
+  return myb_internal_spk_segment_parse(&s, NULL) == MYB_OK;
+}
+
 myb_status myb_spk_writer_add_raw(myb_spk_writer* writer, const myb_spk_segment_header* header,
                                   int type, double start, double stop, const double* words,
                                   size_t count) {
   MYB_CHECK(writer != NULL && header != NULL && words != NULL);
-  if (!valid_header(header) || type < 1 || !isfinite(start) || !isfinite(stop) ||
-      !(stop >= start) || count < 1) {
+  if (!valid_header(header) || (writer->kind == KIND_SPK && header->target == header->center) ||
+      type < 1 || !epoch_ok(start) || !epoch_ok(stop) || !(stop >= start) || count < 1 ||
+      !readable(writer->kind, type, words, count)) {
     return MYB_E_DOMAIN;
   }
   const myb_status status = reserve(writer, count);
@@ -236,6 +297,7 @@ myb_status myb_spk_writer_add_raw(myb_spk_writer* writer, const myb_spk_segment_
   return MYB_OK;
 }
 
+/* sum c_k T_k(x) by Clenshaw's recurrence. */
 static double chebyshev_value(const double* c, int n, double x) {
   double b1 = 0.0;
   double b2 = 0.0;
@@ -253,9 +315,14 @@ myb_status myb_spk_writer_add_chebyshev(myb_spk_writer* writer,
                                         double stop, size_t intervals, int degree,
                                         double* max_error) {
   MYB_CHECK(writer != NULL && header != NULL && state != NULL);
-  if (!valid_header(header) || (type != 2 && type != 3) || degree < 1 || degree > MAX_DEGREE ||
-      !isfinite(start) || !isfinite(stop) || !(stop > start) || intervals < 1 ||
-      intervals > SIZE_MAX / 4096) {
+  if (!valid_spk_header(header) || (type != 2 && type != 3) || degree < 1 ||
+      degree > MAX_DEGREE || !epoch_ok(start) || !epoch_ok(stop) || !(stop > start) ||
+      intervals < 1 || intervals > SIZE_MAX / 4096) {
+    return MYB_E_DOMAIN;
+  }
+  /* parts long enough for a positive radius, which the reader requires */
+  const double step = (stop - start) / (double)intervals;
+  if (!(0.5 * step > 0.0)) {
     return MYB_E_DOMAIN;
   }
   const int n = degree + 1;             /* coefficients per component, and nodes */
@@ -271,7 +338,6 @@ myb_status myb_spk_writer_add_chebyshev(myb_spk_writer* writer,
   for (int j = 0; j < 4 * n; ++j) {
     cosine[j] = myb_cos(pi * (double)j / (2.0 * (double)n));
   }
-  const double step = (stop - start) / (double)intervals;
   double* d = writer->data + writer->words;
   double worst = 0.0;
   for (size_t interval = 0; interval < intervals; ++interval) {
@@ -307,6 +373,11 @@ myb_status myb_spk_writer_add_chebyshev(myb_spk_writer* writer,
         *d++ = (k == 0 ? 1.0 : 2.0) * sum / (double)n;
       }
     }
+    /* states the reader could not give back in m and m/s (type 2: the velocity is the
+     * derivative over the radius) */
+    if (!evaluable(record, components, n, metres_per_km, type == 2)) {
+      return MYB_E_DOMAIN;
+    }
     if (max_error != NULL) {
       /* between the nodes: at the extrema of T_n, x = cos(pi j / n) */
       for (int j = 0; j <= n; ++j) {
@@ -315,6 +386,13 @@ myb_status myb_spk_writer_add_chebyshev(myb_spk_writer* writer,
         status = state(context, myb_time_from_seconds(mid + radius * x), y);
         if (status != MYB_OK) {
           return status;
+        }
+        /* a state that is not finite is refused here as at the nodes (in the error below its
+         * NaN would fail the comparison and go unreported) */
+        for (int c = 0; c < 6; ++c) {
+          if (!isfinite(y[c])) {
+            return MYB_E_DOMAIN;
+          }
         }
         double square = 0.0;
         for (int c = 0; c < 3; ++c) {
@@ -526,8 +604,13 @@ myb_status myb_pck_writer_add_chebyshev(myb_pck_writer* writer, int32_t frame, i
   MYB_CHECK(writer != NULL && orientation != NULL);
   myb_spk_writer* w = &writer->w;
   const myb_spk_segment_header header = {.target = frame, .center = 0, .frame = base, .name = name};
-  if (!valid_header(&header) || degree < 1 || degree > MAX_DEGREE || !isfinite(start) ||
-      !isfinite(stop) || !(stop > start) || intervals < 1 || intervals > SIZE_MAX / 4096) {
+  if (!valid_header(&header) || degree < 1 || degree > MAX_DEGREE || !epoch_ok(start) ||
+      !epoch_ok(stop) || !(stop > start) || intervals < 1 || intervals > SIZE_MAX / 4096) {
+    return MYB_E_DOMAIN;
+  }
+  /* parts long enough for a positive radius, which the reader requires */
+  const double step = (stop - start) / (double)intervals;
+  if (!(0.5 * step > 0.0)) {
     return MYB_E_DOMAIN;
   }
   const int n = degree + 1;
@@ -541,7 +624,6 @@ myb_status myb_pck_writer_add_chebyshev(myb_pck_writer* writer, int32_t frame, i
   for (int j = 0; j < 4 * n; ++j) {
     cosine[j] = myb_cos(pi * (double)j / (2.0 * (double)n));
   }
-  const double step = (stop - start) / (double)intervals;
   double* d = w->data + w->words;
   double worst = 0.0;
   double last[3] = {0.0, 0.0, 0.0};
@@ -580,6 +662,10 @@ myb_status myb_pck_writer_add_chebyshev(myb_pck_writer* writer, int32_t frame, i
         *d++ = (k == 0 ? 1.0 : 2.0) * sum / (double)n;
       }
     }
+    /* angles and rates (the derivative over the radius) the reader can give back */
+    if (!evaluable(record, 3, n, 1.0, 1)) {
+      return MYB_E_DOMAIN;
+    }
     if (max_error != NULL) {
       /* between the nodes: at the extrema of T_n */
       for (int j = 0; j <= n; ++j) {
@@ -588,6 +674,13 @@ myb_status myb_pck_writer_add_chebyshev(myb_pck_writer* writer, int32_t frame, i
         status = orientation(context, myb_time_from_seconds(mid + radius * x), &o);
         if (status != MYB_OK) {
           return status;
+        }
+        /* a rotation that is not finite is refused here as at the nodes (in the error below
+         * its NaN would fail the comparison and go unreported) */
+        for (int i = 0; i < 9; ++i) {
+          if (!isfinite(o.rotation.m[i])) {
+            return MYB_E_DOMAIN;
+          }
         }
         const double angles[3] = {chebyshev_value(record + 2, n, x),
                                   chebyshev_value(record + 2 + n, n, x),

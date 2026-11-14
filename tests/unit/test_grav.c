@@ -117,6 +117,61 @@ static void test_icgem_errors(void) {
                                              &diag) != MYB_OK);
 }
 
+/* Finite numbers that gave no field: a trend of 1e300 a year (an infinite coefficient after
+ * set_time, NaN potentials with MYB_OK), a period of 1e-310 years (an infinite argument), and
+ * evaluations whose series overflow (a coefficient of 1e300, a point deep inside the reference
+ * sphere, a radius of 1e200 m whose R^2 made the gradient zero) or whose distance did (r of
+ * 1e200 m: the field zero instead of GM / r). */
+static void test_overflow(void) {
+  myb_gravity_field* f = NULL;
+  myb_diag diag = {0};
+  char buf[1024];
+  snprintf(buf, sizeof buf, "%sgfct 2 0 -4.8e-4 0 0 0 20100101\ntrnd 2 0 1e300 0 0 0\n", head);
+  MT_CHECK(load_text(buf, &f, &diag) == MYB_E_FORMAT && diag.line == 7);
+  snprintf(buf, sizeof buf, "%sgfct 2 0 -4.8e-4 0 0 0 20100101\nacos 2 0 1e-11 0 0 0 1e-310\n",
+           head);
+  MT_CHECK(load_text(buf, &f, &diag) == MYB_E_FORMAT && diag.line == 7);
+  snprintf(buf, sizeof buf, "%sgfc 0 0 1e300 0 0 0\n", head);
+  MT_CHECK(load_text(buf, &f, &diag) == MYB_E_FORMAT && diag.line == 6);
+
+  double c[6] = {1.0, 0.0, 0.0, -4.8e-4, 0.0, 2.4e-6};
+  double s[6] = {0.0};
+  const double gm = 3.986004418e14;
+  myb_gravity_work* work = NULL;
+  MT_CHECK(myb_gravity_work_create(2, NULL, &work) == MYB_OK);
+  double potential = 0.0;
+  double a[3];
+  double gradient[9];
+  const double outside[3] = {7.0e6, 1.0e6, -2.0e6};
+  /* a coefficient near the largest doubles: the series overflows */
+  c[0] = 1e300;
+  MT_CHECK(myb_gravity_field_create(gm, 6378136.3, 2, c, s, NULL, &f) == MYB_OK);
+  MT_CHECK(myb_gravity_field_eval(f, work, outside, 0, -1, &potential, a) == MYB_E_DOMAIN);
+  myb_gravity_field_destroy(f);
+  c[0] = 1.0;
+  MT_CHECK(myb_gravity_field_create(gm, 6378136.3, 2, c, s, NULL, &f) == MYB_OK);
+  /* (R / r)^2 of 4e213: the terms of degree 2 overflow */
+  const double deep[3] = {1e-100, 0.0, 0.0};
+  MT_CHECK(myb_gravity_field_eval(f, work, deep, 0, -1, &potential, a) == MYB_E_DOMAIN);
+  /* far away (the squares of the components overflow): GM / r, not zero */
+  const double far[3] = {3e160, 4e160, 0.0};
+  MT_CHECK(myb_gravity_field_eval(f, work, far, 0, -1, &potential, a) == MYB_OK);
+  MT_CHECK(fabs(potential / (gm / 5e160) - 1.0) < 1e-15);
+  MT_CHECK(fabs(a[0] / (-gm / 5e160 / 5e160 * 0.6) - 1.0) < 1e-14);
+  myb_gravity_field_destroy(f);
+  /* R^2 r beyond the doubles: the gradient was zero; of GM / r alone at (r, 0, 0) it is
+   * diag(2, -1, -1) GM / r^3 */
+  const double point[6] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  MT_CHECK(myb_gravity_field_create(1e300, 1e200, 2, point, s, NULL, &f) == MYB_OK);
+  const double near_body[3] = {1.1e200, 0.0, 0.0};
+  MT_CHECK(myb_gravity_field_gradient(f, work, near_body, 0, -1, gradient) == MYB_OK);
+  const double unit = 1e300 / 1.1e200 / 1.1e200 / 1.1e200;
+  MT_CHECK(fabs(gradient[0] / (2.0 * unit) - 1.0) < 1e-13);
+  MT_CHECK(fabs(gradient[8] / -unit - 1.0) < 1e-13);
+  myb_gravity_field_destroy(f);
+  myb_gravity_work_destroy(work);
+}
+
 static myb_time epoch(int y, int mo, int d, int h, int mi) {
   const myb_calendar c = {y, mo, d, h, mi, 0.0};
   myb_time t;
@@ -698,6 +753,7 @@ int main(void) {
   test_mascons();
   test_icgem_egm2008();
   test_icgem_errors();
+  test_overflow();
   test_icgem_time_variable();
   test_closed_forms();
   test_gradient_egm2008();

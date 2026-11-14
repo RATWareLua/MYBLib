@@ -32,7 +32,14 @@ static void use_table(const myb_eop* eop, const myb_timesys* system, myb_scale t
     }
     myb_eop_values values;
     myb_time ut1;
-    (void)myb_eop_at(eop, system, t, tt, &values, &ut1);
+    if (myb_eop_at(eop, system, t, tt, &values, &ut1) == MYB_OK) {
+      /* what the rows can hold: angles below a radian, LOD below a day, UT1 within a day of
+       * TT (and so of UTC, within a day and a minute) */
+      const double all[6] = {values.xp, values.yp, values.dut1, values.lod, values.dx, values.dy};
+      MYB_CHECK(fuzz_finite(all, 6));
+      MYB_CHECK(values.xp > -1.0 && values.xp < 1.0 && values.yp > -1.0 && values.yp < 1.0);
+      MYB_CHECK(values.dut1 > -2.0 * 86400.0 && values.dut1 < 2.0 * 86400.0);
+    }
   }
 }
 

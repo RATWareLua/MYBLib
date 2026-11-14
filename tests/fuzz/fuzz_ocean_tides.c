@@ -38,7 +38,16 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                                    .t = myb_time_from_seconds((double)(int64_t)(hash >> 35)),
                                    .flags = MYB_TIDES_OCEAN | MYB_TIDES_ADMITTANCE,
                                    .permanent = MYB_PERMANENT_TIDE_KEEP};
-    (void)myb_tides_apply(tides, field, &input);
+    if (myb_tides_apply(tides, field, &input) == MYB_OK) {
+      /* the changes of the coefficients are numbers */
+      for (int n = 0; n <= DEGREE; ++n) {
+        for (int m = 0; m <= n; ++m) {
+          double cs[2] = {0.0, 0.0};
+          MYB_CHECK(myb_gravity_field_coefficient(field, n, m, &cs[0], &cs[1]) == MYB_OK);
+          MYB_CHECK(fuzz_finite(cs, 2));
+        }
+      }
+    }
     myb_gravity_field_destroy(field);
   }
   myb_tides_destroy(tides);

@@ -146,6 +146,24 @@ static int usable_row(double mjd, double dut1) {
   return mjd > mjd_j2000 - 1e8 && mjd < mjd_j2000 + 1e8 && dut1 > -86400.0 && dut1 < 86400.0;
 }
 
+/* Angles (polar motion, celestial pole offsets; rad) and an excess length of day (s) that are
+ * one: below a radian and below a day (the IERS values are below an arcsecond and a few
+ * milliseconds; beyond, a row is damaged, and its products in the interpolation could leave
+ * the doubles). A missing value (NaN) passes where the format allows one. */
+static const double angle_max = 1.0;
+static const double lod_max = 86400.0;
+
+static int within(double x, double bound) {
+  return x > -bound && x < bound;
+}
+
+static int usable_values(const row* r) {
+  return within(r->v[1], angle_max) && within(r->v[2], angle_max) &&
+         (r->v[4] != r->v[4] || within(r->v[4], lod_max)) &&
+         (r->v[5] != r->v[5] || within(r->v[5], angle_max)) &&
+         (r->v[6] != r->v[6] || within(r->v[6], angle_max));
+}
+
 static double mjd_of_date(int64_t year, int month, int day, int* ok) {
   const myb_calendar c = {year, month, day, 0, 0, 0.0};
   myb_time t;
@@ -194,7 +212,7 @@ static int parse_line(file_format format, const char* line, size_t length, row* 
     out->v[5] = v[8] * arcsec;
     out->v[6] = v[9] * arcsec;
     out->v[4] = v[12];
-    return 1;
+    return usable_values(out) ? 1 : -1;
   }
   /* finals2000A: fixed columns of the Bulletin A values */
   if (length < 15) {
@@ -226,7 +244,7 @@ static int parse_line(file_format format, const char* line, size_t length, row* 
   out->v[4] = lod * 1e-3;          /* ms -> s; NaN stays NaN */
   out->v[5] = dx * 1e-3 * arcsec;  /* mas -> rad */
   out->v[6] = dy * 1e-3 * arcsec;
-  return 1;
+  return usable_values(out) ? 1 : -1;
 }
 
 static myb_status load(myb_eop* eop, file_format format, const char* text, size_t size,
@@ -457,6 +475,13 @@ myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system, myb_time t,
     v[2] += tide[1];
     offset += tide[2];
     v[4] -= rate[2] / 36525.0; /* LOD = -dUT1/d(day) */
+  }
+  /* what the rows hold, also after the weights (rows a hair apart make them large) and the
+   * tides: UT1 within a day of the scale (an instant myb_time holds), angles below a radian,
+   * the length of day below a day — otherwise the table gives no EOP there */
+  if (!within(offset, 86400.0) || !within(v[1], angle_max) || !within(v[2], angle_max) ||
+      !within(v[4], lod_max) || !within(v[5], angle_max) || !within(v[6], angle_max)) {
+    return MYB_E_RANGE;
   }
   const myb_time u = myb_time_add(t, offset);
   values->xp = v[1];

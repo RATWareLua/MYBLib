@@ -22,8 +22,11 @@ static void use_body(const myb_kpool* pool, int64_t body, uint64_t hash) {
     double angles[3];
     double rates[3];
     myb_wgccre_euler(model, myb_time_from_seconds(seconds[i]), angles, rates);
+    /* a model that was made gives numbers (the functions have no status) */
+    MYB_CHECK(fuzz_finite(angles, 3) && fuzz_finite(rates, 3));
     myb_rotation rotation;
     myb_wgccre_rotation(model, myb_time_from_seconds(seconds[i]), &rotation);
+    MYB_CHECK(fuzz_finite(rotation.m, 9) && fuzz_finite(rotation.dm, 9));
   }
   myb_wgccre_destroy(model);
 }
@@ -34,6 +37,7 @@ static void use_frame(const myb_kpool* pool, int64_t id) {
   myb_diag diag = {0};
   if (myb_tkframe(pool, id, &rotation, relative, &diag) == MYB_OK) {
     MYB_CHECK(strlen(relative) <= 32);
+    MYB_CHECK(fuzz_finite(rotation.m, 9));
   }
   if (id == 0 || id < INT32_MIN || id > INT32_MAX) {
     return;
@@ -42,7 +46,10 @@ static void use_frame(const myb_kpool* pool, int64_t id) {
   MYB_CHECK(myb_frame_graph_create(NULL, NULL, &graph) == MYB_OK);
   if (myb_frame_graph_add_tkframe(graph, pool, (int32_t)id, &diag) == MYB_OK) {
     myb_rotation between;
-    (void)myb_frame_graph_rotation(graph, (int32_t)id, 1, myb_time_from_seconds(0.0), &between);
+    if (myb_frame_graph_rotation(graph, (int32_t)id, 1, myb_time_from_seconds(0.0), &between) ==
+        MYB_OK) {
+      MYB_CHECK(fuzz_finite(between.m, 9));
+    }
   }
   myb_frame_graph_destroy(graph);
 }

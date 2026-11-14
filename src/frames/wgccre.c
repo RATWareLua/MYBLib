@@ -43,7 +43,14 @@ void myb_wgccre_destroy(myb_wgccre* model) {
   myb_internal_release(&a, model);
 }
 
-/* Up to `max` numbers of a variable; *count = 0 if absent. */
+/* The numbers of a model are at most 1e20 in magnitude (degrees, their rates per day or
+ * century, codes, dates; the IAU values stay below 1e7): every angle and rate of
+ * myb_wgccre_euler is then a finite number at every instant myb_time holds (3e6 centuries
+ * from the epoch), where larger ones overflowed to infinities and NaNs that the void
+ * functions handed on as the rotation. */
+static const double value_max = 1e20;
+
+/* The numbers of a variable; *count = 0 if absent. */
 static myb_status optional(const myb_kpool* pool, const char* name, const double** values,
                            size_t* count, myb_diag* diag) {
   const myb_status status = myb_kpool_numbers(pool, name, values, count);
@@ -57,8 +64,8 @@ static myb_status optional(const myb_kpool* pool, const char* name, const double
     return status;
   }
   for (size_t i = 0; i < *count; ++i) {
-    if (!isfinite((*values)[i])) {
-      myb_internal_diag(diag, 0, "%s: non-finite value", name);
+    if (!(fabs((*values)[i]) <= value_max)) {
+      myb_internal_diag(diag, 0, "%s: a value that is not finite or beyond 1e20", name);
       return MYB_E_FORMAT;
     }
   }

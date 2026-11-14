@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
+#include <math.h>
+
 #include "core/alloc.h"
 #include "core/base.h"
 #include "kin/segset.h"
@@ -70,10 +72,18 @@ myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t, myb_rota
   double angles[3];
   double rates[3];
   const myb_status status = myb_pck_euler(pck, id, t, angles, rates, base);
-  if (status == MYB_OK) {
-    myb_rotation_euler313(angles, rates, rotation);
+  if (status != MYB_OK) {
+    return status;
   }
-  return status;
+  myb_rotation_euler313(angles, rates, rotation);
+  /* finite angles and rates, but the rates of a damaged file can be large enough for the sum
+   * of their terms in the derivative of the matrix to leave the range of doubles */
+  for (int i = 0; i < 9; ++i) {
+    if (!isfinite(rotation->m[i]) || !isfinite(rotation->dm[i])) {
+      return MYB_E_FORMAT;
+    }
+  }
+  return MYB_OK;
 }
 
 myb_status myb_pck_rotation_many(const myb_pck* pck, int32_t id, const myb_time* t, size_t count,

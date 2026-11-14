@@ -109,6 +109,20 @@ static myb_status fail(myb_diag* diag, long line, const char* what) {
   return MYB_E_FORMAT;
 }
 
+/* A value of the column `what` that is one: Kp in 0 .. 9 (90 in the tenths of the file), ap
+ * and Ap in 0 .. 400 (the range of the scale), a flux and its means not negative and below
+ * 10^4 sfu (the largest daily fluxes are some 500). A negative or huge number is a damaged
+ * file, which the models of the atmosphere would turn into densities that are not numbers. */
+static int index_value(int what, double value) {
+  if (what < KP + SPANS) {
+    return value >= 0.0 && value <= 90.0;
+  }
+  if (what <= AP_DAILY) {
+    return value >= 0.0 && value <= 400.0;
+  }
+  return value >= 0.0 && value < 1e4;
+}
+
 myb_status myb_space_weather_load(const char* text, size_t size, const myb_allocator* allocator,
                                   myb_space_weather** weather, myb_diag* diag) {
   MYB_CHECK((text != NULL || size == 0) && weather != NULL);
@@ -202,6 +216,8 @@ myb_status myb_space_weather_load(const char* text, size_t size, const myb_alloc
         if (myb_parse_double(field, n, &value, &used) != MYB_OK || used != n ||
             !isfinite(value)) {
           status = fail(diag, line_number, "a field that is not a number");
+        } else if (!index_value(what, value)) {
+          status = fail(diag, line_number, "an index outside its range");
         }
         d->value[what] = what < KP + SPANS ? value / 10.0 : value; /* Kp comes in tenths */
       }
@@ -328,9 +344,14 @@ myb_status myb_space_weather_inputs_at(const myb_space_weather* weather, int64_t
   if (!(seconds >= 0.0) || !(seconds <= 86401.0)) {
     return MYB_E_DOMAIN;
   }
+  /* the day first: then mjd is one of the table (of the years 0 .. 9999), and the days before
+   * it, up to eight, are numbers an int64_t holds (mjd = INT64_MIN overflowed) */
   const day_row* today = find(weather, mjd);
+  if (today == NULL) {
+    return MYB_E_RANGE;
+  }
   const day_row* before = find(weather, mjd - 1);
-  if (today == NULL || before == NULL) {
+  if (before == NULL) {
     return MYB_E_RANGE;
   }
   inputs->f107 = before->value[adjusted ? F107_ADJUSTED : F107_OBSERVED];

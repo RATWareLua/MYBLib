@@ -56,6 +56,206 @@ static double relative(const double a[6], const double b[6], double* dv) {
   return dx / hypot(hypot(b[0], b[1]), b[2]);
 }
 
+/* ---- Found by review in phase 21 -------------------------------------------------------------- */
+
+/* Replaces every occurrence of the double `from` (little-endian IEEE, as the writer stores it)
+ * by `to` in an image; returns how many were replaced. */
+static int replace_double(unsigned char* image, size_t size, double from, double to) {
+  unsigned char a[8];
+  unsigned char b[8];
+  memcpy(a, &from, 8);
+  memcpy(b, &to, 8);
+  int replaced = 0;
+  for (size_t i = 0; i + 8 <= size; i += 8) {
+    if (memcmp(image + i, a, 8) == 0) {
+      memcpy(image + i, b, 8);
+      ++replaced;
+    }
+  }
+  return replaced;
+}
+
+/* The file of a writer in a new block (freed by the caller), *size its bytes. */
+static unsigned char* image_of(const myb_spk_writer* writer, size_t* size) {
+  *size = myb_spk_writer_size(writer);
+  unsigned char* image = *size > 0 ? malloc(*size) : NULL;
+  MT_CHECK(image != NULL);
+  if (image != NULL) {
+    MT_CHECK(myb_spk_writer_write(writer, image, *size) == MYB_OK);
+  }
+  return image;
+}
+
+static myb_status constant_state(void* context, myb_time t, double y[6]) {
+  (void)t;
+  memcpy(y, context, 6 * sizeof(double));
+  return MYB_OK;
+}
+
+/* +-1.5e308 m on either side of the middle of [0, 1]: the polynomial through the nodes
+ * overshoots the steps towards the ends. */
+static myb_status step_state(void* context, myb_time t, double y[6]) {
+  (void)context;
+  const double sign = myb_time_seconds(t) < 0.5 ? -1.0 : 1.0;
+  for (int c = 0; c < 6; ++c) {
+    y[c] = sign * 1.5e308;
+  }
+  return MYB_OK;
+}
+
+/* A constant state, but not a number at the end of [0, 1000], where max_error is checked and
+ * no node lies. */
+static myb_status hole_state(void* context, myb_time t, double y[6]) {
+  (void)context;
+  for (int c = 0; c < 6; ++c) {
+    y[c] = myb_time_seconds(t) >= 1000.0 ? (double)NAN : 7.0e6;
+  }
+  return MYB_OK;
+}
+
+/* Type 15 words: epoch 0, the orbit's pole, the periapsis, p = 7000 km, e = 0.1, the flag of
+ * both precessions, the centre's pole, GM, J2 and the radius of the Earth. */
+static void type15_words(double pole_scale, double periapsis_scale, double centre_scale,
+                         double words[16]) {
+  const double w[16] = {0.0,       0.0, 0.0, pole_scale,   periapsis_scale, 0.0,
+                        0.0,       7000.0, 0.1, 0.0, 0.0, 0.0,
+                        centre_scale, 398600.4418, 1.08262668e-3, 6378.137};
+  memcpy(words, w, sizeof w);
+}
+
+/* Found by review in phase 21: a chain whose state in m overflows (each segment gave finite
+ * km, the product by 1000 did not fit, and the state came with MYB_OK); writers that accepted
+ * what their reader refuses or reads otherwise — epochs and coverage beyond 2^51 s, a body
+ * relative to itself, a name ending in a blank (dropped by the reader), parts too short for a
+ * positive radius, polynomials whose states overflow in the reader, raw words whose layout
+ * the reader refuses; a provider's NaN at a check point of max_error, lost in the comparison;
+ * type 15 poles longer than 1e154 (the square of the norm overflowed) or shorter than 1e-154
+ * (it vanished), refused though only their directions count. */
+static void test_reviewed_edges(void) {
+  /* the metres of a chain: refused, not infinite */
+  {
+    const double epochs[2] = {0.0, 100.0};
+    double states[12];
+    for (int i = 0; i < 12; ++i) {
+      states[i] = 1.234567e5 + (double)i;
+    }
+    myb_spk_writer* writer = NULL;
+    MT_CHECK(myb_spk_writer_create(NULL, NULL, &writer) == MYB_OK);
+    const myb_spk_segment_header h = {-300, 399, 1, "BIG"};
+    MT_CHECK(myb_spk_writer_add_states(writer, &h, 9, 1, epochs, states, 2) == MYB_OK);
+    size_t size = 0;
+    unsigned char* image = image_of(writer, &size);
+    if (image != NULL) {
+      MT_CHECK(replace_double(image, size, states[0] / 1000.0, 1.5e306) == 1);
+      MT_CHECK(replace_double(image, size, states[6] / 1000.0, 1.5e306) == 1);
+      myb_spk* spk = NULL;
+      myb_diag diag;
+      MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+      MT_CHECK(myb_spk_load_memory(spk, image, size, &diag) == MYB_OK);
+      double y[6];
+      MT_CHECK(myb_spk_state(spk, -300, 399, myb_time_from_seconds(0.0), y, NULL) ==
+               MYB_E_FORMAT);
+      MT_CHECK(myb_spk_state(spk, 399, -300, myb_time_from_seconds(50.0), y, NULL) ==
+               MYB_E_FORMAT);
+      myb_spk_destroy(spk);
+      free(image);
+    }
+    myb_spk_writer_destroy(writer);
+  }
+  /* what the writers refuse; nothing is added */
+  {
+    myb_spk_writer* writer = NULL;
+    MT_CHECK(myb_spk_writer_create(NULL, NULL, &writer) == MYB_OK);
+    const myb_spk_segment_header h = {-301, 399, 1, "REFUSED"};
+    const myb_spk_segment_header itself = {-301, -301, 1, "ITSELF"};
+    double still[6] = {7.0e6, 0.0, 0.0, 0.0, 7.5e3, 0.0};
+    const double states[12] = {7.0e6, 0.0, 0.0, 0.0, 7.5e3, 0.0,
+                               7.0e6, 7.5e5, 0.0, 0.0, 7.5e3, 0.0};
+    const double far[2] = {0.0, 0x1p52};
+    const double near[2] = {0.0, 100.0};
+    MT_CHECK(myb_spk_writer_add_states(writer, &h, 9, 1, far, states, 2) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_states(writer, &itself, 9, 1, near, states, 2) == MYB_E_DOMAIN);
+    /* a name that ends in a blank, which the reader drops: "BLANK" would come back */
+    const myb_spk_segment_header blank = {-301, 399, 1, "BLANK "};
+    MT_CHECK(myb_spk_writer_add_states(writer, &blank, 9, 1, near, states, 2) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &h, 2, constant_state, still, 0x1p52,
+                                          0x1p52 + 1000.0, 1, 3, NULL) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &itself, 3, constant_state, still, 0.0,
+                                          1000.0, 1, 3, NULL) == MYB_E_DOMAIN);
+    /* the radius of one part of the smallest span is half the smallest subnormal: zero */
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &h, 3, constant_state, still, 0.0,
+                                          0x1p-1074, 1, 3, NULL) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &h, 2, step_state, NULL, 0.0, 1.0, 1, 3,
+                                          NULL) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &h, 3, step_state, NULL, 0.0, 1.0, 1, 3,
+                                          NULL) == MYB_E_DOMAIN);
+    double error = -1.0;
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &h, 3, hole_state, NULL, 0.0, 1000.0, 1, 3,
+                                          &error) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_chebyshev(writer, &h, 3, hole_state, NULL, 0.0, 1000.0, 1, 3,
+                                          NULL) == MYB_OK);
+    /* raw words: a layout the reader refuses, a type 17 orbit of e = 0.95 (the model ends at
+     * 0.9), a coverage beyond 2^51 s, a body relative to itself; a type the reader does not
+     * evaluate takes any words */
+    const double garbage[3] = {1.0, 2.0, 3.0};
+    const double e95[12] = {0.0, 7000.0, 0.95, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.5};
+    const double e85[12] = {0.0, 7000.0, 0.85, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.5};
+    const size_t before = myb_spk_writer_size(writer);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &h, 2, 0.0, 1.0, garbage, 3) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &h, 17, 0.0, 1.0, e95, 12) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &h, 17, -0x1p52, 1.0, e85, 12) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &itself, 17, 0.0, 1.0, e85, 12) == MYB_E_DOMAIN);
+    MT_CHECK(myb_spk_writer_size(writer) == before);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &h, 17, 0.0, 1.0, e85, 12) == MYB_OK);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &h, 7, 0.0, 1.0, garbage, 3) == MYB_OK);
+    /* and what was accepted loads */
+    size_t size = 0;
+    unsigned char* image = image_of(writer, &size);
+    if (image != NULL) {
+      myb_spk* spk = NULL;
+      myb_diag diag;
+      MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+      MT_CHECK(myb_spk_load_memory(spk, image, size, &diag) == MYB_OK);
+      MT_CHECK(myb_spk_segment_count(spk) == 3);
+      myb_spk_destroy(spk);
+      free(image);
+    }
+    myb_spk_writer_destroy(writer);
+  }
+  /* type 15 poles of any length: the same states as with unit vectors */
+  {
+    double unit[16];
+    double scaled[16];
+    type15_words(1.0, 1.0, 1.0, unit);
+    type15_words(1e200, 1e-200, 1e300, scaled);
+    myb_spk_writer* writer = NULL;
+    MT_CHECK(myb_spk_writer_create(NULL, NULL, &writer) == MYB_OK);
+    const myb_spk_segment_header hu = {-302, 399, 1, "UNIT POLES"};
+    const myb_spk_segment_header hs = {-303, 399, 1, "SCALED POLES"};
+    MT_CHECK(myb_spk_writer_add_raw(writer, &hu, 15, -1.0e5, 1.0e5, unit, 16) == MYB_OK);
+    MT_CHECK(myb_spk_writer_add_raw(writer, &hs, 15, -1.0e5, 1.0e5, scaled, 16) == MYB_OK);
+    size_t size = 0;
+    unsigned char* image = image_of(writer, &size);
+    if (image != NULL) {
+      myb_spk* spk = NULL;
+      myb_diag diag;
+      MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+      MT_CHECK(myb_spk_load_memory(spk, image, size, &diag) == MYB_OK);
+      for (int k = 0; k < 5; ++k) {
+        const myb_time t = myb_time_from_seconds(-1.0e5 + 4.7e4 * k);
+        double a[6] = {0};
+        double b[6] = {1};
+        MT_CHECK(myb_spk_state(spk, -302, 399, t, a, NULL) == MYB_OK);
+        MT_CHECK(myb_spk_state(spk, -303, 399, t, b, NULL) == MYB_OK);
+        MT_CHECK(memcmp(a, b, sizeof a) == 0);
+      }
+      myb_spk_destroy(spk);
+      free(image);
+    }
+    myb_spk_writer_destroy(writer);
+  }
+}
+
 int main(void) {
   orbit o9;
   orbit o13;
@@ -313,5 +513,6 @@ int main(void) {
   if (dump == NULL) {
     remove(path); /* the oracle reads it otherwise */
   }
+  test_reviewed_edges();
   return mt_finish("test_spk_writer");
 }

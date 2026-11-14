@@ -158,8 +158,65 @@ static void test_round_trip(void) {
   MT_CHECK(myb_table_write(NULL, 2, two, 2, small, 10, &length) == MYB_E_OVERFLOW && length == 19);
 }
 
+/* What the writer once wrote and its own reader did not give back: a NaN in a table of one
+ * column (an empty line, passed over), names that split into several fields or read as a row
+ * of numbers, a table of no rows and no names (no line at all). */
+static void test_written_is_read(void) {
+  char text[128];
+  size_t length = 0;
+  static const double column[3] = {1.0, (double)NAN, -2.5};
+  MT_CHECK(myb_table_write(NULL, 1, column, 3, text, sizeof text, &length) == MYB_OK);
+  myb_table* table = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_table_load(text, length, NULL, &table, &diag) == MYB_OK);
+  if (table != NULL) {
+    MT_CHECK(myb_table_rows(table) == 3 && myb_table_columns(table) == 1);
+    if (myb_table_rows(table) == 3) {
+      const double missing = myb_table_row(table, 1)[0];
+      MT_CHECK(myb_table_row(table, 0)[0] == 1.0 && missing != missing &&
+               myb_table_row(table, 2)[0] == -2.5);
+    }
+    myb_table_destroy(table);
+  }
+  /* a table of one NaN alone: still one row */
+  table = NULL;
+  MT_CHECK(myb_table_write(NULL, 1, column + 1, 1, text, sizeof text, &length) == MYB_OK);
+  MT_CHECK(myb_table_load(text, length, NULL, &table, &diag) == MYB_OK);
+  if (table != NULL) {
+    MT_CHECK(myb_table_rows(table) == 1);
+    myb_table_destroy(table);
+  }
+  static const char* const blank[2] = {"x km", "y"};
+  static const char* const comma[2] = {"x,y", "z"};
+  static const char* const comment[2] = {"x", "#y"};
+  static const char* const numbers[2] = {"1", "2e3"};
+  static const char* const empty[1] = {""};
+  static const char* const* const refused[5] = {blank, comma, comment, numbers, empty};
+  static const size_t widths[5] = {2, 2, 2, 2, 1};
+  static const double values[2] = {1.0, 2.0};
+  for (int k = 0; k < 5; ++k) {
+    MT_CHECK(myb_table_write(refused[k], widths[k], values, 1, text, sizeof text, &length) ==
+             MYB_E_DOMAIN);
+  }
+  MT_CHECK(myb_table_write(NULL, 2, values, 0, text, sizeof text, &length) == MYB_E_DOMAIN);
+  /* refused too: an empty name beside a number (a row of a NaN and 1); written: a name that is
+   * a number beside one that is not, and a table of names alone */
+  static const char* const mixed[2] = {"", "1"};
+  static const char* const named[2] = {"t", "1"};
+  MT_CHECK(myb_table_write(mixed, 2, values, 1, text, sizeof text, &length) == MYB_E_DOMAIN);
+  MT_CHECK(myb_table_write(named, 2, values, 0, text, sizeof text, &length) == MYB_OK);
+  table = NULL;
+  MT_CHECK(myb_table_load(text, length, NULL, &table, &diag) == MYB_OK);
+  if (table != NULL) {
+    MT_CHECK(myb_table_rows(table) == 0 && myb_table_columns(table) == 2 &&
+             strcmp(myb_table_name(table, 1), "1") == 0);
+    myb_table_destroy(table);
+  }
+}
+
 int main(void) {
   test_reading();
   test_round_trip();
+  test_written_is_read();
   return mt_finish("test_table");
 }

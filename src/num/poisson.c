@@ -25,6 +25,24 @@ static myb_status bad(myb_diag* diag, const char* name, const char* what) {
   return MYB_E_FORMAT;
 }
 
+/* What a series may hold: coefficients and amplitudes of magnitude at most coefficient_max,
+ * scales and turns in [1 / scale_max, scale_max]. Then every value and rate of a group stays
+ * a finite number (below 1e150, products of two of them below the largest double) for |t| up
+ * to the 3e6 centuries of the instants a myb_time holds, whatever the number of terms; the
+ * conventional series use numbers below 1e10 and scales above 1e-12. Larger finite numbers
+ * are a damaged kernel: their sums overflowed to infinities and NaNs that the callers (void
+ * functions among them) passed on as results. */
+static const double coefficient_max = 1e20;
+static const double scale_max = 1e20;
+
+static int coefficient(double x) {
+  return x >= -coefficient_max && x <= coefficient_max;
+}
+
+static int scale_value(double x) {
+  return x >= 1.0 / scale_max && x <= scale_max;
+}
+
 /* x as an integer in [lo, hi]. */
 static int as_int(double x, int lo, int hi, int* out) {
   if (!(x >= lo && x <= hi) || x != (double)(int)x) {
@@ -60,8 +78,8 @@ static myb_status load_arguments(const myb_kpool* pool, const char* prefix,
   for (int k = 0; k < count; ++k) {
     for (int i = 0; i <= MYB_POISSON_ARGUMENT_DEGREE; ++i) {
       const double c = v[(size_t)k * (MYB_POISSON_ARGUMENT_DEGREE + 1) + (size_t)i];
-      if (!isfinite(c)) {
-        return bad(diag, name, "non-finite coefficient");
+      if (!coefficient(c)) {
+        return bad(diag, name, "coefficient not finite or beyond 1e20");
       }
       g->argument_polynomial[k][i] = c;
     }
@@ -77,8 +95,8 @@ static myb_status load_arguments(const myb_kpool* pool, const char* prefix,
       return bad(diag, name, "expected one value per argument");
     }
     for (int k = 0; k < count; ++k) {
-      if (!(v[k] > 0.0 && v[k] < 1e300)) {
-        return bad(diag, name, "values must be positive and finite");
+      if (!scale_value(v[k])) {
+        return bad(diag, name, "values must be in [1e-20, 1e20]");
       }
       if (which == 0) {
         g->argument_scale[k] = v[k];
@@ -102,8 +120,8 @@ static myb_status load_series(const myb_kpool* pool, const char* prefix, int i,
   if (status != MYB_OK) {
     return status;
   }
-  if (n != 1 || !(v[0] > 0.0 && v[0] < 1e300)) {
-    return bad(diag, name, "expected one positive number");
+  if (n != 1 || !scale_value(v[0])) {
+    return bad(diag, name, "expected one number in [1e-20, 1e20]");
   }
   g->scale[i] = v[0];
   snprintf(name, sizeof name, "%s_POLYNOMIAL", prefix);
@@ -115,8 +133,8 @@ static myb_status load_series(const myb_kpool* pool, const char* prefix, int i,
     return bad(diag, name, "expected 1 .. 9 coefficients");
   }
   for (size_t k = 0; k < n; ++k) {
-    if (!isfinite(v[k])) {
-      return bad(diag, name, "non-finite coefficient");
+    if (!coefficient(v[k])) {
+      return bad(diag, name, "coefficient not finite or beyond 1e20");
     }
     g->polynomial[i][k] = v[k];
   }
@@ -133,9 +151,9 @@ static myb_status load_series(const myb_kpool* pool, const char* prefix, int i,
   for (size_t r = 0; r < n / width; ++r) {
     const double* row = v + r * width;
     int value = 0;
-    if (!as_int(row[0], 0, MYB_POISSON_MAX_POWER, &value) || !isfinite(row[1]) ||
-        !isfinite(row[2])) {
-      return bad(diag, name, "invalid power or amplitude");
+    if (!as_int(row[0], 0, MYB_POISSON_MAX_POWER, &value) || !coefficient(row[1]) ||
+        !coefficient(row[2])) {
+      return bad(diag, name, "invalid power or amplitude (not finite or beyond 1e20)");
     }
     for (int k = 0; k < g->arguments; ++k) {
       if (!as_int(row[3 + k], -MYB_POISSON_MAX_MULTIPLE, MYB_POISSON_MAX_MULTIPLE, &value)) {

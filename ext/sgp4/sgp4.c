@@ -1340,6 +1340,12 @@ static int usable_epoch(double t) {
   return t > -0x1p40 && t < 0x1p40;
 }
 
+/* The farthest an instant is taken from the epoch of the element set it is evaluated with:
+ * 2^32 s, 136 years. The resonance terms of a deep-space orbit are integrated from the epoch
+ * in steps of 720 minutes, so the time of an evaluation grows with the distance: here at most
+ * 10^5 steps, where the coverage of a damaged summary (2^51 s) would take days. */
+static const double farthest_propagation = 0x1p32;
+
 static int as_count(double v, size_t limit, size_t* out) {
   if (!(v >= 0.0 && v <= (double)limit) || v != floor(v)) {
     return 0;
@@ -1408,6 +1414,10 @@ static myb_status set_state(const segment10* g, size_t k, const myb_timesys* sys
   if (myb_spk_segment_data(g->spk, g->index, at, ELEMENTS, e) != MYB_OK || !usable_epoch(e[9])) {
     return MYB_E_FORMAT;
   }
+  const double since_epoch = myb_dd_to_double(myb_time_diff(et, myb_time_from_seconds(e[9])));
+  if (!(fabs(since_epoch) <= farthest_propagation)) {
+    return MYB_E_RANGE;
+  }
   /* the epoch as a UTC Julian date in one double, like SPICE (ttrans TDB -> JDUTC) */
   myb_calendar utc;
   myb_status st = myb_timesys_to_utc(system, myb_time_from_seconds(e[9]), tdb, &utc);
@@ -1435,8 +1445,7 @@ static myb_status set_state(const segment10* g, size_t k, const myb_timesys* sys
   if (st != MYB_OK) {
     return st;
   }
-  const double minutes = myb_dd_to_double(myb_time_diff(et, myb_time_from_seconds(e[9]))) / 60.0;
-  return myb_sgp4_propagate_km(&s, minutes, state, state + 3, NULL);
+  return myb_sgp4_propagate_km(&s, since_epoch / 60.0, state, state + 3, NULL);
 }
 
 myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index, const myb_timesys* system,
@@ -1496,7 +1505,7 @@ myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index, const myb_time
     const double t2 = epoch10(&g, second);
     /* both ends of the blend (the search keeps t1 <= et < t2 whatever the order of the
      * reference values; a NaN or infinite t2 made a NaN weight) */
-    if (!usable_epoch(t1) || !usable_epoch(t2)) {
+    if (!usable_epoch(t1) || !usable_epoch(t2) || !(t2 > t1)) {
       return MYB_E_FORMAT;
     }
     const double numer = myb_dd_to_double(myb_time_diff(et, myb_time_from_seconds(t1)));
@@ -1968,13 +1977,21 @@ myb_status myb_sgp4_spk10_words(const double constants[8], const double* packets
       return MYB_E_DOMAIN;
     }
   }
+  /* what myb_sgp4_spk10_state refuses is not written: the constants of the theory (a radius
+   * and KE that are positive, J2 that is not zero), elements of an ellipse with a positive
+   * mean motion, epochs within 2^40 s of J2000 */
+  if (!(constants[6] > 0.0) || !(constants[3] > 0.0) || constants[0] == 0.0) {
+    return MYB_E_DOMAIN;
+  }
   for (size_t k = 0; k < count; ++k) {
+    const double* p = packets + PACKET_WORDS * k;
     for (size_t i = 0; i < PACKET_WORDS; ++i) {
-      if (!isfinite(packets[PACKET_WORDS * k + i])) {
+      if (!isfinite(p[i])) {
         return MYB_E_DOMAIN;
       }
     }
-    if (k > 0 && !(packets[PACKET_WORDS * k + 9] > packets[PACKET_WORDS * (k - 1) + 9])) {
+    if (!(p[5] >= 0.0 && p[5] < 1.0) || !(p[8] > 0.0) || !usable_epoch(p[9]) ||
+        (k > 0 && !(p[9] > packets[PACKET_WORDS * (k - 1) + 9]))) {
       return MYB_E_DOMAIN;
     }
   }

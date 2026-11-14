@@ -28,8 +28,14 @@
 
 enum {
   MAX_DIGITS = 800,
-  EXPONENT_LIMIT = 100000 /* |written exponent| saturates here; the result is 0 or inf */
+  EXPONENT_LIMIT = 100000 /* |binary exponent| of a hexadecimal number clamped here: 0 or inf */
 };
+
+/* |written exponent| saturates here, far above any count of digits a text in memory can
+ * hold, so that the digits never bring a saturated exponent back into range (with a limit of
+ * 10^5, "1" and 10^5 zeros "e-100001" read as 10, not 1); the sums with the counts of digits
+ * stay far inside int64_t. */
+static const int64_t exponent_saturation = INT64_C(100000000000000000); /* 10^17 */
 
 static const uint64_t two_52 = UINT64_C(1) << 52;
 static const uint64_t two_53 = UINT64_C(1) << 53;
@@ -84,7 +90,7 @@ static int is_marker(char c, const char* markers) {
 }
 
 /* Optional "[marker][+-]digits" at s[*pos]: adds its value to *exponent, saturated at
- * EXPONENT_LIMIT. Consumes nothing unless a digit follows the marker (strtod rule). */
+ * exponent_saturation. Consumes nothing unless a digit follows the marker (strtod rule). */
 static void scan_exponent(const char* s, size_t len, size_t* pos, const char* markers,
                           int64_t* exponent) {
   size_t i = *pos;
@@ -102,10 +108,7 @@ static void scan_exponent(const char* s, size_t len, size_t* pos, const char* ma
   }
   int64_t value = 0;
   for (; i < len && is_digit(s[i]); ++i) {
-    value = value * 10 + (s[i] - '0');
-    if (value > EXPONENT_LIMIT) {
-      value = EXPONENT_LIMIT;
-    }
+    value = value < exponent_saturation / 10 ? value * 10 + (s[i] - '0') : exponent_saturation;
   }
   *exponent += negative ? -value : value;
   *pos = i;

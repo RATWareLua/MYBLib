@@ -61,6 +61,8 @@ typedef struct myb_internal_poisson_group {
 /* Reads the arguments <prefix>_ARGUMENT_COUNT, _ARGUMENT_POLYNOMIAL (5 per argument),
  * _ARGUMENT_SCALE, _ARGUMENT_TURN, and for each name N of `names` the series N_SCALE,
  * N_POLYNOMIAL and N_TERMS (3 + ARGUMENT_COUNT numbers per term: j, a_s, a_c, n_1 ..).
+ * Coefficients and amplitudes are at most 1e20 in magnitude, scales and turns in
+ * [1e-20, 1e20]: then the values and rates stay finite for every t of a myb_time.
  * Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable), MYB_E_NOMEM. */
 [[nodiscard]] myb_status myb_internal_poisson_load(const myb_kpool* pool, const char* prefix,
                                                    const char* const* names, int count,

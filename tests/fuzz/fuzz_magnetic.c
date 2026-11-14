@@ -23,7 +23,9 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   if (degree <= 200 && myb_gravity_work_create(degree, NULL, &work) == MYB_OK) {
     const double r[3] = {7.0e6, -1.0e6, 2.0e6};
     double b[3];
-    (void)myb_magnetic_field_eval(field, work, r, b);
+    if (myb_magnetic_field_eval(field, work, r, b) == MYB_OK) {
+      MYB_CHECK(fuzz_finite(b, 3));
+    }
     myb_gravity_work_destroy(work);
   }
   myb_magnetic_field_destroy(field);

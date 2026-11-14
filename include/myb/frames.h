@@ -86,7 +86,9 @@ MYB_API void myb_rotation_apply_state_many(const myb_rotation* rotations, const 
 typedef struct myb_cip myb_cip;
 
 /* Reads the model <prefix>_* (format in data/frames/iau2006-cip.tk); the pool may be destroyed
- * afterwards. Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable), MYB_E_NOMEM. */
+ * afterwards. Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable; also numbers
+ * that are not finite or beyond 1e20 in magnitude, scales and turns outside [1e-20, 1e20]:
+ * then every value of the model is a finite number at every instant), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_cip_create(const myb_kpool* pool, const char* prefix,
                                                 const myb_allocator* allocator, myb_cip** cip,
                                                 myb_diag* diag);
@@ -157,7 +159,7 @@ MYB_API void myb_eop_destroy(myb_eop* eop); /* accepts NULL */
 
 /* Replace the table (atomically; on error it is unchanged). Errors: MYB_E_FORMAT (diag gives
  * the line), MYB_E_NOMEM, MYB_E_IO for files. Rows must have increasing MJD within 10^8 days
- * of J2000 and UT1 - UTC below a day. */
+ * of J2000, UT1 - UTC and LOD below a day, x, y, dX, dY below a radian. */
 MYB_API MYB_NODISCARD myb_status myb_eop_load_c04(myb_eop* eop, const char* text, size_t size,
                                                   myb_diag* diag);
 MYB_API MYB_NODISCARD myb_status myb_eop_load_c04_file(myb_eop* eop, const char* path,
@@ -179,7 +181,8 @@ MYB_API size_t myb_eop_rows(const myb_eop* eop, double* first, double* last);
 /* EOP at the instant t of `scale` (a scale of `system` that its UTC table converts to, e.g.
  * TT), and the same instant on UT1 (*ut1, seconds since J2000.0 UT1; may be NULL).
  * Errors: MYB_E_RANGE (outside the table or the UTC table, fewer than two rows on either side,
- * missing x, y or UT1 - UTC, rows that interpolate to UT1 more than a day from `scale`),
+ * missing x, y or UT1 - UTC, rows or tides that interpolate to UT1 more than a day from
+ * `scale`, to an LOD beyond a day or to angles beyond a radian),
  * MYB_E_NOT_FOUND (no UTC table). Thread-safe. */
 MYB_API MYB_NODISCARD myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
                                             myb_time t, myb_scale scale, myb_eop_values* values,
@@ -281,7 +284,8 @@ typedef struct myb_wgccre myb_wgccre;
 
 /* The model of body `body` from the kernel variables. Errors: MYB_E_NOT_FOUND (no
  * BODYn_POLE_RA, or phase angles missing while terms need them), MYB_E_FORMAT (wrong counts,
- * more terms than phase angles, an epoch more than 10^8 days from J2000), MYB_E_NOMEM. */
+ * more terms than phase angles, an epoch more than 10^8 days from J2000, a value that is not
+ * finite or beyond 1e20), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
                                                    const myb_allocator* allocator,
                                                    myb_wgccre** model, myb_diag* diag);
@@ -419,17 +423,21 @@ MYB_API void myb_pck_writer_destroy(myb_pck_writer* writer); /* accepts NULL */
  * xp, yp are not used. The angles (myb_rotation_euler313) are followed from node to node:
  * the frame must turn by less than half a revolution between two nodes, and its pole must
  * stay away from the z axis of the base frame, where the angles are not defined (for the
- * Earth the ecliptic frame 17 is the usual base). name: 1 .. 40 printable ASCII characters.
+ * Earth the ecliptic frame 17 is the usual base). name: 1 .. 40 printable ASCII characters,
+ * the last not a blank.
  * *max_error (may be NULL; asking costs degree + 2 more calls a part): the largest angle
  * (rad) between the rotation of the provider and that of the polynomials half-way between
- * the nodes. Errors: MYB_E_DOMAIN (the arguments, a rotation that is not finite, the pole on
- * the z axis), MYB_E_NOMEM, MYB_E_OVERFLOW, the statuses of the provider. */
+ * the nodes. Errors: MYB_E_DOMAIN (the arguments — start and stop within 2^51 s of J2000,
+ * parts long enough for a positive radius —, a rotation that is not finite, the pole on the z
+ * axis, angles or rates the reader could not give back within the range of doubles),
+ * MYB_E_NOMEM, MYB_E_OVERFLOW, the statuses of the provider. */
 MYB_API MYB_NODISCARD myb_status myb_pck_writer_add_chebyshev(
     myb_pck_writer* writer, int32_t frame, int32_t base, const char* name,
     myb_orientation_function orientation, void* context, double start, double stop,
     size_t intervals, int degree, double* max_error);
 
-/* As myb_spk_writer_add_raw: a segment of any type from its words. */
+/* As myb_spk_writer_add_raw: a segment of any type from its words; those of the types 2, 3
+ * and 20, which myb_pck_load_memory evaluates, must pass its validation of their layout. */
 MYB_API MYB_NODISCARD myb_status myb_pck_writer_add_raw(myb_pck_writer* writer, int32_t frame,
                                                         int32_t base, const char* name,
                                                         int type, double start, double stop,

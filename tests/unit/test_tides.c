@@ -572,6 +572,55 @@ static void test_admittance(void) {
   myb_kpool_destroy(pool);
 }
 
+/* Finite numbers whose changes overflowed: a kernel with a permanent tide of 1e200 x 1e200
+ * (made, then -inf k20 reached the MYB_CHECK of the correction and stopped the process), a
+ * polar motion of 1e306 rad and a raiser 1e-100 m from the centre (the same stop). Now the
+ * kernel is refused and the inputs are MYB_E_DOMAIN with the field unchanged. */
+static void test_overflow(void) {
+  static const char love[] = "T_LOVE = ( 2 0 0.30190 0 -0.00089 )\n";
+  myb_kpool* pool = pool_of(love);
+  myb_diag diag = {0};
+  static const char permanent[] = "\\begindata\nT_PERMANENT = ( 1e200 1e200 )\n";
+  MT_CHECK(myb_kpool_load_text(pool, permanent, strlen(permanent), &diag) == MYB_OK);
+  myb_tides* tides = NULL;
+  MT_CHECK(myb_tides_create(pool, "T", NULL, &tides, &diag) == MYB_E_FORMAT && tides == NULL);
+  if (tides != NULL) {
+    myb_gravity_field* f = empty_field(2, "zero_tide");
+    const myb_tides_input in = {.t = utc_like(2025, 6, 1, 0, 0, 0.0), .flags = MYB_TIDES_SOLID,
+                                .permanent = MYB_PERMANENT_TIDE_REMOVE};
+    MT_CHECK(myb_tides_apply(tides, f, &in) == MYB_E_DOMAIN);
+    myb_gravity_field_destroy(f);
+    myb_tides_destroy(tides);
+  }
+  myb_kpool_destroy(pool);
+
+  pool = pool_of(love);
+  tides = NULL;
+  MT_CHECK(myb_tides_create(pool, "T", NULL, &tides, &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  if (tides == NULL) {
+    return;
+  }
+  const myb_tide_raiser moon = {.gm = 4.9028e12, .r = {3.0e8, 2.0e8, 1.0e8}};
+  const myb_tide_raiser inside = {.gm = 4.9028e12, .r = {1e-100, 0.0, 0.0}};
+  const myb_tides_input inputs[2] = {
+      {.raisers = &moon, .count = 1, .t = utc_like(2025, 6, 1, 0, 0, 0.0), .xp = 1e306,
+       .flags = MYB_TIDES_SOLID | MYB_TIDES_FREQUENCY | MYB_TIDES_POLE_SOLID},
+      {.raisers = &inside, .count = 1, .t = utc_like(2025, 6, 1, 0, 0, 0.0),
+       .flags = MYB_TIDES_SOLID}};
+  for (int k = 0; k < 2; ++k) {
+    myb_gravity_field* f = empty_field(4, "tide_free");
+    MT_CHECK(myb_tides_apply(tides, f, &inputs[k]) == MYB_E_DOMAIN);
+    /* unchanged: the steps before the one that overflowed added nothing */
+    double c = 1.0;
+    double s = 1.0;
+    MT_CHECK(myb_gravity_field_coefficient(f, 2, 0, &c, &s) == MYB_OK && c == 0.0 && s == 0.0);
+    MT_CHECK(myb_gravity_field_coefficient(f, 2, 1, &c, &s) == MYB_OK && c == 0.0 && s == 0.0);
+    myb_gravity_field_destroy(f);
+  }
+  myb_tides_destroy(tides);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_addition_theorem();
@@ -579,5 +628,6 @@ int main(void) {
   test_ocean();
   test_iers_kernel();
   test_admittance();
+  test_overflow();
   return mt_finish("test_tides");
 }

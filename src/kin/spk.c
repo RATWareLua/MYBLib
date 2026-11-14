@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
+#include <math.h>
 #include <string.h>
 
 #include "core/alloc.h"
@@ -176,6 +177,14 @@ static myb_status chain_state(const myb_spk* spk, const myb_frame_graph* graph, 
   }
   for (int c = 0; c < 6; ++c) {
     state[c] = 1000.0 * myb_sum_acc_value(&sum[c]); /* km -> m */
+  }
+  /* every segment gave a finite state in km, but the metres, the sum along the chain or a
+   * turn of frame can still leave the range of doubles on a damaged file */
+  for (int c = 0; c < 6; ++c) {
+    if (!isfinite(state[c])) {
+      memset(state, 0, 6 * sizeof *state);
+      return MYB_E_FORMAT;
+    }
   }
   if (frame != NULL) {
     *frame = common_frame;

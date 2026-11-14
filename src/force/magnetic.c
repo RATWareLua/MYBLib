@@ -167,6 +167,19 @@ myb_status myb_magnetic_field_load_table(const char* text, size_t size, double r
       while (nepochs < MAX_EPOCHS && next_number(&r, end, &e)) { /* bound: MAX_EPOCHS */
         epochs[nepochs++] = e;
       }
+      /* finite epochs in increasing order (equal ones divided by zero, decreasing ones chose
+       * the wrong interval) and no more than the table holds (beyond, the last epoch was read
+       * as the secular variation) */
+      int ordered = nepochs >= 1;
+      for (int k = 0; k < nepochs && ordered; ++k) {
+        ordered = isfinite(epochs[k]) && (k == 0 || epochs[k] > epochs[k - 1]);
+      }
+      if (!ordered || (nepochs == MAX_EPOCHS && next_number(&r, end, &e))) {
+        myb_internal_diag(diag, line_number,
+                          "epochs that are not 1 .. %d increasing numbers", MAX_EPOCHS);
+        st = MYB_E_FORMAT;
+        goto fail;
+      }
     } else if (end - q >= 2 && (*q == 'g' || *q == 'h') && (q[1] == ' ' || q[1] == '\t')) {
       if (nepochs < 1) {
         myb_internal_diag(diag, line_number, "coefficients before the header line g/h n m ...");
@@ -184,8 +197,19 @@ myb_status myb_magnetic_field_load_table(const char* text, size_t size, double r
       }
       double values[MAX_EPOCHS + 1];
       int nv = 0;
+      int finite_values = 1;
       while (nv < MAX_EPOCHS + 1 && next_number(&r, end, &values[nv])) { /* bound */
+        finite_values = finite_values && isfinite(values[nv]);
         ++nv;
+      }
+      double extra = 0.0;
+      if (nv == MAX_EPOCHS + 1 && next_number(&r, end, &extra)) {
+        nv = MAX_EPOCHS + 2; /* more values than the epochs and the secular variation */
+      }
+      if (!finite_values) {
+        myb_internal_diag(diag, line_number, "a coefficient that is not a finite number");
+        st = MYB_E_FORMAT;
+        goto fail;
       }
       if (nv != nepochs + 1) {
         myb_internal_diag(diag, line_number,
@@ -194,7 +218,7 @@ myb_status myb_magnetic_field_load_table(const char* text, size_t size, double r
         st = MYB_E_FORMAT;
         goto fail;
       }
-      if (!(year >= epochs[0])) {
+      if (!(year >= epochs[0]) || !isfinite(year)) {
         myb_internal_diag(diag, 0, "year %.3f before the first epoch %.1f", year, epochs[0]);
         st = MYB_E_RANGE;
         goto fail;
@@ -209,6 +233,12 @@ myb_status myb_magnetic_field_load_table(const char* text, size_t size, double r
         }
         const double w = (year - epochs[k]) / (epochs[k + 1] - epochs[k]);
         v = values[k] + w * (values[k + 1] - values[k]);
+      }
+      if (!isfinite(v)) {
+        /* coefficients near the largest doubles, or a year that far beyond the table */
+        myb_internal_diag(diag, line_number, "the coefficient at the year is not a finite number");
+        st = MYB_E_FORMAT;
+        goto fail;
       }
       const int n = (int)nn;
       const int m = (int)mm;

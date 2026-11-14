@@ -29,14 +29,25 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     (void)myb_gravity_field_coefficient(field, n, n / 2, &c, &s);
   }
   myb_gravity_field_set_time(field, myb_time_from_seconds((double)(int64_t)(hash >> 34)));
+  /* the time-variable terms keep the coefficients numbers (set_time has no status) */
+  for (int n = 0; n <= degree; ++n) {
+    for (int m = 0; m <= n; ++m) {
+      double cs[2] = {0.0, 0.0};
+      MYB_CHECK(myb_gravity_field_coefficient(field, n, m, &cs[0], &cs[1]) == MYB_OK);
+      MYB_CHECK(fuzz_finite(cs, 2));
+    }
+  }
   myb_gravity_work* work = NULL;
   if (myb_gravity_work_create(degree, NULL, &work) == MYB_OK) {
     const double r[3] = {1.1 * radius, 0.2 * radius, -0.3 * radius};
-    double potential = 0.0;
-    double a[3];
-    (void)myb_gravity_field_eval(field, work, r, 0, -1, &potential, a);
+    double result[4] = {0.0, 0.0, 0.0, 0.0}; /* the potential and the acceleration */
+    if (myb_gravity_field_eval(field, work, r, 0, -1, &result[0], result + 1) == MYB_OK) {
+      MYB_CHECK(fuzz_finite(result, 4));
+    }
     double gradient[9];
-    (void)myb_gravity_field_gradient(field, work, r, 2, -1, gradient);
+    if (myb_gravity_field_gradient(field, work, r, 2, -1, gradient) == MYB_OK) {
+      MYB_CHECK(fuzz_finite(gradient, 9));
+    }
     myb_gravity_work_destroy(work);
   }
   myb_gravity_field_destroy(field);

@@ -94,8 +94,9 @@ typedef struct myb_scale {
  * table, data/time/utc-tai.tk, is optional). The system copies what it needs: the pool may
  * be destroyed afterwards. Errors: MYB_E_NOT_FOUND (missing variable), MYB_E_FORMAT
  * (inconsistent definitions, e.g. a cycle or an unordered UTC table; offsets and epochs more
- * than 2^40 s from J2000, UTC days beyond 10^8, TAI - UTC beyond 10^6 s or drifting by 1 s a
- * day or more), MYB_E_NOMEM; diag names the offending variable. */
+ * than 2^40 s from J2000, a series unit that is not positive or not below 2^40 s, UTC days
+ * beyond 10^8, TAI - UTC (base scale - UTC) reaching half a day anywhere in the table or
+ * drifting by 1 s a day or more), MYB_E_NOMEM; diag names the offending variable. */
 MYB_API MYB_NODISCARD myb_status myb_timesys_create(const myb_kpool* pool,
                                                     const myb_allocator* allocator,
                                                     myb_timesys** system, myb_diag* diag);
@@ -150,7 +151,9 @@ MYB_API MYB_NODISCARD myb_status myb_timesys_from_utc(const myb_timesys* system,
                                                       const myb_calendar* utc, myb_scale to,
                                                       myb_time* out);
 
-/* Instant on scale `from` -> UTC calendar label (23:59:60.x during a positive leap second). */
+/* Instant on scale `from` -> UTC calendar label (23:59:60.x during a positive leap second).
+ * Errors: MYB_E_RANGE (an instant before the first table row or from the table's expiry date
+ * on), MYB_E_NOT_FOUND (no UTC table), the statuses of myb_timesys_convert. */
 MYB_API MYB_NODISCARD myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t,
                                                     myb_scale from, myb_calendar* utc);
 

@@ -1,0 +1,14 @@
+KPL/PCK
+Regression: finite numbers whose terms overflow. A rotation rate of 1e306 deg/day made W
+infinite a few centuries from the epoch (the model was made, myb_wgccre_rotation gave NaN);
+a quaternion of components 1e200 had an infinite norm (the identity was returned).
+\begindata
+BODY399_POLE_RA = ( 0.0 -0.641 0.0 )
+BODY399_POLE_DEC = ( 90.0 -0.557 0.0 )
+BODY399_PM = ( 190.147 1e306 0.0 )
+FRAME_EARTH_FIXED_TK = 1400000
+TKFRAME_1400000_RELATIVE = 'J2000'
+TKFRAME_1400000_SPEC = 'QUATERNION'
+TKFRAME_1400000_Q = ( 0 1e200 0 0 )
+FRAME_J2000 = 1
+\begintext

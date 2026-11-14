@@ -109,6 +109,35 @@ static void test_errors(void) {
   MT_CHECK(value == 123.0 && used == 3);
 }
 
+/* More digits than a written exponent of 10^5: the saturation of the exponent must not let the
+ * count of digits bring it back (the exponent saturated at 10^5 read these as 10 and 1e-299). */
+static void test_long_mantissas(void) {
+  enum { ZEROS = 120000 };
+  static char text[ZEROS + 64];
+  const char* cases[4][2] = {{"1", "e-120000"},   /* 1 */
+                             {"1", "e-120300"},   /* 1e-300 */
+                             {"0.", "1e+120001"}, /* 10^-120001 * 10^120001 */
+                             {"0x1", "p-480000"}};  /* 16^120000 * 2^-480000 */
+  const double expected[4] = {1.0, 1e-300, 1.0, 1.0};
+  for (int k = 0; k < 4; ++k) {
+    size_t n = 0;
+    memcpy(text, cases[k][0], strlen(cases[k][0]));
+    n += strlen(cases[k][0]);
+    memset(text + n, '0', ZEROS);
+    n += ZEROS;
+    memcpy(text + n, cases[k][1], strlen(cases[k][1]));
+    n += strlen(cases[k][1]);
+    double value = 0.0;
+    size_t used = 0;
+    MT_CHECK(myb_parse_double(text, n, &value, &used) == MYB_OK && used == n);
+    mtest.checks++;
+    if (!mt_same(value, expected[k])) {
+      mtest.failures++;
+      fprintf(stderr, "long mantissa %d: %a, expected %a\n", k, value, expected[k]);
+    }
+  }
+}
+
 /* The decimal separator does not follow the C locale. */
 static void test_locale(void) {
   const char* names[] = {"de_DE.UTF-8", "de_DE", "German_Germany.1252", "ru_RU.UTF-8", "Russian"};
@@ -131,6 +160,7 @@ int main(void) {
   test_values();
   test_partial();
   test_errors();
+  test_long_mantissas();
   test_locale();
   return mt_finish("test_parse");
 }

@@ -86,10 +86,14 @@ MYB_API const char* myb_table_name(const myb_table* table, size_t column);
 MYB_API const double* myb_table_row(const myb_table* table, size_t row);
 
 /* rows x columns values (row by row) as comma-separated text, each the shortest decimal that
- * reads back to the same number, a NaN as an empty field; names (may be NULL): a first row of
- * column names. *length (may be NULL): the characters of the whole text. Errors:
+ * reads back to the same number, a NaN as an empty field ("nan" in a table of one column,
+ * where an empty field would be an empty line); names (may be NULL): a first row of column
+ * names. myb_table_load reads the text back to the same numbers and names (names cut to 31
+ * characters). *length (may be NULL): the characters of the whole text. Errors:
  * MYB_E_OVERFLOW (the buffer; call again with length + 1 bytes), MYB_E_DOMAIN (no columns,
- * more than 1024, a missing name). */
+ * more than 1024, a missing name, a name with a comma, semicolon, tab, blank, line end or '#',
+ * names that are all numbers or empty — a row of values to the reader —, no rows and no
+ * names). */
 MYB_API MYB_NODISCARD myb_status myb_table_write(const char* const* names, size_t columns,
                                                  const double* values, size_t rows,
                                                  char* buffer, size_t size, size_t* length);

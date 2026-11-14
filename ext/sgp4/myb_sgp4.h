@@ -233,7 +233,9 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4,
 /* State (m, m/s) of segment `index` of spk, which must be of type 10, at et (TDB), in J2000
  * relative to the segment's centre. system converts TDB to UTC (scale names "TDB"); equinox
  * gives TEME. Errors: MYB_E_FORMAT (not type 10, inconsistent layout, epochs more than 2^40 s
- * from J2000 or not numbers), MYB_E_RANGE (et outside the UTC table), statuses of the
+ * from J2000 or not numbers, a state beyond the range of doubles), MYB_E_RANGE (et outside the
+ * UTC table, or more than 2^32 s — 136 years — from the epoch of an element set it needs: the
+ * resonance terms of deep space are integrated step by step from the epoch), statuses of the
  * propagation (MYB_E_DOMAIN). */
 MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index,
                                                       const myb_timesys* system,
@@ -261,7 +263,9 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_packet(const myb_tle* tle,
 
 /* The number of words of a segment of `count` element sets (0 if there are none or too
  * many), and the words from the packets (14 each, in the order of their epochs, which must
- * increase). Errors: MYB_E_DOMAIN (no sets, values not finite, epochs not increasing),
+ * increase). Errors: MYB_E_DOMAIN (no sets, values not finite, epochs not increasing — and what
+ * myb_sgp4_spk10_state refuses: a radius or KE that is not positive, J2 = 0, an eccentricity
+ * outside [0, 1), a mean motion that is not positive, an epoch 2^40 s or more from J2000),
  * MYB_E_OVERFLOW (size < myb_sgp4_spk10_size(count)). */
 MYB_EXT_API size_t myb_sgp4_spk10_size(size_t count);
 MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_words(const double constants[8],

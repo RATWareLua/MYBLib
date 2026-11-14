@@ -44,7 +44,8 @@ MYB_API MYB_NODISCARD myb_status myb_gravity_field_create(double gm, double radi
  * max_degree, norm (fully_normalized only), tide_system, format; lines gfc (static), and in
  * format 2.0 gfct (static part with its reference epoch), trnd (rate per year), acos and asin
  * (periodic terms with their period in years). Truncated to degree max_degree (0 = all).
- * Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM. */
+ * Errors: MYB_E_FORMAT (diag gives the line; also coefficients beyond 1e20 in magnitude and
+ * periods shorter than a second), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_gravity_field_load_icgem(const char* text, size_t size,
                                                               int max_degree,
                                                               const myb_allocator* allocator,
@@ -95,7 +96,9 @@ MYB_API void myb_gravity_work_destroy(myb_gravity_work* work); /* accepts NULL *
  * gradient) at the body-fixed position r (m), using the degrees n_min .. n_max (n_max = -1:
  * all; n_min = 2 leaves out the central and the degree-1 terms). potential and a may be NULL.
  * The work must have been created for at least n_max. Errors: MYB_E_DOMAIN (r = 0, r non-finite,
- * degrees outside the field or the work). Thread-safe with one work per thread. */
+ * degrees outside the field or the work, a requested result that is not a finite number: r
+ * deep inside the reference sphere, coefficients near the largest doubles). Thread-safe with
+ * one work per thread. */
 MYB_API MYB_NODISCARD myb_status myb_gravity_field_eval(const myb_gravity_field* field,
                                                         myb_gravity_work* work, const double r[3],
                                                         int n_min, int n_max, double* potential,
@@ -140,15 +143,16 @@ MYB_API MYB_NODISCARD myb_status myb_gravity_field_gradient(const myb_gravity_fi
 
 typedef struct myb_tides myb_tides;
 
-/* Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable), MYB_E_DOMAIN (prefix longer
- * than 20 characters), MYB_E_NOMEM. */
+/* Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable; also numbers beyond 1e20 in
+ * magnitude), MYB_E_DOMAIN (prefix longer than 20 characters), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_tides_create(const myb_kpool* pool, const char* prefix,
                                                   const myb_allocator* allocator,
                                                   myb_tides** tides, myb_diag* diag);
 MYB_API void myb_tides_destroy(myb_tides* tides); /* accepts NULL */
 
 /* Ocean tide coefficients up to max_degree (2 .. 360), replacing those loaded before.
- * Errors: MYB_E_FORMAT (diag gives the line), MYB_E_DOMAIN, MYB_E_NOMEM, MYB_E_IO. */
+ * Errors: MYB_E_FORMAT (diag gives the line; also coefficients beyond 1e20 in the units of
+ * the file, 1e-11), MYB_E_DOMAIN, MYB_E_NOMEM, MYB_E_IO. */
 MYB_API MYB_NODISCARD myb_status myb_tides_load_ocean(myb_tides* tides, const char* text,
                                                       size_t size, int max_degree,
                                                       myb_diag* diag);
@@ -205,8 +209,10 @@ typedef struct myb_tides_input {
 
 /* Adds the selected tidal changes to the field as corrections (myb_gravity_field_add_correction;
  * they last until the next myb_gravity_field_set_time); coefficients above the field's degree
- * are skipped. Errors: MYB_E_DOMAIN (a raiser at the origin, non-finite input, AUTO with a field
- * that is neither zero-tide nor tide-free). */
+ * are skipped. Errors: MYB_E_DOMAIN (a raiser at the origin, non-finite input, changes that
+ * are no finite numbers — raisers very close or very massive, a polar motion beyond the doubles
+ * —, AUTO with a field that is neither zero-tide nor tide-free); on an error the field is
+ * unchanged. */
 MYB_API MYB_NODISCARD myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
                                                  const myb_tides_input* input);
 

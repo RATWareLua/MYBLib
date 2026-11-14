@@ -41,6 +41,8 @@ static void use_models(const myb_kpool* pool, const char* prefix, myb_time t) {
     double xys[3];
     double rates[3];
     myb_cip_xys(cip, t, xys, rates);
+    /* the series of a kernel that was read give numbers (bounded coefficients and scales) */
+    MYB_CHECK(fuzz_finite(xys, 3) && fuzz_finite(rates, 3));
     (void)myb_cip_era(cip, t, NULL);
     (void)myb_cip_sprime(cip, t);
     myb_rotation rotation;

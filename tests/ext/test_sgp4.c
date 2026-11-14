@@ -1091,6 +1091,105 @@ static void test_reviewed_edges(void) {
   printf("SGP4: reviewed edges of the element sets, the conversions, type 10 and the fit\n");
 }
 
+/* Found by review in phase 21: a reference epoch of a type 10 segment that is not a number,
+ * taken as the later end of the blend (every comparison with it fails), gave a NaN state with
+ * MYB_OK; an instant far from the element sets — the end of a damaged coverage — took days
+ * (the resonance terms of deep space integrated in steps of 720 minutes); the writer of the
+ * words accepted sets and constants the reader refuses. */
+static void test_spk10_reviewed_edges(void) {
+  myb_kpool* pool = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  const char* kernels[] = {MYB_DATA_DIR "/time/time-scales.tk", MYB_DATA_DIR "/time/tdb-tt-fb1990.tk",
+                           MYB_DATA_DIR "/time/utc-tai.tk", MYB_DATA_DIR "/frames/iau1980.tk"};
+  for (int i = 0; i < 4; ++i) {
+    MT_CHECK(myb_kpool_load_file(pool, kernels[i], &diag) == MYB_OK);
+  }
+  myb_timesys* sys = NULL;
+  myb_equinox* eq = NULL;
+  MT_CHECK(myb_timesys_create(pool, NULL, &sys, &diag) == MYB_OK);
+  MT_CHECK(myb_equinox_create(pool, "IAU1980", NULL, &eq, &diag) == MYB_OK);
+  myb_kpool_destroy(pool);
+  myb_spk* spk = NULL;
+  MT_CHECK(myb_spk_create(NULL, &spk) == MYB_OK);
+  MT_CHECK(myb_spk_load_file(spk, MYB_TEST_DATA_DIR "/spk/t10.bsp", &diag) == MYB_OK);
+  if (sys == NULL || eq == NULL || spk == NULL || myb_spk_segment_count(spk) != 2) {
+    MT_CHECK(0);
+    myb_spk_destroy(spk);
+    myb_equinox_destroy(eq);
+    myb_timesys_destroy(sys);
+    return;
+  }
+  /* the deep-space segment (three sets): its words, damaged, as the second segment of a copy
+   * whose first is the segment intact */
+  enum { MOST_WORDS = 256 };
+  double words[MOST_WORDS];
+  double packets[3 * 14];
+  myb_spk_segment_info info;
+  myb_spk_segment(spk, 1, &info);
+  const size_t size = myb_spk_segment_size(spk, 1);
+  MT_CHECK(size <= MOST_WORDS && myb_spk_segment_data(spk, 1, 0, size, words) == MYB_OK);
+  const size_t references = (size_t)words[size - 17 + 5];
+  const size_t sets = (size_t)words[size - 17 + 6];
+  MT_CHECK(sets >= 2 && sets <= 3 && references + sets <= size);
+  for (size_t k = 0; k < sets; ++k) {
+    memcpy(packets + 14 * k, words + 8 + 15 * k + 1, 14 * sizeof(double));
+  }
+  const double between = 0.5 * (words[references] + words[references + 1]);
+  myb_spk_writer* writer = NULL;
+  MT_CHECK(myb_spk_writer_create(NULL, NULL, &writer) == MYB_OK);
+  const myb_spk_segment_header header = {
+      .target = info.target, .center = info.center, .frame = info.frame, .name = info.name};
+  MT_CHECK(myb_spk_writer_add_raw(writer, &header, 10, info.start, info.stop, words, size) ==
+           MYB_OK);
+  words[references + 1] = (double)NAN;
+  MT_CHECK(myb_spk_writer_add_raw(writer, &header, 10, info.start, info.stop, words, size) ==
+           MYB_OK);
+  /* the intact words again, over a coverage that begins 2^33 s (272 years) before them */
+  words[references + 1] = packets[14 + 9];
+  MT_CHECK(myb_spk_writer_add_raw(writer, &header, 10, info.start - 0x1p33, info.stop, words,
+                                  size) == MYB_OK);
+  const size_t bytes = myb_spk_writer_size(writer);
+  unsigned char* image = malloc(bytes);
+  MT_CHECK(image != NULL);
+  if (image != NULL) {
+    MT_CHECK(myb_spk_writer_write(writer, image, bytes) == MYB_OK);
+    myb_spk* copy = NULL;
+    MT_CHECK(myb_spk_create(NULL, &copy) == MYB_OK);
+    MT_CHECK(myb_spk_load_memory(copy, image, bytes, &diag) == MYB_OK);
+    double state[6];
+    const myb_time t = myb_time_from_seconds(between);
+    MT_CHECK(myb_sgp4_spk10_state(copy, 0, sys, eq, t, state) == MYB_OK);
+    MT_CHECK(isfinite(state[0]) && isfinite(state[5]));
+    MT_CHECK(myb_sgp4_spk10_state(copy, 1, sys, eq, t, state) == MYB_E_FORMAT);
+    MT_CHECK(myb_sgp4_spk10_state(copy, 2, sys, eq, t, state) == MYB_OK);
+    MT_CHECK(myb_sgp4_spk10_state(copy, 2, sys, eq, myb_time_from_seconds(info.start - 0x1p33),
+                                  state) == MYB_E_RANGE);
+    myb_spk_destroy(copy);
+    free(image);
+  }
+  myb_spk_writer_destroy(writer);
+  /* the words of what the reader refuses: not written */
+  double rebuilt[MOST_WORDS];
+  MT_CHECK(myb_sgp4_spk10_words(words, packets, sets, rebuilt, MOST_WORDS) == MYB_OK);
+  double constants[8];
+  memcpy(constants, words, sizeof constants);
+  constants[6] = -constants[6]; /* the radius */
+  MT_CHECK(myb_sgp4_spk10_words(constants, packets, sets, rebuilt, MOST_WORDS) == MYB_E_DOMAIN);
+  static const int which_word[4] = {5, 5, 8, 9};
+  static const double damage[4] = {1.0, -0.1, 0.0, 0x1p41};
+  for (int i = 0; i < 4; ++i) {
+    double* word = &packets[14 * (sets - 1) + (size_t)which_word[i]];
+    const double keep = *word;
+    *word = damage[i];
+    MT_CHECK(myb_sgp4_spk10_words(words, packets, sets, rebuilt, MOST_WORDS) == MYB_E_DOMAIN);
+    *word = keep;
+  }
+  myb_spk_destroy(spk);
+  myb_equinox_destroy(eq);
+  myb_timesys_destroy(sys);
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   run_verification();
@@ -1099,6 +1198,7 @@ int main(void) {
   test_modes();
   test_spk10();
   test_spk10_writer();
+  test_spk10_reviewed_edges();
   test_fit();
   test_reviewed_edges();
   return mt_finish("test_sgp4");

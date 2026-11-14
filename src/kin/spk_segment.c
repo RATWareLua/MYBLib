@@ -945,9 +945,11 @@ static myb_status parse_type15(myb_internal_spk_segment* s, myb_diag* diag) {
       return format_error(diag, s, "non-finite element");
     }
   }
+  /* the poles and the periapsis are directions: their lengths by the scaled norm, which neither
+   * overflows for components beyond 1e154 nor vanishes for components below 1e-154 */
   if (!epoch_ok(w[0]) || !positive(w[7]) || !(w[8] >= 0.0) || !positive(w[13]) ||
-      !positive(myb_vec3_norm(w + 1)) || !positive(myb_vec3_norm(w + 4)) ||
-      !positive(myb_vec3_norm(w + 10))) {
+      !positive(myb_vec3_norm_scaled(w + 1)) || !positive(myb_vec3_norm_scaled(w + 4)) ||
+      !positive(myb_vec3_norm_scaled(w + 10))) {
     return format_error(diag, s, "elements outside the model (p > 0, e >= 0, GM > 0, poles)");
   }
   return MYB_OK;
@@ -984,9 +986,9 @@ static myb_status state_type15(const myb_internal_spk_segment* s, myb_time t, do
   double orbit_pole[3];
   double periapsis[3];
   double centre_pole[3];
-  const double n1 = myb_vec3_norm(w + 1);
-  const double n4 = myb_vec3_norm(w + 4);
-  const double n10 = myb_vec3_norm(w + 10);
+  const double n1 = myb_vec3_norm_scaled(w + 1);
+  const double n4 = myb_vec3_norm_scaled(w + 4);
+  const double n10 = myb_vec3_norm_scaled(w + 10);
   for (int i = 0; i < 3; ++i) {
     orbit_pole[i] = w[1 + i] / n1;
     periapsis[i] = w[4 + i] / n4;

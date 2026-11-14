@@ -24,10 +24,21 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   /* bound: at most 512 + 2 days */
   for (int64_t mjd = first - 1; mjd <= last + 1; mjd += step) {
     myb_space_weather_day day;
-    (void)myb_space_weather_day_at(weather, mjd, &day);
+    if (myb_space_weather_day_at(weather, mjd, &day) == MYB_OK) {
+      /* a value is missing (NaN) or inside its scale */
+      for (int k = 0; k < 8; ++k) {
+        MYB_CHECK(day.kp[k] != day.kp[k] || (day.kp[k] >= 0.0 && day.kp[k] <= 9.0));
+        MYB_CHECK(day.ap[k] != day.ap[k] || (day.ap[k] >= 0.0 && day.ap[k] <= 400.0));
+      }
+      MYB_CHECK(day.f107_observed != day.f107_observed || day.f107_observed >= 0.0);
+    }
     for (int i = 0; i < 4; ++i) {
       myb_space_weather_inputs inputs;
-      (void)myb_space_weather_inputs_at(weather, mjd, seconds[i], i & 1, &inputs);
+      if (myb_space_weather_inputs_at(weather, mjd, seconds[i], i & 1, &inputs) == MYB_OK) {
+        const double given[3] = {inputs.f107, inputs.f107_average, inputs.ap};
+        MYB_CHECK(fuzz_finite(given, 3) && fuzz_finite(inputs.ap_history, 7));
+        MYB_CHECK(inputs.f107 >= 0.0 && inputs.ap >= 0.0);
+      }
     }
   }
   myb_space_weather_destroy(weather);

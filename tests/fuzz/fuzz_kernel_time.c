@@ -37,6 +37,10 @@ static void use_system(const myb_timesys* system, uint64_t hash) {
     if (found[i]) {
       myb_calendar utc;
       if (myb_timesys_to_utc(system, t, scales[i], &utc) == MYB_OK) {
+        /* a label: of a day the table covers, a second that is a number */
+        MYB_CHECK(utc.hour >= 0 && utc.hour <= 23 && utc.minute >= 0 && utc.minute <= 59);
+        MYB_CHECK(utc.second >= 0.0 && fuzz_finite(&utc.second, 1));
+        MYB_CHECK(utc.minute == 59 || utc.second < 60.0);
         myb_time back;
         (void)myb_timesys_from_utc(system, &utc, scales[i], &back);
       }

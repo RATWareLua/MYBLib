@@ -167,7 +167,8 @@ MYB_API MYB_NODISCARD myb_status myb_spk_writer_create(const char* internal_name
 MYB_API void myb_spk_writer_destroy(myb_spk_writer* writer); /* accepts NULL */
 
 /* What a segment describes: target relative to center in the frame (NAIF codes, 1 = J2000);
- * name: its identifier, 1 .. 40 printable ASCII characters. */
+ * name: its identifier, 1 .. 40 printable ASCII characters, the last not a blank (readers drop
+ * trailing blanks). */
 typedef struct myb_spk_segment_header {
   int32_t target;
   int32_t center;
@@ -178,9 +179,10 @@ typedef struct myb_spk_segment_header {
 /* A segment of count >= 2 states at increasing epochs, interpolated by Lagrange polynomials of
  * the given degree through degree + 1 states (type 9), or by Hermite polynomials of the given
  * odd degree through (degree + 1) / 2 states with their velocities (type 13). degree: 1 .. 27.
- * At the epochs themselves both give the states back. Errors: MYB_E_DOMAIN (the header, the
- * type, the degree, fewer states than the window, epochs not increasing, values not finite),
- * MYB_E_NOMEM, MYB_E_OVERFLOW. */
+ * At the epochs themselves both give the states back. Errors: MYB_E_DOMAIN (the header — also
+ * a target equal to its centre —, the type, the degree, fewer states than the window, epochs
+ * not increasing or more than 2^51 s from J2000, values not finite), MYB_E_NOMEM,
+ * MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_states(myb_spk_writer* writer,
                                                            const myb_spk_segment_header* header,
                                                            int type, int degree,
@@ -194,7 +196,11 @@ MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_states(myb_spk_writer* write
  * and the velocity. *max_error (may be NULL; asking costs degree + 2 more calls of the
  * provider per part): the largest distance (m) between the provider and the polynomials
  * half-way between the nodes — to choose the degree and the number of parts. Errors:
- * MYB_E_DOMAIN (as above, stop <= start, a state not finite), the statuses of the provider. */
+ * MYB_E_DOMAIN (as above, stop <= start, parts too short for a positive radius, a state not
+ * finite, polynomials a reader could not evaluate within the range of doubles: the sum of
+ * (k + 1) |c_k| over the coefficients of a component, in km, above 2^1000 / (4000 (degree +
+ * 1)^2) — for type 2, whose velocity is the derivative, above that times the half-length of a
+ * part in s), the statuses of the provider. */
 MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_chebyshev(
     myb_spk_writer* writer, const myb_spk_segment_header* header, int type,
     myb_state_function state, void* context, double start, double stop, size_t intervals,
@@ -204,9 +210,11 @@ MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_chebyshev(
  * them): copies, parts and merges of files, and the types that are not built here — 1 and
  * 21, the difference arrays of an integrator, which only that integrator produces; 10,
  * two-line elements (myb_sgp4_spk10_words of ext/sgp4 lays them out); 5, 8, 12, 14, 17 - 20.
- * The words are written as given: nothing is converted or checked against the type.
- * Errors: MYB_E_DOMAIN (the header, type < 1, stop < start, no words), MYB_E_NOMEM,
- * MYB_E_OVERFLOW. */
+ * The words are written as given, nothing converted; those of a type myb_spk_load_memory
+ * evaluates must pass the validation of their layout it makes when it loads the file.
+ * Errors: MYB_E_DOMAIN (the header — also a target equal to its centre —, type < 1, start or
+ * stop more than 2^51 s from J2000, stop < start, no words, words of an evaluated type that
+ * the reader would refuse), MYB_E_NOMEM, MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_raw(myb_spk_writer* writer,
                                                         const myb_spk_segment_header* header,
                                                         int type, double start, double stop,

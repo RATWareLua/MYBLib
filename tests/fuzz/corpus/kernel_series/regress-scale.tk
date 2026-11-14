@@ -1,0 +1,20 @@
+KPL/MISC
+Regression: a Poisson series whose scale (below 1e300, as once required) times its
+polynomial overflows: X of the pole was infinite, myb_cip_xys returned it.
+\begindata
+T_ARGUMENT_COUNT = 1
+T_ARGUMENT_POLYNOMIAL = ( 0 1717915923.2178 0 0 0 )
+T_ARGUMENT_SCALE = ( 4.848136811095359935899141D-6 )
+T_ARGUMENT_TURN = ( 1296000 )
+T_X_SCALE = 1e299
+T_X_POLYNOMIAL = ( 1e10 )
+T_X_TERMS = ( 0 1 0 1 )
+T_Y_SCALE = 1D-6
+T_Y_POLYNOMIAL = ( 0 )
+T_Y_TERMS = ( 0 1 0 1 )
+T_S_SCALE = 1D-6
+T_S_POLYNOMIAL = ( 0 )
+T_S_TERMS = ( 0 1 0 1 )
+T_ERA = ( 0.7790572732640 0.00273781191135448 )
+T_SPRIME_RATE = ( -47.0 )
+\begintext

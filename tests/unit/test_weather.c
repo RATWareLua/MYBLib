@@ -111,6 +111,22 @@ static void test_layouts(void) {
   MT_CHECK(load("", &w, &diag) == MYB_E_FORMAT);
   MT_CHECK(myb_space_weather_load_file(MYB_TEST_DATA_DIR "/weather/none.csv", NULL, &w, &diag) ==
            MYB_E_IO);
+  /* indices outside their scales, once kept and handed to the models: a negative flux, a Kp of
+   * 9.5, an ap of 1e300 */
+  static const char* const outside[3] = {"DATE,F10.7_OBS\n2000-01-01,-70\n",
+                                         "DATE,KP1\n2000-01-01,95\n",
+                                         "DATE,AP3\n2000-01-01,1e300\n"};
+  for (int k = 0; k < 3; ++k) {
+    w = NULL;
+    MT_CHECK(load(outside[k], &w, &diag) == MYB_E_FORMAT && diag.line == 2 && w == NULL);
+    myb_space_weather_destroy(w);
+  }
+  /* the day asked first: the day before INT64_MIN was an overflow */
+  w = NULL;
+  MT_CHECK(load(mixed, &w, &diag) == MYB_OK);
+  myb_space_weather_inputs inputs;
+  MT_CHECK(myb_space_weather_inputs_at(w, INT64_MIN, 0.0, 0, &inputs) == MYB_E_RANGE);
+  myb_space_weather_destroy(w);
 }
 
 /* What a model of the upper atmosphere is asked with: the day, the time, the place and the

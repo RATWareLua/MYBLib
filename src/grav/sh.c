@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Spherical-harmonic gravity fields: storage, ICGEM files, time-variable terms, evaluation. */
+#include <float.h>
 #include <math.h>
 #include <stdckdint.h>
 #include <stdio.h>
@@ -331,7 +332,9 @@ myb_status myb_gravity_field_eval(const myb_gravity_field* field, myb_gravity_wo
   MYB_CHECK(field != NULL && work != NULL && r != NULL);
   const myb_gravity_field* f = field;
   const int top = n_max < 0 ? f->degree : n_max;
-  const double rr = myb_vec3_norm(r);
+  /* scaled where the squares would overflow (a distance of 1e154 m and more was infinite: the
+   * direction lost, the field zero) */
+  const double rr = myb_vec3_norm_scaled(r);
   if (!myb_vec3_finite(r) || !(rr > 0.0) || n_min < 0 || top > f->degree ||
       top > work->degree || n_min > top + 1) {
     return MYB_E_DOMAIN;
@@ -426,17 +429,23 @@ myb_status myb_gravity_field_eval(const myb_gravity_field* field, myb_gravity_wo
     }
   }
   const double k = f->gm / rr;
+  const double v = k * v_sum;
+  const double g = k / rr;
+  const double gr = -g * r_sum;
+  const double gphi = g * phi_sum;
+  const double glambda = g * lambda_sum;
+  const double acceleration[3] = {gr * u * cl - gphi * t * cl - glambda * sl,
+                                  gr * u * sl - gphi * t * sl + glambda * cl, gr * t + gphi * u};
+  /* deep inside the reference sphere ((R / r)^n beyond the doubles) or with coefficients
+   * that large, the series is no number: no result rather than infinities */
+  if ((potential != NULL && !isfinite(v)) || (a != NULL && !myb_vec3_finite(acceleration))) {
+    return MYB_E_DOMAIN;
+  }
   if (potential != NULL) {
-    *potential = k * v_sum;
+    *potential = v;
   }
   if (a != NULL) {
-    const double g = k / rr;
-    const double gr = -g * r_sum;
-    const double gphi = g * phi_sum;
-    const double glambda = g * lambda_sum;
-    a[0] = gr * u * cl - gphi * t * cl - glambda * sl;
-    a[1] = gr * u * sl - gphi * t * sl + glambda * cl;
-    a[2] = gr * t + gphi * u;
+    memcpy(a, acceleration, sizeof acceleration);
   }
   return MYB_OK;
 }
@@ -544,7 +553,7 @@ myb_status myb_gravity_field_gradient(const myb_gravity_field* field, myb_gravit
   MYB_CHECK(field != NULL && work != NULL && r != NULL && gradient != NULL);
   const myb_gravity_field* f = field;
   const int source_top = n_max < 0 ? f->degree : n_max;
-  const double rr = myb_vec3_norm(r);
+  const double rr = myb_vec3_norm_scaled(r);
   if (!myb_vec3_finite(r) || !(rr > 0.0) || n_min < 0 || source_top > f->degree ||
       source_top > work->degree || n_min > source_top + 1 ||
       source_top + GRADIENT_SHIFT > MAX_DEGREE) {
@@ -601,13 +610,22 @@ myb_status myb_gravity_field_gradient(const myb_gravity_field* field, myb_gravit
       sum[k] += (part[k][0] * cm[m] + part[k][1] * sm[m]) * scale_down;
     }
   }
-  /* the series are potentials of GM / R^2: (GM / R^2) / r times the sums */
-  const double scale = f->gm / (f->radius * f->radius * rr);
+  /* the series are potentials of GM / R^2: (GM / R^2) / r times the sums — where the divisor
+   * R^2 r leaves the normal doubles (a radius of 1e154 m made it infinite and the gradient
+   * zero) the quotients one after the other */
+  const double divisor = f->radius * f->radius * rr;
+  const double scale = divisor >= DBL_MIN && isfinite(divisor)
+                           ? f->gm / divisor
+                           : f->gm / rr / f->radius / f->radius;
   const double zz = scale * sum[0];
   const double xz = scale * sum[1];
   const double yz = scale * sum[2];
   const double q = scale * sum[3];
   const double xy = scale * sum[4];
+  if (!isfinite(zz) || !isfinite(xz) || !isfinite(yz) || !isfinite(q) || !isfinite(xy) ||
+      !isfinite(q - zz) || !isfinite(q + zz)) {
+    return MYB_E_DOMAIN; /* as the potential: no number */
+  }
   gradient[0] = 0.5 * (q - zz);
   gradient[1] = xy;
   gradient[2] = xz;
@@ -709,6 +727,12 @@ static myb_status fail(myb_diag* diag, long line, const char* what) {
   myb_internal_diag(diag, line, "ICGEM: %s", what);
   return MYB_E_FORMAT;
 }
+
+/* The coefficients of a file (static, trends per year, amplitudes) are at most 1e20 in
+ * magnitude (fully normalised ones stay below 1): then the time-variable terms, a trend times
+ * up to 3e8 years from its epoch, keep every effective coefficient finite at every instant
+ * myb_time holds — myb_gravity_field_set_time has no status to refuse an overflow with. */
+static const double icgem_coefficient_max = 1e20;
 
 myb_status myb_gravity_field_load_icgem(const char* text, size_t size, int max_degree,
                                         const myb_allocator* allocator, myb_gravity_field** field,
@@ -827,7 +851,8 @@ myb_status myb_gravity_field_load_icgem(const char* text, size_t size, int max_d
     double sv = 0.0;
     if (k < 5 || !number(tok[1], len[1], &nd) || !number(tok[2], len[2], &md) ||
         !number(tok[3], len[3], &cv) || !number(tok[4], len[4], &sv) || nd != floor(nd) ||
-        md != floor(md) || md < 0.0 || md > nd || nd > (double)MAX_DEGREE) {
+        md != floor(md) || md < 0.0 || md > nd || nd > (double)MAX_DEGREE ||
+        !(fabs(cv) <= icgem_coefficient_max) || !(fabs(sv) <= icgem_coefficient_max)) {
       myb_gravity_field_destroy(f);
       return fail(diag, cur.number, "malformed coefficient line");
     }
@@ -862,7 +887,10 @@ myb_status myb_gravity_field_load_icgem(const char* text, size_t size, int max_d
     term->period = 0.0;
     if (!trnd) {
       double years = 0.0;
-      if (k < 8 || !number(tok[7], len[7], &years) || !(years > 0.0)) {
+      /* a period of a second at least, and finite: an infinite one made the term constant,
+       * one of 1e-300 years an infinite argument (a NaN coefficient) */
+      if (k < 8 || !number(tok[7], len[7], &years) || !(years * seconds_per_year >= 1.0) ||
+          !finite(years * seconds_per_year)) {
         myb_gravity_field_destroy(f);
         return fail(diag, cur.number, "periodic term without a valid period (years)");
       }

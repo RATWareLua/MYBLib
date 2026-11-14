@@ -192,6 +192,71 @@ static void test_errors(const myb_timesys* sys, myb_scale tt) {
   myb_eop_destroy(NULL);
 }
 
+/* Damaged rows and tides whose values, finite, were no EOP: polar motion of 1e300" read and
+ * interpolated with MYB_OK; tides of 1e20 x 1e20 added to x (1e40 rad, MYB_OK) or to UT1 (an
+ * instant beyond myb_time: the process stopped); tides of 1e10 x 1e299 (infinite x, MYB_OK). */
+static void test_damaged(const myb_timesys* sys, myb_scale tt) {
+  char text[1024];
+  size_t length = 0;
+  for (int k = 0; k < 6; ++k) {
+    length += (size_t)snprintf(text + length, sizeof text - length,
+                               "2016  12  %2d   0  %d.00    1e300    0.266098  -0.3940414   "
+                               "-0.000001   -0.000336   -0.001164   -0.000310   0.0012548\n",
+                               18 + k, 57740 + k);
+  }
+  myb_eop* eop = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_eop_create(NULL, &eop) == MYB_OK);
+  MT_CHECK(myb_eop_load_c04(eop, text, length, &diag) == MYB_E_FORMAT && diag.line == 1);
+  myb_eop_destroy(eop);
+
+  static const char* const overrides[3] = {
+      "\\begindata\nIERS10_EOPT_XP_SCALE = 1e20\nIERS10_EOPT_XP_POLYNOMIAL = ( 1e20 )\n",
+      "\\begindata\nIERS10_EOPT_UT1_SCALE = 1e20\nIERS10_EOPT_UT1_POLYNOMIAL = ( 1e20 )\n",
+      "\\begindata\nIERS10_EOPT_XP_SCALE = 1e299\nIERS10_EOPT_XP_POLYNOMIAL = ( 1e10 )\n"};
+  for (int k = 0; k < 3; ++k) {
+    eop = load_eop(0, 0);
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/frames/eop-tides.tk", &diag) == MYB_OK);
+    MT_CHECK(myb_kpool_load_text(pool, overrides[k], strlen(overrides[k]), &diag) == MYB_OK);
+    const myb_status set = myb_eop_set_tides(eop, pool, "IERS10_EOPT", &diag);
+    myb_kpool_destroy(pool);
+    if (k == 2) {
+      MT_CHECK(set == MYB_E_FORMAT); /* a scale beyond 1e20 */
+    } else {
+      MT_CHECK(set == MYB_OK);
+      myb_eop_values v;
+      myb_time ut1;
+      MT_CHECK(myb_eop_at(eop, sys, tt_of_mjd(sys, tt, 57745.5), tt, &v, &ut1) == MYB_E_RANGE);
+    }
+    myb_eop_destroy(eop);
+  }
+
+  /* the model of the pole: a rate of the ERA of 1e306 (its turns infinite 25 years from
+   * J2000: the angle of the void myb_cip_era NaN) and a scale of X of 1e299 (X near the
+   * largest double, its rate infinite) were read */
+  static const char* const pole[2] = {"\\begindata\nIAU2006A_ERA = ( 0.7790572732640 1e306 )\n",
+                                      "\\begindata\nIAU2006A_X_SCALE = 1e299\n"};
+  for (int k = 0; k < 2; ++k) {
+    myb_kpool* pool = NULL;
+    MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+    MT_CHECK(myb_kpool_load_file(pool, MYB_DATA_DIR "/frames/iau2006-cip.tk", &diag) == MYB_OK);
+    MT_CHECK(myb_kpool_load_text(pool, pole[k], strlen(pole[k]), &diag) == MYB_OK);
+    myb_cip* cip = NULL;
+    MT_CHECK(myb_cip_create(pool, "IAU2006A", NULL, &cip, &diag) == MYB_E_FORMAT && cip == NULL);
+    if (cip != NULL) {
+      double xys[3];
+      double rates[3];
+      myb_cip_xys(cip, myb_time_from_seconds(8e8), xys, rates);
+      printf("damaged model of the pole %d: ERA %g, X %g, dX/dt %g\n", k,
+             myb_cip_era(cip, myb_time_from_seconds(8e8), NULL), xys[0], rates[0]);
+      myb_cip_destroy(cip);
+    }
+    myb_kpool_destroy(pool);
+  }
+}
+
 /* The series of the pole at equal steps against the series themselves. */
 static void test_table(void) {
   myb_kpool* pool = NULL;
@@ -286,6 +351,7 @@ int main(void) {
   test_finals(sys, tt);
   test_errors(sys, tt);
   test_table();
+  test_damaged(sys, tt);
   myb_timesys_destroy(sys);
   return mt_finish("test_eop");
 }

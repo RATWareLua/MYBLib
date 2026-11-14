@@ -150,15 +150,30 @@ myb_status myb_tkframe(const myb_kpool* pool, int64_t id, myb_rotation* rotation
     if (status != MYB_OK) {
       return status;
     }
-    const double n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-    if (!(n > 0.0)) {
-      myb_internal_diag(diag, 0, "%s: zero quaternion", name);
-      return MYB_E_FORMAT;
+    /* where the squares would overflow or lose digits, the components over the largest first:
+     * the plain sum of squares overflowed for 1e154 and more (every component then divided by
+     * infinity: the identity, MYB_OK) and vanished below 1e-162 (a valid quaternion refused
+     * as zero); elsewhere the plain norm, bit for bit as before */
+    double u[4] = {q[0], q[1], q[2], q[3]};
+    double n = sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2] + u[3] * u[3]);
+    if (!(n >= 0x1p-511 && n <= 0x1p+511)) {
+      double largest = 0.0;
+      for (int i = 0; i < 4; ++i) {
+        largest = fmax(largest, fabs(q[i]));
+      }
+      if (!(largest > 0.0)) {
+        myb_internal_diag(diag, 0, "%s: zero quaternion", name);
+        return MYB_E_FORMAT;
+      }
+      for (int i = 0; i < 4; ++i) {
+        u[i] = q[i] / largest;
+      }
+      n = sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2] + u[3] * u[3]);
     }
-    const double c = q[0] / n;
-    const double x = q[1] / n;
-    const double y = q[2] / n;
-    const double z = q[3] / n;
+    const double c = u[0] / n;
+    const double x = u[1] / n;
+    const double y = u[2] / n;
+    const double z = u[3] / n;
     /* SPICE q2m: the matrix rotating vectors by the quaternion's angle about its axis */
     const double m[9] = {1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - c * z), 2.0 * (x * z + c * y),
                          2.0 * (x * y + c * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - c * x),

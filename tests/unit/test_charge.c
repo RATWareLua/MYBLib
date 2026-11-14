@@ -110,6 +110,37 @@ static void test_igrf(void) {
            MYB_E_RANGE);
   MT_CHECK(myb_magnetic_field_load_table("g 1 0 1.0\n", 10, 6371.2e3, 2000.0, NULL, &none,
                                          &diag) == MYB_E_FORMAT);
+  /* damaged tables, once read with MYB_OK into a wrong field or refused as a range or domain
+   * error: equal epochs (a division by zero between them), decreasing epochs (the intervals
+   * chosen wrongly), a NaN coefficient, coefficients whose difference overflows, more epochs
+   * than the 64 kept (the 65th value read as the secular variation) */
+  static const char* const damaged[4] = {
+      "g/h n m 1990.0 1990.0 SV\ng 1 0 -29775 -29692 10\n",
+      "g/h n m 2000.0 1990.0 SV\ng 1 0 -29619 -29775 10\n",
+      "g/h n m 1990.0 2000.0 SV\ng 1 0 nan -29692 10\n",
+      "g/h n m 1990.0 2000.0 SV\ng 1 0 -1.7e308 1.7e308 10\n"};
+  for (int k = 0; k < 4; ++k) {
+    MT_CHECK(myb_magnetic_field_load_table(damaged[k], strlen(damaged[k]), 6371.2e3, 1995.0, NULL,
+                                           &none, &diag) == MYB_E_FORMAT && none == NULL);
+    myb_magnetic_field_destroy(none);
+    none = NULL;
+  }
+  {
+    char many[2048];
+    size_t n = (size_t)snprintf(many, sizeof many, "g/h n m");
+    for (int k = 0; k < 66; ++k) {
+      n += (size_t)snprintf(many + n, sizeof many - n, " %d", 1900 + k);
+    }
+    n += (size_t)snprintf(many + n, sizeof many - n, " SV\ng 1 0");
+    for (int k = 0; k < 67; ++k) {
+      n += (size_t)snprintf(many + n, sizeof many - n, " %d", k == 66 ? 999 : -30000);
+    }
+    n += (size_t)snprintf(many + n, sizeof many - n, "\n");
+    MT_CHECK(myb_magnetic_field_load_table(many, n, 6371.2e3, 2000.0, NULL, &none, &diag) ==
+             MYB_E_FORMAT && none == NULL);
+    myb_magnetic_field_destroy(none);
+    none = NULL;
+  }
   myb_magnetic_field_destroy(field);
   myb_gravity_work_destroy(work);
   free(table);

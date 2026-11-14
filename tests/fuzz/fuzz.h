@@ -53,6 +53,17 @@ static inline int fuzz_instant(double seconds, myb_time* t) {
   return 1;
 }
 
+/* 1 when the n values are all finite: a reader that returns MYB_OK returns numbers, never an
+ * infinity or a NaN that a damaged file overflowed into. */
+static inline int fuzz_finite(const double* values, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (!(values[i] - values[i] == 0.0)) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* FNV-1a of the input: parameters of a harness (a degree, an instant) are drawn from it, so
  * that the seeds stay the files themselves and every input still reaches several settings. */
 static inline uint64_t fuzz_hash(const uint8_t* data, size_t size) {

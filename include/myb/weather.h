@@ -33,7 +33,8 @@ extern "C" {
 typedef struct myb_space_weather myb_space_weather;
 
 /* Errors: MYB_E_FORMAT (diag gives the line: no DATE column, a date or a number that is not
- * one, days out of order), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
+ * one, an index outside its range — Kp 0 .. 9, ap and Ap 0 .. 400, fluxes 0 .. 10^4 sfu —,
+ * days out of order), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
 MYB_API MYB_NODISCARD myb_status myb_space_weather_load(const char* text, size_t size,
                                                         const myb_allocator* allocator,
                                                         myb_space_weather** weather,
