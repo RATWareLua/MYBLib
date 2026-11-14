@@ -54,7 +54,8 @@ typedef struct myb_sclk myb_sclk;
  * SCLK_PARTITION_START, SCLK_PARTITION_END, SCLK01_COEFFICIENTS and, optionally,
  * SCLK01_TIME_SYSTEM. What is needed is copied. Errors: MYB_E_NOT_FOUND (a variable),
  * MYB_E_FORMAT (a type other than 1, inconsistent values, a time of the table more than
- * 2^40 s from J2000; diag tells which), MYB_E_NOMEM. */
+ * 2^40 s from J2000, a table that starts at negative ticks, partitions whose ticks add up
+ * beyond the largest double; diag tells which), MYB_E_NOMEM. */
 MYB_API MYB_NODISCARD myb_status myb_sclk_create(const myb_kpool* pool, int64_t id,
                                                  const myb_allocator* allocator, myb_sclk** sclk,
                                                  myb_diag* diag);
@@ -83,8 +84,8 @@ MYB_API MYB_NODISCARD myb_status myb_sclk_encode(const myb_sclk* sclk, const cha
 /* Encoded ticks (rounded to a whole tick) -> the string with the partition, every field at
  * the width of its largest value. *length (may be NULL): its characters without the NUL;
  * text may be NULL with size 0 to ask for the length alone (then MYB_E_OVERFLOW). Errors:
- * MYB_E_RANGE (ticks outside the partitions, a field of more than 18 digits), MYB_E_OVERFLOW
- * (the buffer). */
+ * MYB_E_RANGE (ticks outside the partitions, a field of more than 18 digits or negative — by
+ * a negative offset — which no clock string can hold), MYB_E_OVERFLOW (the buffer). */
 MYB_API MYB_NODISCARD myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text,
                                                  size_t size, size_t* length);
 
@@ -131,8 +132,8 @@ typedef struct myb_ck_pointing {
  * within the tolerance is taken — inside an interval of types 2 and 3 at the instant asked,
  * elsewhere at the nearest instant of the segment. need_rate != 0 passes over segments
  * without angular velocities. Errors: MYB_E_RANGE (no segment gives one), MYB_E_DOMAIN (a
- * negative or non-finite tolerance), MYB_E_FORMAT (data that turn out invalid).
- * Thread-safe. */
+ * negative or non-finite tolerance), MYB_E_FORMAT (data that turn out invalid, among them an
+ * answer that would not be finite); on an error *pointing is left as it was. Thread-safe. */
 MYB_API MYB_NODISCARD myb_status myb_ck_pointing_at(const myb_ck* ck, int32_t instrument,
                                                     double ticks, double tolerance,
                                                     int need_rate, myb_ck_pointing* pointing);
@@ -175,8 +176,9 @@ typedef struct myb_ck_segment_header {
  * instants only; type 3 interpolates inside the intervals that begin at the ticks
  * `interval_starts` (increasing, each one of `ticks`, the first of them the first tick;
  * NULL: one interval of them all). Errors: MYB_E_DOMAIN (the header, the type, ticks not
- * increasing, a zero quaternion, values not finite, interval starts that are not among the
- * ticks), MYB_E_NOMEM, MYB_E_OVERFLOW. */
+ * increasing, a zero quaternion, values not finite, an angular velocity whose magnitude is
+ * not a finite number, interval starts that are not among the ticks), MYB_E_NOMEM,
+ * MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_pointings(
     myb_ck_writer* writer, const myb_ck_segment_header* header, int type, const double* ticks,
     const double* quaternions, const double* rates, size_t count,
@@ -199,8 +201,11 @@ MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_intervals(
  * three of the angular velocity; 1 .. 19 each, the last three 0 without rates), the
  * coefficients of the intervals one after another, of the components of an interval one
  * after another, from the term T0 on (taken with its full weight). The quaternion is made
- * unit after the sum. Errors: MYB_E_DOMAIN (the header, counts, intervals, values not
- * finite), MYB_E_NOMEM, MYB_E_OVERFLOW. */
+ * unit after the sum. Errors: MYB_E_DOMAIN (the header, counts, intervals — also one whose
+ * middle or half-length is not a finite number or whose half-length is zero —, values not
+ * finite, a series that could exceed the largest double: the sum of the magnitudes of its
+ * coefficients, or the magnitude of the vector of those sums of the angular velocity, beyond
+ * it), MYB_E_NOMEM, MYB_E_OVERFLOW. */
 MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_chebyshev(
     myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
     const double* stops, const int* counts, const double* coefficients, size_t count,

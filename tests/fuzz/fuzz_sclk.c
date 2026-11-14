@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Spacecraft clock kernels (myb_sclk_create over a text kernel): the clock the input defines
  * converts ticks to times and back at the ends of its partitions, and clock strings — fixed
- * ones and each line of the input — to ticks and back. */
+ * ones and each line of the input — to ticks and back; ticks given with MYB_OK are finite and
+ * not negative, and what decode writes is read by encode. */
 #include <math.h>
 
 #include "fuzz.h"
@@ -13,15 +14,22 @@ MYB_FUZZ_NO_INITIALIZE
 static void use_ticks(const myb_sclk* sclk, double ticks) {
   myb_time t;
   if (myb_sclk_to_time(sclk, ticks, &t) == MYB_OK) {
+    MYB_CHECK(isfinite(t.f));
     double back = 0.0;
-    (void)myb_sclk_from_time(sclk, t, &back);
+    if (myb_sclk_from_time(sclk, t, &back) == MYB_OK) {
+      MYB_CHECK(isfinite(back) && back >= 0.0);
+    }
   }
   char text[128];
   size_t length = 0;
   if (myb_sclk_decode(sclk, ticks, text, sizeof text, &length) == MYB_OK) {
     MYB_CHECK(length == strlen(text));
+    /* what decode writes is a clock string (beyond 2^53 ticks its count may fall outside the
+     * partition when read back, never outside the syntax) */
     double back = 0.0;
-    (void)myb_sclk_encode(sclk, text, length, &back);
+    const myb_status status = myb_sclk_encode(sclk, text, length, &back);
+    MYB_CHECK(status != MYB_E_FORMAT);
+    MYB_CHECK(status != MYB_OK || (isfinite(back) && back >= 0.0));
   }
   char tiny[4];
   (void)myb_sclk_decode(sclk, ticks, tiny, sizeof tiny, &length);
@@ -36,6 +44,7 @@ static void use_clock(const myb_sclk* sclk, const uint8_t* data, size_t size) {
   for (size_t i = 0; i < sizeof strings / sizeof strings[0]; ++i) {
     double ticks = 0.0;
     if (myb_sclk_encode(sclk, strings[i], strlen(strings[i]), &ticks) == MYB_OK) {
+      MYB_CHECK(isfinite(ticks) && ticks >= 0.0);
       use_ticks(sclk, ticks);
     }
   }
@@ -44,6 +53,7 @@ static void use_clock(const myb_sclk* sclk, const uint8_t* data, size_t size) {
   for (size_t k = 0; k < 64 && fuzz_line(data, size, k, line, sizeof line); ++k) {
     double ticks = 0.0;
     if (myb_sclk_encode(sclk, line, strlen(line), &ticks) == MYB_OK) {
+      MYB_CHECK(isfinite(ticks) && ticks >= 0.0);
       use_ticks(sclk, ticks);
     }
   }
@@ -52,8 +62,8 @@ static void use_clock(const myb_sclk* sclk, const uint8_t* data, size_t size) {
     use_ticks(sclk, probes[i]);
     myb_time t;
     double ticks = 0.0;
-    if (fuzz_instant(probes[i] * 1.0e-3, &t)) {
-      (void)myb_sclk_from_time(sclk, t, &ticks);
+    if (fuzz_instant(probes[i] * 1.0e-3, &t) && myb_sclk_from_time(sclk, t, &ticks) == MYB_OK) {
+      MYB_CHECK(isfinite(ticks) && ticks >= 0.0);
     }
   }
 }

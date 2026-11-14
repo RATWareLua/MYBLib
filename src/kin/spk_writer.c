@@ -666,14 +666,32 @@ void myb_ck_writer_destroy(myb_ck_writer* writer) {
   }
 }
 
-/* A quaternion made unit into out; 0 for one that is zero or not finite. */
+static int finite4(const double q[4]) {
+  return isfinite(q[0]) && isfinite(q[1]) && isfinite(q[2]) && isfinite(q[3]);
+}
+
+/* A quaternion made unit into out; 0 for one that is zero or not finite. Any finite scale is
+ * taken, as the reader takes it: where the squares of the plain norm (whose bits are kept)
+ * would overflow or lose digits the quaternion is divided by its largest component first. */
 static int unit_quaternion(const double q[4], double out[4]) {
-  const double n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  double n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  double scaled[4] = {q[0], q[1], q[2], q[3]};
+  if (!(n >= 0x1p-511 && n <= 0x1p+511)) {
+    const double largest = fmax(fmax(fabs(q[0]), fabs(q[1])), fmax(fabs(q[2]), fabs(q[3])));
+    if (!finite4(q) || !(largest > 0.0)) {
+      return 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+      scaled[i] = q[i] / largest;
+    }
+    n = sqrt(scaled[0] * scaled[0] + scaled[1] * scaled[1] + scaled[2] * scaled[2] +
+             scaled[3] * scaled[3]);
+  }
   if (!(n > 0.0) || !isfinite(n)) {
     return 0;
   }
   for (int i = 0; i < 4; ++i) {
-    out[i] = q[i] / n;
+    out[i] = scaled[i] / n;
   }
   return 1;
 }
@@ -702,8 +720,12 @@ myb_status myb_ck_writer_add_pointings(myb_ck_writer* writer,
   }
   for (size_t k = 0; k < count; ++k) {
     double q[4];
+    /* an angular velocity of a finite magnitude, as the reader takes it (the derivative of the
+     * matrix overflowed) */
     if (!isfinite(ticks[k]) || (k > 0 && !(ticks[k] > ticks[k - 1])) ||
-        !unit_quaternion(quaternions + 4 * k, q) || (rates != NULL && !finite3(rates + 3 * k))) {
+        !unit_quaternion(quaternions + 4 * k, q) ||
+        (rates != NULL &&
+         (!finite3(rates + 3 * k) || !isfinite(myb_vec3_norm_scaled(rates + 3 * k))))) {
       return MYB_E_DOMAIN;
     }
   }
@@ -835,8 +857,14 @@ myb_status myb_ck_writer_add_chebyshev(myb_ck_writer* writer,
   size_t total = 0;   /* coefficients */
   size_t largest = 0; /* packet */
   for (size_t k = 0; k < count; ++k) {
+    /* the middle and the half-length of the interval as the reader takes them: numbers, the
+     * half-length above zero (an interval near the largest double or of the least length was
+     * written and its file refused) */
+    const double mid = 0.5 * (starts[k] + stops[k]);
+    const double radius = 0.5 * (stops[k] - starts[k]);
     if (!isfinite(starts[k]) || !isfinite(stops[k]) || !(stops[k] > starts[k]) ||
-        (k > 0 && !(starts[k] >= stops[k - 1]))) {
+        (k > 0 && !(starts[k] >= stops[k - 1])) || !isfinite(mid) || !isfinite(radius) ||
+        !(radius > 0.0)) {
       return MYB_E_DOMAIN;
     }
     size_t here = 0;
@@ -847,10 +875,22 @@ myb_status myb_ck_writer_add_chebyshev(myb_ck_writer* writer,
       }
       here += (size_t)c;
     }
-    for (size_t j = 0; j < here; ++j) {
-      if (!isfinite(coefficients[total + j])) {
-        return MYB_E_DOMAIN;
+    /* the largest value of each series on its interval, the sum of the magnitudes of its
+     * coefficients, a number — and for the angular velocity a finite magnitude: then the
+     * reader's sums are numbers too */
+    double bound[7] = {0.0};
+    size_t j = 0;
+    for (int i = 0; i < 7; ++i) {
+      for (int n = 0; n < counts[7 * k + (size_t)i]; ++n, ++j) {
+        const double v = coefficients[total + j];
+        if (!isfinite(v)) {
+          return MYB_E_DOMAIN;
+        }
+        bound[i] += fabs(v);
       }
+    }
+    if (!finite4(bound) || !finite3(bound + 4) || !isfinite(myb_vec3_norm_scaled(bound + 4))) {
+      return MYB_E_DOMAIN;
     }
     total += here;
     largest = here + 3 > largest ? here + 3 : largest;
@@ -938,8 +978,10 @@ static int valid_packets(const myb_ck_packets* p, size_t least) {
   const size_t size = ck_packet_size[p->subtype];
   for (size_t k = 0; k < p->count; ++k) {
     const double* q = p->packets + k * size;
+    /* zero only when every component is: a quaternion whose squares vanish is read at any
+     * scale (it was refused) */
     if (!isfinite(p->ticks[k]) || (k > 0 && !(p->ticks[k] > p->ticks[k - 1])) ||
-        !(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3] > 0.0)) {
+        (q[0] == 0.0 && q[1] == 0.0 && q[2] == 0.0 && q[3] == 0.0)) {
       return 0;
     }
     for (size_t j = 0; j < size; ++j) {

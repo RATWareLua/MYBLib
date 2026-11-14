@@ -1,0 +1,16 @@
+KPL/SCLK
+Regression: a negative offset made myb_sclk_decode write a negative field (1/-05.00), which
+no clock string can hold and myb_sclk_encode could not read back.
+\begindata
+SCLK_DATA_TYPE_82        = ( 1 )
+SCLK01_N_FIELDS_82       = ( 2 )
+SCLK01_MODULI_82         = ( 1000 100 )
+SCLK01_OFFSETS_82        = ( -5 0 )
+SCLK01_OUTPUT_DELIM_82   = ( 1 )
+SCLK_PARTITION_START_82  = ( 0 )
+SCLK_PARTITION_END_82    = ( 100000 )
+SCLK01_COEFFICIENTS_82   = ( 0 0.0 1.0 )
+\begintext
+1/0.0
+1/5.00
+1/12.34

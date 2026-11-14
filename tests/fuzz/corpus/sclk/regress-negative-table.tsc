@@ -1,0 +1,16 @@
+KPL/SCLK
+Regression: a table that starts at negative encoded ticks was taken, and an instant before
+its first row came back as negative ticks with MYB_OK (refused now by myb_sclk_create).
+\begindata
+SCLK_DATA_TYPE_82        = ( 1 )
+SCLK01_N_FIELDS_82       = ( 1 )
+SCLK01_MODULI_82         = ( 1 )
+SCLK01_OFFSETS_82        = ( 0 )
+SCLK01_OUTPUT_DELIM_82   = ( 1 )
+SCLK_PARTITION_START_82  = ( 0 )
+SCLK_PARTITION_END_82    = ( 1000 )
+SCLK01_COEFFICIENTS_82   = ( -100 0.0 1.0
+                             500  600.0 1.0 )
+\begintext
+1/0
+1/700

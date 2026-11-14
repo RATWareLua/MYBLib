@@ -201,10 +201,20 @@ myb_status myb_sclk_create(const myb_kpool* pool, int64_t id, const myb_allocato
     }
     total += nearest(s->part_end[p] - s->part_start[p]);
     s->part_total[p] = total;
+    /* the ticks through the partitions a number (beyond the largest double a clock string
+     * gave infinite ticks with MYB_OK, and so did an instant) */
+    if (!isfinite(total)) {
+      fault = "partitions whose ticks add up beyond the largest double";
+    }
   }
   for (size_t r = 0; r < s->rows && fault == NULL; ++r) {
     if (r > 0 && !(s->table[3 * r] > s->table[3 * (r - 1)])) {
       fault = "a table whose ticks do not increase";
+    }
+    /* encoded ticks count from zero (an instant before them came back as negative ticks with
+     * MYB_OK, which no clock string holds) */
+    if (r == 0 && !(s->table[0] >= 0.0)) {
+      fault = "a table that starts at negative ticks";
     }
     if (!(s->table[3 * r + 2] > 0.0)) {
       fault = "a rate that is not positive";
@@ -410,14 +420,16 @@ myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text, size_
   }
   double raw = nearest(ticks - (p > 0 ? s->part_total[p - 1] : 0.0) + s->part_start[p]);
   char out[32 + MAX_FIELDS * (MAX_DIGITS + 1)];
-  size_t n = (size_t)snprintf(out, sizeof out, "%u/", (unsigned)(p + 1));
+  size_t n = (size_t)snprintf(out, sizeof out, "%" PRIu64 "/", (uint64_t)(p + 1));
   for (int i = 0; i < s->fields; ++i) {
     const double value = floor(raw / s->ticks_per[i]);
     raw -= value * s->ticks_per[i];
     const double printed = value + s->offsets[i];
-    /* at most MAX_DIGITS digits and a sign: what the buffer holds for every field (a count
-     * beyond comes from partitions or offsets that no clock has) */
-    if (!(printed > -1e17 && printed < 1e18)) {
+    /* at most MAX_DIGITS digits: what the buffer holds for every field (a count beyond comes
+     * from partitions or offsets that no clock has); not negative, as no clock string can be
+     * (a minus is a delimiter: a negative offset printed a field that myb_sclk_encode could not
+     * read back) */
+    if (!(printed >= 0.0 && printed < 1e18)) {
       return MYB_E_RANGE;
     }
     /* a whole number below 2^63: printed as an integer, whose digits every C runtime writes

@@ -81,7 +81,10 @@ struct myb_ck {
   size_t count;
 };
 
+/* The word at an address of the segment: a reader that reaches outside reads another segment's
+ * words (a debug build stops here). */
 static double word(const ck_segment* s, uint64_t address) {
+  MYB_DCHECK(address >= s->begin && address <= s->end);
   return myb_internal_daf_double(&s->daf, address);
 }
 
@@ -269,6 +272,12 @@ static myb_status parse_type6(ck_segment* s, myb_diag* diag) {
   if (!increasing(s, s->bounds, n + 1)) {
     return format_error(diag, s, "boundaries not increasing");
   }
+  /* the boundaries cover the coverage of the segment (the writer requires the same): a request
+   * inside it then falls in a mini-segment whichever the flag (it failed before the first
+   * boundary or after the last one) */
+  if (!(word(s, s->bounds) <= s->start) || !(word(s, s->bounds + n) >= s->stop)) {
+    return format_error(diag, s, "boundaries that do not cover the segment");
+  }
   uint64_t previous = 0;
   for (uint64_t k = 0; k <= n; ++k) {
     uint64_t p = 0;
@@ -361,9 +370,13 @@ static myb_status parse(ck_segment* s, myb_diag* diag) {
     s->ticks = s->begin + n * r;
     s->intervals = m;
     s->starts = s->ticks + n + (n - 1) / 100;
-    if (!increasing(s, s->starts, m)) {
-      return format_error(diag, s, "interval starts not increasing");
+    /* every interval starts at a pointing, the first at the first one (as type 5): a start
+     * between two pointings was passed over, and the pointing interpolated across it */
+    if (!increasing(s, s->ticks, n) || !increasing(s, s->starts, m) ||
+        word(s, s->starts) != word(s, s->ticks) || !among(s, s->ticks, n, s->starts, m)) {
+      return format_error(diag, s, "ticks or interval starts");
     }
+    return MYB_OK;
   } else if (s->type == 4) {
     return parse_type4(s, diag);
   } else if (s->type == 5) {
@@ -554,8 +567,36 @@ static void q_multiply(const double a[4], const double b[4], double out[4]) {
   memcpy(out, r, sizeof r);
 }
 
+static int q_finite(const double q[4]) {
+  return isfinite(q[0]) && isfinite(q[1]) && isfinite(q[2]) && isfinite(q[3]);
+}
+
+/* The largest magnitude of the four numbers (finite ones). */
+static double q_largest(const double q[4]) {
+  return fmax(fmax(fabs(q[0]), fabs(q[1])), fmax(fabs(q[2]), fabs(q[3])));
+}
+
+/* Whether the plain norm of a quaternion is neither near overflow nor near underflow, where
+ * its squares would be infinite or lose digits. */
+static int q_norm_in_range(double norm) {
+  return norm >= 0x1p-511 && norm <= 0x1p+511;
+}
+
+/* q made unit; 0 for a quaternion that is zero or not finite. Any finite scale is taken: outside
+ * the range of the plain norm (whose bits are kept inside it) the quaternion is divided by its
+ * largest component first. */
 static int q_unit(double q[4]) {
-  const double n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  double n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  if (!q_norm_in_range(n)) {
+    const double largest = q_largest(q);
+    if (!q_finite(q) || !(largest > 0.0)) {
+      return 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+      q[i] /= largest;
+    }
+    n = sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  }
   if (!(n > 0.0) || !isfinite(n)) {
     return 0;
   }
@@ -575,7 +616,9 @@ static void q_turn(const double axis[3], double angle, double q[4]) {
 }
 
 /* The record k of a segment: the quaternion made unit, the angular velocity (zeros without
- * one) and, for type 2, the seconds a tick lasts. 0 for a record that is not finite. */
+ * one) and, for type 2, the seconds a tick lasts. 0 for a record that is not finite, or whose
+ * angular velocity has no finite magnitude (the derivative of the matrix would overflow; the
+ * writer refuses the same). */
 static int read_record(const ck_segment* s, uint64_t k, double q[4], double rate[3],
                        double* seconds_per_tick) {
   const uint64_t at = s->begin + k * s->record;
@@ -591,7 +634,7 @@ static int read_record(const ck_segment* s, uint64_t k, double q[4], double rate
   if (seconds_per_tick != NULL) {
     *seconds_per_tick = s->record == 8 ? word(s, at + 7) : 0.0;
   }
-  return q_unit(q) && myb_vec3_finite(rate);
+  return q_unit(q) && myb_vec3_finite(rate) && isfinite(myb_vec3_norm_scaled(rate));
 }
 
 /* How many of the n increasing values from `first` are at or below x. */
@@ -658,7 +701,9 @@ static myb_status answer_type2(const ck_segment* s, double ticks, double toleran
     /* between the stop of interval le - 1 and the start of interval le */
     const double before = le > 0 ? ticks - word(s, s->stops + le - 1) : HUGE_VAL;
     const double after = le < s->count ? word(s, s->ticks + le) - ticks : HUGE_VAL;
-    if (before < after) { /* as near: the later one */
+    /* after the last interval its stop whatever the distance (an infinite one took the index
+     * past the intervals, and read a stop as a start) */
+    if (le == s->count || (le > 0 && before < after)) { /* as near: the later one */
       k = le - 1;
       at = word(s, s->stops + k);
       if (before > tolerance) {
@@ -729,7 +774,11 @@ static myb_status answer_type3(const ck_segment* s, double ticks, double toleran
   if (!read_record(s, le - 1, q1, r1, NULL) || !read_record(s, le, q2, r2, NULL)) {
     return MYB_E_FORMAT;
   }
-  const double part = (ticks - t1) / (t2 - t1);
+  double part = (ticks - t1) / (t2 - t1);
+  if (!isfinite(t2 - t1)) {
+    /* ticks so far apart that their difference overflows (the part was NaN): halved first */
+    part = (0.5 * ticks - 0.5 * t1) / (0.5 * t2 - 0.5 * t1);
+  }
   /* q1^-1 q2: the turn from the first to the second, the short way */
   const double inverse[4] = {q1[0], -q1[1], -q1[2], -q1[3]};
   double between[4];
@@ -750,6 +799,16 @@ static myb_status answer_type3(const ck_segment* s, double ticks, double toleran
   }
   for (int i = 0; i < 3; ++i) {
     a->rate[i] = r1[i] + part * (r2[i] - r1[i]);
+  }
+  if (!myb_vec3_finite(a->rate)) {
+    /* the difference of the two overflowed (they were infinite with MYB_OK): the same point
+     * between them as a mean, which stays within the larger of the two */
+    for (int i = 0; i < 3; ++i) {
+      a->rate[i] = (1.0 - part) * r1[i] + part * r2[i];
+    }
+  }
+  if (!myb_vec3_finite(a->rate)) {
+    return MYB_E_FORMAT;
   }
   a->ticks = ticks;
   a->found = 1;
@@ -779,18 +838,29 @@ static uint64_t packet4(const ck_segment* s, uint64_t k) {
   return s->packet_base + (uint64_t)word(s, s->directory_base + k + 1);
 }
 
-/* A Chebyshev series of n coefficients from `at` at s in [-1, 1], with the full weight of
- * the term T0 (the sum of chbval in SPICE). */
-static double chebyshev_at(const ck_segment* s, uint64_t at, uint64_t n, double x) {
+/* A Chebyshev series of n coefficients from `at`, each times `scale`, at s in [-1, 1], with
+ * the full weight of the term T0 (the sum of chbval in SPICE). */
+static double chebyshev_at(const ck_segment* s, uint64_t at, uint64_t n, double x, double scale) {
   const double x2 = 2.0 * x;
   double w0 = 0.0;
   double w1 = 0.0;
   for (uint64_t j = n; j > 1; --j) {
     const double w2 = w1;
     w1 = w0;
-    w0 = word(s, at + j - 1) + (x2 * w1 - w2);
+    w0 = word(s, at + j - 1) * scale + (x2 * w1 - w2);
   }
-  return (x * w0 - w1) + word(s, at);
+  return (x * w0 - w1) + word(s, at) * scale;
+}
+
+/* The series where its recurrence overflows on the way to a value that does not (its terms
+ * grow to n times the sum of the magnitudes of the coefficients; the value was NaN and
+ * refused): the coefficients taken at 2^-64 of their size and the value brought back. */
+static double chebyshev_value(const ck_segment* s, uint64_t at, uint64_t n, double x) {
+  const double plain = chebyshev_at(s, at, n, x, 1.0);
+  if (isfinite(plain) || !isfinite(x)) {
+    return plain;
+  }
+  return 0x1p+64 * chebyshev_at(s, at, n, x, 0x1p-64);
 }
 
 /* The pointing of packet k at the instant `at`. */
@@ -807,14 +877,14 @@ static myb_status evaluate4(const ck_segment* s, uint64_t k, double at, answer* 
   const double x = (at - mid) / radius;
   uint64_t c = p + 3;
   for (int i = 0; i < 4; ++i) {
-    a->q[i] = chebyshev_at(s, c, counts[i], x);
+    a->q[i] = chebyshev_value(s, c, counts[i], x);
     c += counts[i];
   }
   for (int i = 0; i < 3; ++i) {
-    a->rate[i] = s->has_rates ? chebyshev_at(s, c, counts[4 + i], x) : 0.0;
+    a->rate[i] = s->has_rates ? chebyshev_value(s, c, counts[4 + i], x) : 0.0;
     c += counts[4 + i];
   }
-  if (!q_unit(a->q) || !myb_vec3_finite(a->rate)) {
+  if (!q_unit(a->q) || !myb_vec3_finite(a->rate) || !isfinite(myb_vec3_norm_scaled(a->rate))) {
     return MYB_E_FORMAT;
   }
   a->ticks = at;
@@ -907,6 +977,34 @@ static void quaternion_rate(const double q[4], const double dq[4], double rate[3
   }
 }
 
+/* Whether -q is nearer than q to the quaternion before it. Where the squared distances
+ * overflow or vanish both quaternions are first divided by their largest component, which
+ * keeps the comparison (no quaternion was turned there, and the Lagrange subtypes interpolated
+ * across signs that alternate); 0 for numbers that are not finite. */
+static int nearer_opposite(const double before[4], const double q[4]) {
+  double same = 0.0;
+  double opposite = 0.0;
+  for (int j = 0; j < 4; ++j) {
+    same += (before[j] - q[j]) * (before[j] - q[j]);
+    opposite += (before[j] + q[j]) * (before[j] + q[j]);
+  }
+  if (!isfinite(same) || !isfinite(opposite) || (same < 0x1p-900 && opposite < 0x1p-900)) {
+    const double largest = fmax(q_largest(before), q_largest(q));
+    if (!q_finite(before) || !q_finite(q) || !(largest > 0.0)) {
+      return 0;
+    }
+    same = 0.0;
+    opposite = 0.0;
+    for (int j = 0; j < 4; ++j) {
+      const double b = before[j] / largest;
+      const double c = q[j] / largest;
+      same += (b - c) * (b - c);
+      opposite += (b + c) * (b + c);
+    }
+  }
+  return sqrt(opposite) < sqrt(same);
+}
+
 /* The quaternion and the angular velocity of a window at its instant. */
 static myb_status evaluate_window(ck_window* w, answer* a) {
   const int m = w->count;
@@ -916,13 +1014,7 @@ static myb_status evaluate_window(ck_window* w, answer* a) {
   for (int i = 1; i < m; ++i) {
     const double* before = w->packets + (uint64_t)(i - 1) * size;
     double* q = w->packets + (uint64_t)i * size;
-    double same = 0.0;
-    double opposite = 0.0;
-    for (int j = 0; j < 4; ++j) {
-      same += (before[j] - q[j]) * (before[j] - q[j]);
-      opposite += (before[j] + q[j]) * (before[j] + q[j]);
-    }
-    if (sqrt(opposite) < sqrt(same)) {
+    if (nearer_opposite(before, q)) {
       if (!lagrangian) {
         return MYB_E_FORMAT; /* Hermite data must come with consistent signs */
       }
@@ -950,7 +1042,18 @@ static myb_status evaluate_window(ck_window* w, answer* a) {
       myb_internal_hermite(m, d, y, yd, &s[j], &ds[j]);
     }
   }
-  const double norm = sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + s[3] * s[3]);
+  double norm = sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + s[3] * s[3]);
+  if (!q_norm_in_range(norm) && q_finite(s) && q_largest(s) > 0.0) {
+    /* squares that overflow or lose digits (packets of such a scale were refused): the sum
+     * and its derivative divided by its largest component, which changes neither its
+     * direction nor the derivative of the direction */
+    const double largest = q_largest(s);
+    for (int j = 0; j < 4; ++j) {
+      s[j] /= largest;
+      ds[j] /= largest;
+    }
+    norm = sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2] + s[3] * s[3]);
+  }
   if (!(norm > 0.0) || !isfinite(norm)) {
     return MYB_E_FORMAT;
   }
@@ -985,7 +1088,7 @@ static myb_status evaluate_window(ck_window* w, answer* a) {
       }
     }
   }
-  if (!myb_vec3_finite(a->rate)) {
+  if (!myb_vec3_finite(a->rate) || !isfinite(myb_vec3_norm_scaled(a->rate))) {
     return MYB_E_FORMAT;
   }
   a->ticks = w->t;
@@ -1166,11 +1269,11 @@ myb_status myb_ck_pointing_at(const myb_ck* ck, int32_t instrument, double ticks
     if (!a.found) {
       continue;
     }
-    memcpy(pointing->q, a.q, sizeof a.q);
-    memcpy(pointing->rate, a.rate, sizeof a.rate);
-    pointing->has_rate = s->has_rates;
-    pointing->ticks = a.ticks;
-    pointing->frame = s->frame;
+    if (!s->has_rates) {
+      /* a segment without angular velocities gives none, as the header says — not the rate
+       * that types 2, 5 and 6 could still derive from their data */
+      a.rate[0] = a.rate[1] = a.rate[2] = 0.0;
+    }
     const double c = a.q[0];
     const double x = a.q[1];
     const double y = a.q[2];
@@ -1178,12 +1281,28 @@ myb_status myb_ck_pointing_at(const myb_ck* ck, int32_t instrument, double ticks
     const double m[9] = {1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - c * z), 2.0 * (x * z + c * y),
                          2.0 * (x * y + c * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - c * x),
                          2.0 * (x * z - c * y), 2.0 * (y * z + c * x), 1.0 - 2.0 * (x * x + y * y)};
-    memcpy(pointing->rotation.m, m, sizeof m);
     /* the rows of the matrix are the axes of the instrument, which turn with the angular
      * velocity: the derivative of a row is rate x row */
+    double dm[9];
     for (int i = 0; i < 3; ++i) {
-      myb_vec3_cross(a.rate, m + 3 * i, pointing->rotation.dm + 3 * i);
+      myb_vec3_cross(a.rate, m + 3 * i, dm + 3 * i);
     }
+    /* every number of the answer finite, whatever the segment did: an angular velocity at the
+     * edge of the doubles can still overflow its products with the axes */
+    int finite = isfinite(a.ticks) && q_finite(a.q) && myb_vec3_finite(a.rate);
+    for (int i = 0; i < 9; ++i) {
+      finite = finite && isfinite(m[i]) && isfinite(dm[i]);
+    }
+    if (!finite) {
+      return MYB_E_FORMAT;
+    }
+    memcpy(pointing->q, a.q, sizeof a.q);
+    memcpy(pointing->rate, a.rate, sizeof a.rate);
+    pointing->has_rate = s->has_rates;
+    pointing->ticks = a.ticks;
+    pointing->frame = s->frame;
+    memcpy(pointing->rotation.m, m, sizeof m);
+    memcpy(pointing->rotation.dm, dm, sizeof dm);
     return MYB_OK;
   }
   return MYB_E_RANGE;

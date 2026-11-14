@@ -891,6 +891,424 @@ static void test_reviewed_edges(void) {
   }
 }
 
+/* As replace_double, the last occurrence alone (a value that is also a tick: its copy among the
+ * interval starts, which come after the ticks); 1 if there was one. */
+static int replace_last_double(unsigned char* image, size_t size, double from, double to) {
+  unsigned char a[8];
+  unsigned char b[8];
+  memcpy(a, &from, 8);
+  memcpy(b, &to, 8);
+  for (size_t i = size / 8; i-- > 0;) {
+    if (memcmp(image + 8 * i, a, 8) == 0) {
+      memcpy(image + 8 * i, b, 8);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* The writer's image, its last occurrence of `from` replaced by `to` (nothing when they are
+ * equal), loaded back: the status of the load. With MYB_CK_SEED_DIR set the image is also
+ * written there as <name>.bc (the seeds of tests/fuzz/corpus/ck). */
+static myb_status load_changed(myb_ck_writer* writer, double from, double to, const char* name,
+                               myb_ck** out) {
+  const size_t bytes = myb_ck_writer_size(writer);
+  unsigned char* image = malloc(bytes);
+  MT_CHECK(image != NULL);
+  if (image == NULL) {
+    return MYB_E_NOMEM;
+  }
+  MT_CHECK(myb_ck_writer_write(writer, image, bytes) == MYB_OK);
+  if (from != to) {
+    MT_CHECK(replace_last_double(image, bytes, from, to) == 1);
+  }
+  const char* directory = getenv("MYB_CK_SEED_DIR");
+  if (directory != NULL && name != NULL) {
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s.bc", directory, name);
+    FILE* f = fopen(path, "wb");
+    MT_CHECK(f != NULL);
+    if (f != NULL) {
+      MT_CHECK(fwrite(image, 1, bytes, f) == bytes);
+      fclose(f);
+    }
+  }
+  myb_ck* ck = NULL;
+  myb_diag diag;
+  MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
+  const myb_status st = myb_ck_load_memory(ck, image, bytes, &diag);
+  free(image);
+  if (out != NULL && st == MYB_OK) {
+    *out = ck;
+  } else {
+    myb_ck_destroy(ck);
+  }
+  return st;
+}
+
+/* Every number of a pointing finite. */
+static int pointing_finite(const myb_ck_pointing* p) {
+  int finite = isfinite(p->ticks);
+  for (int i = 0; i < 4; ++i) {
+    finite = finite && isfinite(p->q[i]);
+  }
+  for (int i = 0; i < 3; ++i) {
+    finite = finite && isfinite(p->rate[i]);
+  }
+  for (int i = 0; i < 9; ++i) {
+    finite = finite && isfinite(p->rotation.m[i]) && isfinite(p->rotation.dm[i]);
+  }
+  return finite;
+}
+
+/* The largest difference of the quaternions of two pointings. */
+static double q_difference(const myb_ck_pointing* a, const myb_ck_pointing* b) {
+  double e = 0.0;
+  for (int i = 0; i < 4; ++i) {
+    e = fmax(e, fabs(a->q[i] - b->q[i]));
+  }
+  return e;
+}
+
+/* Found by the audit of the readers in phase 21: interval starts of type 3 that are not among the
+ * ticks (loaded, and the pointing interpolated across the start of an interval); angular
+ * velocities of type 3 whose difference overflows (infinite with MYB_OK) and of type 1 of no
+ * finite magnitude (an infinite derivative of the matrix with MYB_OK, and taken by the writer);
+ * boundaries of type 6 that do not cover the segment (loaded, and a request inside it failed);
+ * quaternions of a scale whose squares overflow or vanish — refused at a request (types 4, 5),
+ * left with alternating signs (the Lagrange subtypes), refused by the writers — and series of
+ * type 4 whose sum overflows on the way while its value does not; intervals of type 4 whose
+ * middle or half-length the writer could not store. */
+static void test_audited_edges(void) {
+  /* type 3: an interval start between two ticks, a first start after the first tick: refused
+   * on loading as type 5 refuses them */
+  {
+    enum { N = 10 };
+    double ticks[N];
+    double q[4 * N];
+    double rates[3 * N];
+    for (int k = 0; k < N; ++k) {
+      ticks[k] = 7.0e6 + 100.0 * k + 0.25;
+      sample(0.05 * k, 0.6, q + 4 * k, rates + 3 * k);
+    }
+    const double starts[2] = {ticks[0], ticks[5]};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: type 3 starts", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099061, 1, "type 3, two intervals"};
+    MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 3, ticks, q, rates, N, starts, 2) == MYB_OK);
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type3", NULL) == MYB_OK);
+    MT_CHECK(load_changed(writer, ticks[5], ticks[5] - 50.0, "regress-type3-start", NULL) ==
+             MYB_E_FORMAT);
+    MT_CHECK(load_changed(writer, ticks[0], ticks[0] + 50.0, NULL, NULL) == MYB_E_FORMAT);
+    myb_ck_writer_destroy(writer);
+  }
+  /* type 3: angular velocities whose difference overflows: their mean, as at any other scale */
+  {
+    const double ticks[2] = {8.0e6, 8.0e6 + 1000.0};
+    const double q[8] = {1.0, 0.0, 0.0, 0.0, 0.9, 0.0, 0.0, 0.1};
+    const double rates[6] = {1.5e308, 0.0, 0.0, -1.5e308, 0.0, 0.0};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: type 3 rates", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099062, 1, "type 3, fast"};
+    MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 3, ticks, q, rates, 2, NULL, 0) == MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type3-rates", &ck) == MYB_OK);
+    if (ck != NULL) {
+      myb_ck_pointing p;
+      MT_CHECK(myb_ck_pointing_at(ck, -9099062, ticks[0] + 500.0, 0.0, 1, &p) == MYB_OK);
+      MT_CHECK(pointing_finite(&p) && p.rate[0] == 0.0);
+      MT_CHECK(myb_ck_pointing_at(ck, -9099062, ticks[0] + 250.0, 0.0, 1, &p) == MYB_OK);
+      MT_CHECK(pointing_finite(&p) && fabs(p.rate[0] - 0.75e308) < 1e293);
+      myb_ck_destroy(ck);
+    }
+    myb_ck_writer_destroy(writer);
+  }
+  /* type 1: an angular velocity of no finite magnitude, refused by the writer and on a request */
+  {
+    const double tick[1] = {9.0e6};
+    const double q[4] = {myb_cos(0.39269908169872414), 0.0, 0.0, myb_sin(0.39269908169872414)};
+    const double fast[3] = {1.25e308, 1.375e308, 0.0};
+    const double slower[3] = {1.25e308, 3.0625, 0.0};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: type 1 rate", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099063, 1, "type 1, fast"};
+    MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 1, tick, q, fast, 1, NULL, 0) ==
+             MYB_E_DOMAIN);
+    MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 1, tick, q, slower, 1, NULL, 0) == MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(load_changed(writer, 3.0625, 1.375e308, "regress-type1-rate", &ck) == MYB_OK);
+    if (ck != NULL) {
+      myb_ck_pointing p;
+      MT_CHECK(myb_ck_pointing_at(ck, -9099063, tick[0], 0.0, 1, &p) == MYB_E_FORMAT);
+      myb_ck_destroy(ck);
+    }
+    myb_ck_writer_destroy(writer);
+  }
+  /* type 6: a first boundary after the start of the segment, a last one before its stop:
+   * refused on loading (a request at the start failed with MYB_E_FORMAT) */
+  {
+    double ticks0[4] = {990.0, 1100.0, 1200.0, 1250.0}; /* a gap before the next boundary */
+    double ticks1[4] = {1290.0, 1400.0, 1500.0, 1600.0};
+    double packets0[7 * 4];
+    double packets1[7 * 4];
+    make_packets(3, ticks0, 4, 1.0, 0.1, packets0);
+    make_packets(3, ticks1, 4, 1.0, 0.2, packets1);
+    const myb_ck_packets minis[2] = {{3, 2, 1.0, ticks0, packets0, 4},
+                                     {3, 2, 1.0, ticks1, packets1, 4}};
+    const double bounds[3] = {1000.5, 1295.5, 1650.5};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: type 6 bounds", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099064, 1, "type 6, two mini-segments"};
+    MT_CHECK(myb_ck_writer_add_minisegments(writer, &h, minis, bounds, 2, 1, 1, 1010.5, 1640.5) ==
+             MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type6", &ck) == MYB_OK);
+    if (ck != NULL) {
+      myb_ck_pointing p;
+      MT_CHECK(myb_ck_pointing_at(ck, -9099064, 1010.5, 0.0, 1, &p) == MYB_OK);
+      /* in the gap: the next mini-segment's boundary within the tolerance */
+      MT_CHECK(myb_ck_pointing_at(ck, -9099064, 1290.0, 10.0, 1, &p) == MYB_OK &&
+               p.ticks == 1295.5);
+      myb_ck_destroy(ck);
+    }
+    MT_CHECK(load_changed(writer, 1000.5, 1020.5, "regress-type6-boundary", NULL) ==
+             MYB_E_FORMAT);
+    MT_CHECK(load_changed(writer, 1650.5, 1630.5, NULL, NULL) == MYB_E_FORMAT);
+    myb_ck_writer_destroy(writer);
+  }
+  /* type 5, a Lagrange subtype: quaternions whose signs alternate at the scales 1, 2^700 and
+   * 2^-700 — the same pointings */
+  {
+    enum { N = 8 };
+    double ticks[N];
+    for (int k = 0; k < N; ++k) {
+      ticks[k] = 1.0e7 + 100.0 * k;
+    }
+    double base[4 * N];
+    make_packets(1, ticks, N, 0.5, 0.3, base);
+    static const double scales[3] = {1.0, 0x1p+700, 0x1p-700};
+    static double packets[3][4 * N];
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: type 5 scales", NULL, &writer) == MYB_OK);
+    for (int s = 0; s < 3; ++s) {
+      for (int k = 0; k < N; ++k) {
+        for (int j = 0; j < 4; ++j) {
+          packets[s][4 * k + j] = (k % 2 == 1 ? -1.0 : 1.0) * base[4 * k + j] * scales[s];
+        }
+      }
+      const myb_ck_packets set = {1, 4, 0.5, ticks, packets[s], N};
+      const myb_ck_segment_header h = {-9099070 - s, 1, "type 5, signs that alternate"};
+      MT_CHECK(myb_ck_writer_add_packets(writer, &h, &set, 1, ticks[0], ticks[N - 1], NULL, 0) ==
+               MYB_OK);
+    }
+    myb_ck* ck = NULL;
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type5-scales", &ck) == MYB_OK);
+    if (ck != NULL) {
+      const double probes[3] = {ticks[3] + 37.0, ticks[0], ticks[N - 1] - 10.0};
+      for (int i = 0; i < 3; ++i) {
+        myb_ck_pointing reference;
+        MT_CHECK(myb_ck_pointing_at(ck, -9099070, probes[i], 0.0, 1, &reference) == MYB_OK);
+        const double speed = fabs(reference.rate[0]) + fabs(reference.rate[1]) +
+                             fabs(reference.rate[2]);
+        for (int s = 1; s < 3; ++s) {
+          myb_ck_pointing p;
+          MT_CHECK(myb_ck_pointing_at(ck, -9099070 - s, probes[i], 0.0, 1, &p) == MYB_OK);
+          MT_CHECK(q_difference(&p, &reference) < 1e-15);
+          for (int j = 0; j < 3; ++j) {
+            MT_CHECK(fabs(p.rate[j] - reference.rate[j]) <= 1e-14 * speed);
+          }
+        }
+      }
+      myb_ck_destroy(ck);
+    }
+    myb_ck_writer_destroy(writer);
+  }
+  /* type 4: a series at the scale 2^600, and one whose recurrence overflows at the end of its
+   * interval while its value (19 coefficients of 2^1019) does not */
+  {
+    const double start[1] = {1000.0};
+    const double stop[1] = {3000.0};
+    const int counts[7] = {3, 2, 2, 2, 2, 2, 2};
+    static const double plain[15] = {0.8,  0.05, -0.02, 0.3,  0.01,  -0.4,  0.02, 0.2,
+                                     -0.01, 1e-3, 2e-4,  -2e-3, 1e-4, 5e-4, -3e-4};
+    double scaled[15];
+    for (int i = 0; i < 15; ++i) {
+      scaled[i] = plain[i] * 0x1p+600;
+    }
+    const int counts_large[7] = {19, 1, 1, 1, 1, 1, 1};
+    double large[25];
+    for (int i = 0; i < 19; ++i) {
+      large[i] = 0x1p+1019;
+    }
+    large[19] = large[20] = large[21] = 0x1p+1018;
+    large[22] = large[23] = large[24] = 1.0e-3;
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: type 4 scales", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h1 = {-9099081, 1, "type 4, scale 1"};
+    const myb_ck_segment_header h2 = {-9099082, 1, "type 4, scale 2^600"};
+    const myb_ck_segment_header h3 = {-9099083, 1, "type 4, near the largest double"};
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h1, start, stop, counts, plain, 1, 1) == MYB_OK);
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h2, start, stop, counts, scaled, 1, 1) ==
+             MYB_OK);
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h3, start, stop, counts_large, large, 1, 1) ==
+             MYB_OK);
+    /* and, for the seed of the fuzz harness, four intervals with gaps */
+    const double starts4[4] = {5000.0, 5500.0, 6600.0, 8000.0};
+    const double stops4[4] = {5400.0, 6500.0, 7900.0, 8100.0};
+    int counts4[28];
+    double plain4[60];
+    for (int k = 0; k < 4; ++k) {
+      memcpy(counts4 + 7 * k, counts, sizeof counts);
+      memcpy(plain4 + 15 * k, plain, sizeof plain);
+    }
+    const myb_ck_segment_header h4 = {-9099085, 1, "type 4, four intervals"};
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h4, starts4, stops4, counts4, plain4, 4, 1) ==
+             MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type4-scales", &ck) == MYB_OK);
+    if (ck != NULL) {
+      myb_ck_pointing reference;
+      myb_ck_pointing p;
+      MT_CHECK(myb_ck_pointing_at(ck, -9099081, 1700.0, 0.0, 1, &reference) == MYB_OK);
+      MT_CHECK(myb_ck_pointing_at(ck, -9099082, 1700.0, 0.0, 1, &p) == MYB_OK);
+      MT_CHECK(q_difference(&p, &reference) < 1e-15 && pointing_finite(&p));
+      for (int j = 0; j < 3; ++j) {
+        MT_CHECK(p.rate[j] == reference.rate[j] * 0x1p+600);
+      }
+      MT_CHECK(myb_ck_pointing_at(ck, -9099083, 3000.0, 0.0, 1, &p) == MYB_OK);
+      const double norm = sqrt(38.0 * 38.0 + 3.0);
+      const myb_ck_pointing expected = {.q = {38.0 / norm, 1.0 / norm, 1.0 / norm, 1.0 / norm}};
+      MT_CHECK(q_difference(&p, &expected) < 1e-15 && pointing_finite(&p));
+      myb_ck_destroy(ck);
+    }
+    /* refused: coefficients that sum beyond the largest double, angular velocities of no finite
+     * magnitude, intervals whose middle or half-length is not a number or is zero */
+    const size_t before = myb_ck_writer_size(writer);
+    const myb_ck_segment_header h = {-9099084, 1, "type 4, refused"};
+    double huge[22];
+    for (int i = 0; i < 22; ++i) {
+      huge[i] = i < 19 ? 0x1p+1020 : 1.0;
+    }
+    const int counts_huge[7] = {19, 1, 1, 1, 0, 0, 0};
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, start, stop, counts_huge, huge, 1, 0) ==
+             MYB_E_DOMAIN);
+    const int ones[7] = {1, 1, 1, 1, 1, 1, 1};
+    const double spinning[7] = {1.0, 0.0, 0.0, 0.0, 1.5e308, 1.5e308, 0.0};
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, start, stop, ones, spinning, 1, 1) ==
+             MYB_E_DOMAIN);
+    const double at_rest[7] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    const double wide[2][2] = {{-1.5e308, 1.5e308}, {1.0e308, 1.5e308}};
+    for (int i = 0; i < 2; ++i) {
+      MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, &wide[i][0], &wide[i][1], ones, at_rest, 1,
+                                           1) == MYB_E_DOMAIN);
+    }
+    const double zero = 0.0;
+    const double least = 4.9406564584124654e-324;
+    MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h, &zero, &least, ones, at_rest, 1, 1) ==
+             MYB_E_DOMAIN);
+    MT_CHECK(myb_ck_writer_size(writer) == before);
+    myb_ck_writer_destroy(writer);
+  }
+  /* the writer of types 1, 2 and 3 makes quaternions of any finite scale unit */
+  {
+    const double ticks[2] = {1.1e7, 1.1e7 + 10.0};
+    const double q[8] = {3.0 * 0x1p+600, 4.0 * 0x1p+600, 0.0, 0.0,
+                         3.0 * 0x1p-600, 0.0,            4.0 * 0x1p-600, 0.0};
+    myb_ck_writer* writer = NULL;
+    MT_CHECK(myb_ck_writer_create("myb test: quaternion scales", NULL, &writer) == MYB_OK);
+    const myb_ck_segment_header h = {-9099091, 1, "type 1, scales"};
+    MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 1, ticks, q, NULL, 2, NULL, 0) == MYB_OK);
+    myb_ck* ck = NULL;
+    MT_CHECK(load_changed(writer, 0.0, 0.0, NULL, &ck) == MYB_OK);
+    if (ck != NULL) {
+      myb_ck_pointing p;
+      const myb_ck_pointing first = {.q = {0.6, 0.8, 0.0, 0.0}};
+      const myb_ck_pointing second = {.q = {0.6, 0.0, 0.8, 0.0}};
+      MT_CHECK(myb_ck_pointing_at(ck, -9099091, ticks[0], 0.0, 0, &p) == MYB_OK);
+      MT_CHECK(q_difference(&p, &first) < 2e-16);
+      MT_CHECK(myb_ck_pointing_at(ck, -9099091, ticks[1], 0.0, 0, &p) == MYB_OK);
+      MT_CHECK(q_difference(&p, &second) < 2e-16);
+      myb_ck_destroy(ck);
+    }
+    myb_ck_writer_destroy(writer);
+  }
+}
+
+/* The clock 82 of a kernel text; the status of its creation. */
+static myb_status clock_from_text(const char* text, myb_sclk** sclk) {
+  myb_kpool* pool = NULL;
+  myb_diag diag = {0};
+  MT_CHECK(myb_kpool_create(NULL, &pool) == MYB_OK);
+  MT_CHECK(myb_kpool_load_text(pool, text, strlen(text), &diag) == MYB_OK);
+  const myb_status status = myb_sclk_create(pool, 82, NULL, sclk, &diag);
+  myb_kpool_destroy(pool);
+  return status;
+}
+
+/* Found by the audit of the readers in phase 21: partitions whose ticks add up beyond the
+ * largest double (a clock string gave infinite ticks with MYB_OK), a table that starts at
+ * negative ticks (an instant gave negative ticks with MYB_OK, which no clock string holds) and
+ * a negative offset (a string with a negative field, which encode could not read back). */
+static void test_audited_clocks(void) {
+  myb_sclk* sclk = NULL;
+  MT_CHECK(clock_from_text("\\begindata\n"
+                           "SCLK_DATA_TYPE_82 = ( 1 )\n"
+                           "SCLK01_N_FIELDS_82 = ( 1 )\n"
+                           "SCLK01_MODULI_82 = ( 1 )\n"
+                           "SCLK01_OFFSETS_82 = ( 0 )\n"
+                           "SCLK01_OUTPUT_DELIM_82 = ( 1 )\n"
+                           "SCLK_PARTITION_START_82 = ( 0 )\n"
+                           "SCLK_PARTITION_END_82 = ( 1000 )\n"
+                           "SCLK01_COEFFICIENTS_82 = ( -100 0.0 1.0 )\n"
+                           "\\begintext\n",
+                           &sclk) == MYB_E_FORMAT);
+  if (sclk != NULL) {
+    double ticks = 0.0;
+    MT_CHECK(myb_sclk_from_time(sclk, myb_time_from_seconds(0.0), &ticks) != MYB_OK ||
+             ticks >= 0.0);
+    myb_sclk_destroy(sclk);
+    sclk = NULL;
+  }
+  MT_CHECK(clock_from_text("\\begindata\n"
+                           "SCLK_DATA_TYPE_82 = ( 1 )\n"
+                           "SCLK01_N_FIELDS_82 = ( 1 )\n"
+                           "SCLK01_MODULI_82 = ( 1 )\n"
+                           "SCLK01_OFFSETS_82 = ( 0 )\n"
+                           "SCLK01_OUTPUT_DELIM_82 = ( 1 )\n"
+                           "SCLK_PARTITION_START_82 = ( 0 0 0 )\n"
+                           "SCLK_PARTITION_END_82 = ( 1e308 1e308 100 )\n"
+                           "SCLK01_COEFFICIENTS_82 = ( 0 0.0 1.0 )\n"
+                           "\\begintext\n",
+                           &sclk) == MYB_E_FORMAT);
+  if (sclk != NULL) {
+    double ticks = 0.0;
+    MT_CHECK(myb_sclk_encode(sclk, "3/5", 3, &ticks) != MYB_OK || isfinite(ticks));
+    myb_sclk_destroy(sclk);
+    sclk = NULL;
+  }
+  MT_CHECK(clock_from_text("\\begindata\n"
+                           "SCLK_DATA_TYPE_82 = ( 1 )\n"
+                           "SCLK01_N_FIELDS_82 = ( 2 )\n"
+                           "SCLK01_MODULI_82 = ( 1000 100 )\n"
+                           "SCLK01_OFFSETS_82 = ( -5 0 )\n"
+                           "SCLK01_OUTPUT_DELIM_82 = ( 1 )\n"
+                           "SCLK_PARTITION_START_82 = ( 0 )\n"
+                           "SCLK_PARTITION_END_82 = ( 100000 )\n"
+                           "SCLK01_COEFFICIENTS_82 = ( 0 0.0 1.0 )\n"
+                           "\\begintext\n",
+                           &sclk) == MYB_OK);
+  if (sclk != NULL) {
+    char text[64];
+    size_t length = 0;
+    MT_CHECK(myb_sclk_decode(sclk, 0.0, text, sizeof text, &length) == MYB_E_RANGE);
+    MT_CHECK(myb_sclk_decode(sclk, 1000.0, text, sizeof text, &length) == MYB_OK);
+    double ticks = 0.0;
+    MT_CHECK(strcmp(text, "1/005.00") == 0 &&
+             myb_sclk_encode(sclk, text, length, &ticks) == MYB_OK && ticks == 1000.0);
+    myb_sclk_destroy(sclk);
+  }
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   test_reference();
@@ -898,5 +1316,7 @@ int main(void) {
   test_type5_by_cspice();
   test_types456_writer();
   test_reviewed_edges();
+  test_audited_edges();
+  test_audited_clocks();
   return mt_finish("test_ck");
 }
