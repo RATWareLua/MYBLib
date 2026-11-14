@@ -29,8 +29,10 @@
 //! first orbits, relative motion, conjunctions, the variational equations), [`optimal`]
 //! (low thrust: the indirect method, Sims-Flanagan, chains, the Q-law), [`attitude`],
 //! [`observe`] (light time, delays, directions), [`files`] (numbers and tables, the SPK, CK
-//! and SP3 writers and readers, the orbit data messages, spacecraft clocks) and [`many`] (the
-//! array forms over slices); `sgp4` (two-line element sets) with the feature of that name.
+//! and SP3 writers and readers, the orbit data messages, spacecraft clocks), [`frames`] (the
+//! CIO-based and equinox-based models of the Earth, EOP, WGCCRE, binary PCK, the graph of
+//! frames) and [`many`] (the array forms over slices); `sgp4` (two-line element sets) with the
+//! feature of that name.
 //! Providers of states, orientations and attitudes are the traits of [`provider`]: closures,
 //! or the ready-made providers of the library.
 //!
@@ -58,6 +60,7 @@ pub mod attitude;
 pub mod cr3bp;
 pub mod estim;
 pub mod files;
+pub mod frames;
 pub mod many;
 pub mod nbody;
 pub mod observe;
@@ -71,6 +74,7 @@ pub use attitude::*;
 pub use cr3bp::*;
 pub use estim::*;
 pub use files::*;
+pub use frames::*;
 pub use many::*;
 pub use nbody::*;
 pub use observe::*;

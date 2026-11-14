@@ -626,6 +626,8 @@ hsType t = case t of
     TBase "void" -> "Ptr ()"
     TBase "char" -> "CString"
     TFunc r ps -> "FunPtr (" ++ hsFun r ps ++ ")"
+    -- a pointer to an array (a parameter double m[5][3]) points to its elements in a row
+    TArray e _ -> hsType (TPtr e)
     _ -> "Ptr " ++ atom (hsType x)
   TArray x _ -> "[" ++ hsType x ++ "]"
   TFunc r ps -> "(" ++ hsFun r ps ++ ")"

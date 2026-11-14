@@ -20,8 +20,9 @@
 -- with the number of those that failed.
 module Main (main) where
 
-import Control.Concurrent (threadDelay)
-import Control.Monad (forM_, unless, when)
+import Areas (theAreas)
+import Checks
+import Control.Monad (forM_, when)
 import Data.Coerce (coerce)
 import Data.IORef
 import Data.Int (Int64)
@@ -43,37 +44,7 @@ import qualified Myb.C.Ext.Sgp4 as Sgp4
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..), exitWith)
 import System.FilePath ((</>))
-import System.IO (hPutStrLn, stderr)
-import System.Mem (performMajorGC)
 import qualified System.Process as Process
-
--- ---- Checks --------------------------------------------------------------------------------
-
-data Tally = Tally (IORef Int) (IORef Int)
-
-expect :: Tally -> String -> Bool -> IO ()
-expect (Tally count failed) what ok = do
-  modifyIORef' count (+ 1)
-  unless ok $ do
-    modifyIORef' failed (+ 1)
-    hPutStrLn stderr ("FAILED: " ++ what)
-
--- | Goes on with the value of a successful outcome; a failure is a failed check.
-onRight :: Tally -> String -> Myb.Result a -> (a -> IO ()) -> IO ()
-onRight tally what outcome k = case outcome of
-  Right value -> expect tally what True >> k value
-  Left e -> expect tally (what ++ ": " ++ Myb.errorText e) False
-
--- | Whether the outcome is a failure with the status.
-failsWith :: Myb.Status -> Myb.Result a -> Bool
-failsWith status outcome = either ((== status) . Myb.errorStatus) (const False) outcome
-
-bits :: State -> [Word]
-bits = map (fromIntegral . castDoubleToWord64) . Myb.stateList
-
--- | Lets the finalizers of what is no longer reachable run.
-collect :: IO ()
-collect = performMajorGC >> threadDelay 20000 >> performMajorGC >> threadDelay 20000
 
 -- ---- The example ---------------------------------------------------------------------------
 
@@ -254,10 +225,6 @@ theUpperLayerGivesTheBitsOfTheCCalls tally = do
               expect tally "the drift of the node" (abs ((Myb.raan after - Myb.raan elements) / day / theory - 1.0) < 0.02)
 
 -- ---- Failures ------------------------------------------------------------------------------
-
-dataDir, testDataDir :: IO FilePath
-dataDir = maybe ("../.." </> "data") id <$> lookupEnv "MYB_DATA_DIR"
-testDataDir = maybe ("../.." </> "tests" </> "data") id <$> lookupEnv "MYB_TEST_DATA_DIR"
 
 aFailureIsAValueWithTheStatus :: Tally -> IO ()
 aFailureIsAValueWithTheStatus tally = do
@@ -568,6 +535,8 @@ aMessageInBothNotations tally = do
               [ State (Vec3 7.0e6 1.0 (-2.5)) (Vec3 0.25 7.5e3 (-1.0e3))
               , State (Vec3 (7.0e6 + 15.0) 4.5e5 (-6.0e4)) (Vec3 (-480.0) 7.4e3 (-990.0))
               ]
+          , Myb.covariances = [(Myb.Calendar 2026 3 1 12 0 0.0, [if i == j then 1.0 + fromIntegral i else 0.0 | i <- [0 .. 5 :: Int], j <- [0 .. 5 :: Int]])]
+          , Myb.covarianceFrame = Just "RTN"
           }
       created = Myb.Calendar 2026 3 2 0 0 0.0
   forM_ [Myb.Kvn, Myb.Xml] $ \notation -> do
@@ -681,7 +650,7 @@ main = do
   case throwing of
     Just what -> throwIn what
     Nothing -> do
-      tally@(Tally count failed) <- Tally <$> newIORef 0 <*> newIORef 0
+      tally@(Tally count failed) <- newTally
       theLowerLayer tally
       theUpperLayerGivesTheBitsOfTheCCalls tally
       aFailureIsAValueWithTheStatus tally
@@ -691,6 +660,7 @@ main = do
       ownershipFollowsTheModel tally
       timeScalesAndAnSpkSet tally
       aMessageInBothNotations tally
+      theAreas tally
       anExceptionInAFunctionCalledFromCEndsTheProcess tally
       collect
       n <- readIORef count

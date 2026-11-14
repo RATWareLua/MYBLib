@@ -20,7 +20,10 @@ foreach(_var CABAL GHC CLANG SOURCE BINARY LIBRARIES)
 endforeach()
 
 set(_package "${SOURCE}/bindings/haskell")
-file(MAKE_DIRECTORY "${BINARY}/cabal" "${BINARY}/lib")
+file(MAKE_DIRECTORY "${BINARY}/cabal" "${BINARY}/lib" "${BINARY}/output")
+# the files the test writes (an SPK file read back) stay in the build tree
+file(TO_NATIVE_PATH "${BINARY}/output" _output)
+set(ENV{MYB_TEST_OUTPUT_DIR} "${_output}")
 if(NOT EXISTS "${BINARY}/cabal/config")
   file(WRITE "${BINARY}/cabal/config"
     "-- Written by bindings/haskell/tools/test.cmake: no repository, the package needs the\n"

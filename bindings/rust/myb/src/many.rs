@@ -8,7 +8,7 @@ use crate::{
     Rotation, State, Time, TimeSystem, Vec3,
 };
 
-fn check_at(code: sys::myb_status, failed: usize) -> Result<()> {
+pub(crate) fn check_at(code: sys::myb_status, failed: usize) -> Result<()> {
     match check(code) {
         Ok(()) => Ok(()),
         Err(error) => Err(Error { status: error.status, message: format!("element {failed}") }),

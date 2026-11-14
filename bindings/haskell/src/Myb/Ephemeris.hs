@@ -8,13 +8,15 @@ module Myb.Ephemeris
   , ephemerisState
   , Segment (..)
   , segments
+  , ephemerisStateMany
+  , ephemerisStateInMany
   , ephemerisPtr
   ) where
 
 import Data.Int (Int32)
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Marshal.Array (withArrayLen)
+import Foreign.Marshal.Array (allocaArray, peekArray, withArrayLen)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (castPtr, nullPtr)
 import Foreign.Storable (peek)
@@ -82,3 +84,19 @@ segments (Ephemeris spk) = withForeignPtr spk $ \s -> do
 
 ephemerisPtr :: Ephemeris -> ForeignPtr C.Myb_spk
 ephemerisPtr (Ephemeris spk) = spk
+
+-- | 'ephemerisState' at every instant, with the frame of each state; a failure names the
+-- instant that failed.
+ephemerisStateMany :: Ephemeris -> Int32 -> Int32 -> [Time] -> IO (Result [(State, Int32)])
+ephemerisStateMany (Ephemeris spk) target center ts =
+  withForeignPtr spk $ \s -> withArrayLen (map timeToC ts) $ \n pt -> allocaArray (max 1 n) $ \states -> allocaArray (max 1 n) $ \frames -> do
+    done <- arrayForm (C.myb_spk_state_many s target center pt (toSize n) (castPtr states) frames)
+    either (pure . Left) (const (Right <$> (zip <$> peekArray n states <*> peekArray n frames))) done
+
+-- | The states in a frame of a graph of frames (an object of "Myb.C", myb/frames.h) whatever
+-- frames the segments are in, at every instant.
+ephemerisStateInMany :: Ephemeris -> ForeignPtr C.Myb_frame_graph -> Int32 -> Int32 -> [Time] -> Int32 -> IO (Result [State])
+ephemerisStateInMany (Ephemeris spk) graph target center ts frame =
+  withForeignPtr spk $ \s -> withForeignPtr graph $ \g -> withArrayLen (map timeToC ts) $ \n pt -> allocaArray (max 1 n) $ \states -> do
+    done <- arrayForm (C.myb_spk_state_in_many s g target center pt (toSize n) frame (castPtr states))
+    either (pure . Left) (const (Right <$> peekArray n states)) done

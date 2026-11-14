@@ -611,7 +611,7 @@ fn element_sets_give_the_bits_of_the_c_calls() -> myb::Result<()> {
         time_pool.load_file(data.join(kernel))?;
     }
     let system = myb::TimeSystem::new(&time_pool)?;
-    let packet = sgp4::sgp4_spk10_packet(&tle, &system)?;
+    let packet = sgp4::sgp4_spk10_packet(&tle, &system, None)?;
     let words = sgp4::sgp4_spk10_words(&spk10, &[packet])?;
     assert_eq!(words.len(), sgp4::sgp4_spk10_size(1));
     let (mut raw_constants, mut raw_packet) = ([0.0; 8], [0.0; 14]);

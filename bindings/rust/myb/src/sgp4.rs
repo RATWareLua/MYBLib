@@ -5,7 +5,7 @@
 //! m and m/s.
 use std::ffi::c_int;
 
-use crate::{check, check_diag, domain, sys, Calendar, Omm, Result, TimeSystem, Vec3};
+use crate::{check, check_diag, domain, sys, Calendar, Ephemeris, Equinox, Omm, Result, State, Time, TimeSystem, Vec3};
 
 use sys::sgp4 as ext;
 
@@ -250,13 +250,28 @@ pub fn sgp4_spk10_constants(model: &Sgp4Constants) -> [f64; 8] {
     constants
 }
 
-/// The packet of an element set (14 numbers) for an SPK segment of type 10, the nutation
-/// left zero (no equinox model).
-pub fn sgp4_spk10_packet(tle: &Tle, system: &TimeSystem) -> Result<[f64; 14]> {
+/// The packet of an element set (14 numbers) for an SPK segment of type 10; the nutation at
+/// the epoch from the equinox model, or zeros without one (SPICE does not read it).
+pub fn sgp4_spk10_packet(tle: &Tle, system: &TimeSystem, equinox: Option<&Equinox>) -> Result<[f64; 14]> {
     let mut packet = [0.0; 14];
-    // SAFETY: the system is alive; the packet holds 14 numbers; no equinox
-    check(unsafe { ext::myb_sgp4_spk10_packet(tle, system.as_ptr(), std::ptr::null(), packet.as_mut_ptr()) })?;
+    // SAFETY: the system and the model are alive; the packet holds 14 numbers
+    check(unsafe {
+        ext::myb_sgp4_spk10_packet(tle, system.as_ptr(), equinox.map_or(std::ptr::null(), |e| e.as_ptr()), packet.as_mut_ptr())
+    })?;
     Ok(packet)
+}
+
+/// The state (m, m/s) of segment `index` of an SPK set, which must be of type 10, at the TDB
+/// instant et, in J2000 relative to its centre (`myb_sgp4_spk10_state`): the time system
+/// gives UTC, the equinox model TEME.
+pub fn sgp4_spk10_state(ephemeris: &Ephemeris, index: usize, system: &TimeSystem, equinox: &Equinox, et: Time) -> Result<State> {
+    if index >= ephemeris.segments().len() {
+        return domain();
+    }
+    let mut state = [0.0; 6];
+    // SAFETY: the segment is one of the set; the objects are alive; state holds six numbers
+    check(unsafe { ext::myb_sgp4_spk10_state(ephemeris.as_ptr(), index, system.as_ptr(), equinox.as_ptr(), et, state.as_mut_ptr()) })?;
+    Ok(state)
 }
 
 /// The words of a segment of type 10 from its constants and packets (in the order of their

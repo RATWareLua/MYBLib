@@ -265,7 +265,7 @@ MYB_API MYB_NODISCARD myb_status myb_filter_create(myb_force_model* model,
 MYB_API void myb_filter_destroy(myb_filter* filter); /* accepts NULL */
 
 /* Starts at t0 with the state y0, the present values of the parameters and the covariance of
- * the 6 + np unknowns (row-major, symmetric); observations follow in time order towards
+ * the 6 + np + bias_count unknowns ((6 + np + bias_count)^2 values, row-major, symmetric); observations follow in time order towards
  * t_end, which is never passed. Errors: MYB_E_DOMAIN (times, values not finite). */
 MYB_API MYB_NODISCARD myb_status myb_filter_start(myb_filter* filter, double t0,
                                                   const double y0[6], const double* covariance,

@@ -6,106 +6,35 @@ Two layers over the shared library of myb:
   * `myb.lib` and `myb.ffi` (cffi) reach every function and structure of the C interface,
     by the names of the C headers: `myb.lib.myb_kepler_propagate(...)`. The declarations
     are generated from the headers, so nothing is missing and nothing can differ.
-  * The classes and functions of this module wrap the path most programs take — kernels
-    and time, ephemerides, the environment and the force model, propagation, events, the
-    text messages — with ownership (objects are released when Python drops them), errors
-    as exceptions (`myb.Error` carries the status of the library) and Python callables for
-    terms, providers and events.
+  * The classes and functions of this package wrap the interface with ownership (objects
+    are released when Python drops them), errors as exceptions (`myb.Error` carries the
+    status of the library) and Python callables for terms, providers, events, measurements
+    and the functions of the solvers. This module holds kernels and time, ephemerides, the
+    environment and the force model, propagation, events, the messages of the CCSDS and the
+    array forms of time and Kepler; the modules beside it the rest — `myb.nbody` (N bodies,
+    the system of bodies), `myb.estim` (stations, measurements, the fit and the filter),
+    `myb.cr3bp`, `myb.targeting` (transfers, Lambert, optimal control, thrust, initial orbits,
+    relative motion, conjunctions, uncertainty), `myb.attitude`, `myb.observe`, `myb.files`
+    (tables, SPK, SP3, CK and SCLK, OPM, OMM, OCM, TLE) and `myb.frames` (the providers of
+    orientation and their array forms) — whose names are also names of this module.
 
 No arithmetic is done here: a number obtained through this package has the bits of the same
 calls made in C. States are sequences of six floats (position in m, velocity in m/s); times
-of a model are seconds from the epoch of its environment.
+of a model are seconds from the epoch of its environment. Series (the array forms, the
+states of many bodies) come in as sequences — of numbers, of tuples, or an array.array('d')
+taken without a copy — and go out as lists: of floats, of tuples, of instants.
 
 The optional libraries of ext/ are loaded on request: `myb.extension("sgp4")`.
 """
-from collections import namedtuple
-
+from ._core import (Elements, Equinoctial, Error, Orientation, Provider, Rotation, _calendar,
+                    _check, _Calls, _doubles, _flat, _instant, _instants, _label,
+                    _orientation_provider, _Owner, _pv, _rows, _series, _settle, _state_of,
+                    _state_provider, _string, _text, _times, _tuple)
 from ._native import extension, ffi, lib, library_path
-
-__all__ = [
-    "Elements", "Environment", "Ephemeris", "Error", "ForceModel", "GravityField",
-    "KernelPool", "Orbit", "TimeSystem", "elements_from_state", "extension", "ffi",
-    "kepler_propagate", "lib", "library_path", "read_oem", "seconds", "state_from_elements",
-    "time_from_seconds", "version", "write_oem",
-]
 
 version = (lib.MYB_VERSION_MAJOR, lib.MYB_VERSION_MINOR, lib.MYB_VERSION_PATCH,
            lib.MYB_VERSION_TWEAK)
 __version__ = ".".join(str(part) for part in version)
-
-Elements = namedtuple("Elements", "p e i raan argp nu")
-
-
-class Error(Exception):
-    """A call of the library failed: `status` is its code (lib.MYB_E_DOMAIN, ...), `name`
-    the name of the code, `message` what a parser said (with the line), if anything."""
-
-    def __init__(self, status, message=""):
-        self.status = int(status)
-        self.name = ffi.string(lib.myb_status_name(status)).decode("ascii")
-        self.message = message
-        super().__init__("%s: %s" % (self.name, message) if message else self.name)
-
-
-def _check(status, diag=None):
-    if status == lib.MYB_OK:
-        return
-    message = ""
-    if diag is not None:
-        message = ffi.string(diag.message).decode("utf-8", "replace")
-        if diag.line > 0:
-            message = "line %d: %s" % (diag.line, message)
-    raise Error(status, message)
-
-
-def _doubles(values, count, what):
-    values = [float(v) for v in values]
-    if len(values) != count:
-        raise ValueError("%s: %d numbers expected, %d given" % (what, count, len(values)))
-    return ffi.new("double[]", values)
-
-
-def _calendar(label):
-    """(year, month, day, hour, minute, second) -> myb_calendar."""
-    year, month, day, hour, minute, second = label
-    return ffi.new("myb_calendar*", {"year": int(year), "month": int(month), "day": int(day),
-                                     "hour": int(hour), "minute": int(minute),
-                                     "second": float(second)})
-
-
-def _label(calendar):
-    return (calendar.year, calendar.month, calendar.day, calendar.hour, calendar.minute,
-            calendar.second)
-
-
-class _Owner:
-    """An object of the library: released when dropped or closed, usable in `with`."""
-
-    _destroy = None
-
-    def __init__(self, pointer):
-        self._pointer = ffi.gc(pointer, self._destroy)
-        self._kept = []  # what the object points to must live as long as it does
-
-    @property
-    def pointer(self):
-        """The object of the C interface, for the functions of `myb.lib`."""
-        if self._pointer is None:
-            raise ValueError("%s is closed" % type(self).__name__)
-        return self._pointer
-
-    def close(self):
-        if self._pointer is not None:
-            ffi.release(self._pointer)
-            self._pointer = None
-            self._kept = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *unused):
-        self.close()
-        return False
 
 
 # ---- Time ---------------------------------------------------------------------------------------
@@ -118,6 +47,63 @@ def time_from_seconds(seconds_past_epoch):
 def seconds(instant):
     """The seconds past J2000 of an instant, as one float."""
     return lib.myb_time_seconds(instant)
+
+
+def time_from_seconds_many(values):
+    """Instants from seconds past J2000 (myb_time_from_seconds_many): a list of myb_time."""
+    given, count = _series(values, 1, "seconds")
+    out = ffi.new("myb_time[]", max(count, 1))
+    lib.myb_time_from_seconds_many(given, count, out)
+    return _instants(out, count)
+
+
+def seconds_many(instants):
+    """The seconds past J2000 of instants (myb_time_seconds_many): a list of floats."""
+    given, count = _times(instants)
+    out = ffi.new("double[]", max(count, 1))
+    lib.myb_time_seconds_many(given, count, out)
+    return list(_tuple(out, count))
+
+
+def calendar_to_time(label):
+    """The instant of a calendar label (year, month, day, hour, minute, second) of a
+    continuous scale (myb_calendar_to_time)."""
+    out = ffi.new("myb_time*")
+    _check(lib.myb_calendar_to_time(_calendar(label), out))
+    return out[0]
+
+
+def time_to_calendar(instant):
+    out = ffi.new("myb_calendar*")
+    lib.myb_time_to_calendar(instant, out)
+    return _label(out)
+
+
+def _labels(labels):
+    labels = list(labels)
+    return ffi.new("myb_calendar[]", [_calendar(label)[0] for label in labels] or 1), len(labels)
+
+
+def _failed_check(status, failed):
+    _check(status, index=None if status == lib.MYB_OK else failed[0])
+
+
+def calendar_to_time_many(labels):
+    """The instants of calendar labels (myb_calendar_to_time_many): a list of myb_time. On a
+    failure Error.index names the label."""
+    given, count = _labels(labels)
+    out = ffi.new("myb_time[]", max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_calendar_to_time_many(given, count, out, failed), failed)
+    return _instants(out, count)
+
+
+def time_to_calendar_many(instants):
+    """The calendar labels of instants (myb_time_to_calendar_many): a list of labels."""
+    given, count = _times(instants)
+    out = ffi.new("myb_calendar[]", max(count, 1))
+    lib.myb_time_to_calendar_many(given, count, out)
+    return [_label(out[k]) for k in range(count)]
 
 
 class KernelPool(_Owner):
@@ -135,6 +121,35 @@ class KernelPool(_Owner):
     def load_file(self, path):
         diag = ffi.new("myb_diag*")
         _check(lib.myb_kpool_load_file(self.pointer, str(path).encode("utf-8"), diag), diag)
+
+    def load_text(self, text):
+        raw = text.encode("utf-8")
+        diag = ffi.new("myb_diag*")
+        _check(lib.myb_kpool_load_text(self.pointer, raw, len(raw), diag), diag)
+
+    def describe(self, name):
+        """("numbers" or "strings", the number of values) of a variable."""
+        kind = ffi.new("myb_kvar_type*")
+        count = ffi.new("size_t*")
+        _check(lib.myb_kpool_describe(self.pointer, name.encode("ascii"), kind, count))
+        return ("numbers" if kind[0] == lib.MYB_KVAR_NUMBERS else "strings", count[0])
+
+    def numbers(self, name):
+        values = ffi.new("double**")
+        count = ffi.new("size_t*")
+        _check(lib.myb_kpool_numbers(self.pointer, name.encode("ascii"), values, count))
+        return _tuple(values[0], count[0])
+
+    def string(self, name, index=0):
+        value = ffi.new("char**")
+        length = ffi.new("size_t*")
+        _check(lib.myb_kpool_string(self.pointer, name.encode("ascii"), int(index), value,
+                                    length))
+        return ffi.string(value[0], length[0]).decode("utf-8")
+
+    def strings(self, name):
+        kind, count = self.describe(name)
+        return [self.string(name, k) for k in range(count)]
 
 
 class TimeSystem(_Owner):
@@ -172,19 +187,34 @@ class TimeSystem(_Owner):
         _check(lib.myb_timesys_to_utc(self.pointer, instant, self._scale(from_scale), out))
         return _label(out)
 
+    def convert_many(self, instants, from_scale, to_scale):
+        """convert for a series (myb_timesys_convert_many): a list of myb_time."""
+        given, count = _times(instants)
+        out = ffi.new("myb_time[]", max(count, 1))
+        failed = ffi.new("size_t*")
+        _failed_check(lib.myb_timesys_convert_many(self.pointer, given, count,
+                                                   self._scale(from_scale),
+                                                   self._scale(to_scale), out, failed), failed)
+        return _instants(out, count)
+
+    def from_utc_many(self, labels, to_scale):
+        given, count = _labels(labels)
+        out = ffi.new("myb_time[]", max(count, 1))
+        failed = ffi.new("size_t*")
+        _failed_check(lib.myb_timesys_from_utc_many(self.pointer, given, count,
+                                                    self._scale(to_scale), out, failed), failed)
+        return _instants(out, count)
+
+    def to_utc_many(self, instants, from_scale):
+        given, count = _times(instants)
+        out = ffi.new("myb_calendar[]", max(count, 1))
+        failed = ffi.new("size_t*")
+        _failed_check(lib.myb_timesys_to_utc_many(self.pointer, given, count,
+                                                  self._scale(from_scale), out, failed), failed)
+        return [_label(out[k]) for k in range(count)]
+
 
 # ---- Two bodies ---------------------------------------------------------------------------------
-
-def _pv(state):
-    y = [float(v) for v in state]
-    if len(y) != 6:
-        raise ValueError("a state is six numbers, %d given" % len(y))
-    return ffi.new("myb_pv*", {"r": y[:3], "v": y[3:]})
-
-
-def _state_of(pv):
-    return (pv.r[0], pv.r[1], pv.r[2], pv.v[0], pv.v[1], pv.v[2])
-
 
 def state_from_elements(mu, elements):
     """The state of the classical elements (p, e, i, raan, argp, nu): m and rad."""
@@ -207,6 +237,111 @@ def kepler_propagate(mu, state, dt):
     return _state_of(out)
 
 
+def kepler_stm(mu, state, dt):
+    """The state a time dt later and its transition matrix (six rows)."""
+    out = ffi.new("myb_pv*")
+    stm = ffi.new("double[36]")
+    _check(lib.myb_kepler_stm(float(mu), _pv(state), float(dt), out, stm))
+    return _state_of(out), _rows(stm, 6, 6)
+
+
+def _pvs(states):
+    flat = _flat(states)
+    if len(flat) % 6:
+        raise ValueError("states: six numbers each, %d numbers given" % len(flat))
+    count = len(flat) // 6
+    pvs = ffi.new("myb_pv[]", max(count, 1))
+    for k in range(count):
+        pvs[k].r = flat[6 * k:6 * k + 3]
+        pvs[k].v = flat[6 * k + 3:6 * k + 6]
+    return pvs, count
+
+
+def _elements_array(elements, ctype, fields):
+    elements = list(elements)
+    made = ffi.new(ctype + "[]", max(len(elements), 1))
+    for k, e in enumerate(elements):
+        values = _flat(e)
+        if len(values) != 6:
+            raise ValueError("a set of elements is six numbers, %d given" % len(values))
+        for name, value in zip(fields, values):
+            setattr(made[k], name, value)
+    return made, len(elements)
+
+
+def elements_from_state_many(mu, states):
+    """elements_from_state for a series (myb_elements_from_pv_many): a list of Elements."""
+    pvs, count = _pvs(states)
+    out = ffi.new("myb_elements[]", max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_elements_from_pv_many(float(mu), pvs, count, out, failed), failed)
+    return [Elements(e.p, e.e, e.i, e.raan, e.argp, e.nu) for e in (out[k] for k in range(count))]
+
+
+def state_from_elements_many(mu, elements):
+    """state_from_elements for a series (myb_pv_from_elements_many): a list of states."""
+    given, count = _elements_array(elements, "myb_elements", Elements._fields)
+    out = ffi.new("myb_pv[]", max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_pv_from_elements_many(float(mu), given, count, out, failed), failed)
+    return [_state_of(out[k]) for k in range(count)]
+
+
+def equinoctial_from_state(mu, state):
+    """The modified equinoctial elements (p, f, g, h, k, L) of a state."""
+    out = ffi.new("myb_equinoctial*")
+    _check(lib.myb_equinoctial_from_pv(float(mu), _pv(state), out))
+    return Equinoctial(out.p, out.f, out.g, out.h, out.k, out.l)
+
+
+def state_from_equinoctial(mu, elements):
+    given = ffi.new("myb_equinoctial*", dict(zip(Equinoctial._fields,
+                                                 (float(v) for v in elements))))
+    out = ffi.new("myb_pv*")
+    _check(lib.myb_pv_from_equinoctial(float(mu), given, out))
+    return _state_of(out)
+
+
+def equinoctial_from_state_many(mu, states):
+    pvs, count = _pvs(states)
+    out = ffi.new("myb_equinoctial[]", max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_equinoctial_from_pv_many(float(mu), pvs, count, out, failed), failed)
+    return [Equinoctial(e.p, e.f, e.g, e.h, e.k, e.l) for e in (out[k] for k in range(count))]
+
+
+def state_from_equinoctial_many(mu, elements):
+    given, count = _elements_array(elements, "myb_equinoctial", Equinoctial._fields)
+    out = ffi.new("myb_pv[]", max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_pv_from_equinoctial_many(float(mu), given, count, out, failed), failed)
+    return [_state_of(out[k]) for k in range(count)]
+
+
+def kepler_propagate_many(mu, state, dts):
+    """The states at the offsets dts from one state (myb_kepler_propagate_many): a list."""
+    given, count = _series(dts, 1, "dt")
+    out = ffi.new("myb_pv[]", max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_kepler_propagate_many(float(mu), _pv(state), given, count, out,
+                                                failed), failed)
+    return [_state_of(out[k]) for k in range(count)]
+
+
+def kepler_stm_many(mu, state, dts):
+    """The states at the offsets dts and their transition matrices (myb_kepler_stm_many):
+    a list of states and a list of matrices (six rows each)."""
+    given, count = _series(dts, 1, "dt")
+    out = ffi.new("myb_pv[]", max(count, 1))
+    stm = ffi.new("double[]", 36 * max(count, 1))
+    failed = ffi.new("size_t*")
+    _failed_check(lib.myb_kepler_stm_many(float(mu), _pv(state), given, count, out, stm, failed),
+                  failed)
+    flat = _rows(stm, 6 * count, 6)
+    return ([_state_of(out[k]) for k in range(count)],
+            [flat[6 * k:6 * k + 6] for k in range(count)])
+
+
 # ---- Ephemerides and fields ---------------------------------------------------------------------
 
 class Ephemeris(_Owner):
@@ -225,33 +360,88 @@ class Ephemeris(_Owner):
         diag = ffi.new("myb_diag*")
         _check(lib.myb_spk_load_file(self.pointer, str(path).encode("utf-8"), diag), diag)
 
+    def load_memory(self, data):
+        """Adds an SPK image (bytes); the set keeps it."""
+        image = ffi.from_buffer(bytes(data))
+        diag = ffi.new("myb_diag*")
+        _check(lib.myb_spk_load_memory(self.pointer, image, len(image), diag), diag)
+        self._kept.append(image)
+
     def state(self, target, center, instant):
-        """Target relative to center at an instant of the files' time scale."""
+        """Target relative to center at an instant (or seconds past J2000) of the files'
+        time scale."""
         y = ffi.new("double[6]")
-        _check(lib.myb_spk_state(self.pointer, int(target), int(center), instant, y, ffi.NULL))
+        _check(lib.myb_spk_state(self.pointer, int(target), int(center), _instant(instant), y,
+                                 ffi.NULL))
         return tuple(y)
 
+    def state_in(self, graph, target, center, instant, frame):
+        """The state in `frame` of a graph of frames (myb_spk_state_in)."""
+        y = ffi.new("double[6]")
+        _settle(lib.myb_spk_state_in(self.pointer, graph.pointer, int(target), int(center),
+                                     _instant(instant), int(frame), y), graph)
+        return tuple(y)
+
+    def state_many(self, target, center, instants, frames=False):
+        """The states at many instants (myb_spk_state_many): a list of states, and with
+        frames=True also the list of the frame codes."""
+        given, count = _times(instants)
+        out = ffi.new("double[]", 6 * max(count, 1))
+        codes = ffi.new("int32_t[]", max(count, 1)) if frames else ffi.NULL
+        failed = ffi.new("size_t*")
+        _failed_check(lib.myb_spk_state_many(self.pointer, int(target), int(center), given,
+                                             count, out, codes, failed), failed)
+        states = _rows(out, count, 6)
+        return (states, list(_tuple(codes, count))) if frames else states
+
+    def state_in_many(self, graph, target, center, instants, frame):
+        """state_in at many instants (myb_spk_state_in_many): a list of states."""
+        given, count = _times(instants)
+        out = ffi.new("double[]", 6 * max(count, 1))
+        failed = ffi.new("size_t*")
+        status = lib.myb_spk_state_in_many(self.pointer, graph.pointer, int(target), int(center),
+                                           given, count, int(frame), out, failed)
+        _settle(status, graph, index=None if status == lib.MYB_OK else failed[0])
+        return _rows(out, count, 6)
+
     def segments(self):
-        """The segments of the set: target, center, frame, type, start, stop, name."""
+        """The segments of the set: target, center, frame, type, start, stop, file, name."""
         info = ffi.new("myb_spk_segment_info*")
         found = []
         for index in range(lib.myb_spk_segment_count(self.pointer)):
             lib.myb_spk_segment(self.pointer, index, info)
             found.append({"target": info.target, "center": info.center, "frame": info.frame,
                           "type": info.type, "start": info.start, "stop": info.stop,
+                          "file": info.file,
                           "name": ffi.string(info.name).decode("ascii", "replace")})
         return found
 
-    def body(self, target, center, frame=0):
-        """A body of the set as the state of a body of an Environment."""
-        return _SpkBody(self, target, center, frame)
+    def segment_size(self, index):
+        return lib.myb_spk_segment_size(self.pointer, int(index))
+
+    def segment_data(self, index, offset=0, count=None):
+        """Double words of a segment (myb_spk_segment_data): a list of floats."""
+        if count is None:
+            count = self.segment_size(index) - int(offset)
+        out = ffi.new("double[]", max(int(count), 1))
+        _check(lib.myb_spk_segment_data(self.pointer, int(index), int(offset), int(count), out))
+        return list(_tuple(out, int(count)))
+
+    def body(self, target, center, frame=0, graph=None):
+        """A body of the set as a provider of states (myb_spk_body_state): for a body of an
+        Environment, a System, a chain of legs, the observables."""
+        return _SpkBody(self, target, center, frame, graph)
 
 
 class _SpkBody:
-    def __init__(self, ephemeris, target, center, frame):
+    def __init__(self, ephemeris, target, center, frame, graph=None):
         self.ephemeris = ephemeris
+        self.graph = graph
         self.context = ffi.new("myb_spk_body*", {"spk": ephemeris.pointer, "target": int(target),
                                                  "center": int(center), "frame": int(frame)})
+        if graph is not None:
+            self.context.graph = graph.pointer
+        self._kept = [ephemeris, graph]
 
 
 class GravityField(_Owner):
@@ -274,9 +464,7 @@ class GravityField(_Owner):
         diag = ffi.new("myb_diag*")
         _check(lib.myb_gravity_field_load_icgem_file(str(path).encode("utf-8"), int(max_degree),
                                                      ffi.NULL, out, diag), diag)
-        field = cls.__new__(cls)
-        _Owner.__init__(field, out[0])
-        return field
+        return cls._adopt(out[0])
 
     @property
     def degree(self):
@@ -291,27 +479,32 @@ class GravityField(_Owner):
         return lib.myb_gravity_field_radius(self.pointer)
 
 
+class Polyhedron(_Owner):
+    """A closed triangular mesh (myb/grav.h): the shape of a body for light, contact and
+    its field. vertices: three numbers each (m); faces: three vertex indices each,
+    counter-clockwise seen from outside; g_rho: G times the density (s^-2)."""
+
+    _destroy = staticmethod(lib.myb_polyhedron_destroy)
+
+    def __init__(self, vertices, faces, g_rho=0.0):
+        points, count = _series(vertices, 3, "vertices")
+        indices = [int(k) for k in _flat(faces)]
+        if len(indices) % 3:
+            raise ValueError("faces: three indices each")
+        made = ffi.new("size_t[]", indices or 1)
+        out = ffi.new("myb_polyhedron**")
+        _check(lib.myb_polyhedron_create(points, count, made, len(indices) // 3, float(g_rho),
+                                         ffi.NULL, out))
+        super().__init__(out[0])
+
+    def volume(self):
+        """(volume m^3, centre of mass)."""
+        center = ffi.new("double[3]")
+        volume = lib.myb_polyhedron_volume(self.pointer, center)
+        return volume, tuple(center)
+
+
 # ---- The environment ----------------------------------------------------------------------------
-
-class _Calls:
-    """Python callables behind the C callbacks of an object. An exception raised by one
-    cannot cross the C code: it is kept, the callback reports a failure, and the call of the
-    library that was going on raises it again."""
-
-    def __init__(self):
-        self.pending = None
-
-    def failed(self, error):
-        if self.pending is None:
-            self.pending = error
-        return error.status if isinstance(error, Error) else lib.MYB_E_DOMAIN
-
-    def check(self, status, diag=None):
-        pending, self.pending = self.pending, None
-        if pending is not None:
-            raise pending
-        _check(status, diag)
-
 
 class Environment(_Owner):
     """The bodies of a scenario (myb/env.h): what the terms of a force model ask for.
@@ -338,36 +531,29 @@ class Environment(_Owner):
         self._kept += [timesys, scale_text]
         self._calls = _Calls()
 
-    def add_body(self, id, gm, state=None, radius=0.0, luminosity=0.0, limb=(0.0, 0.0)):
+    def add_body(self, id, gm, state=None, radius=0.0, luminosity=0.0, limb=(0.0, 0.0),
+                 orientation=None, spin=(0.0, 0.0, 0.0)):
         """Adds a body and returns its index. state: None for the body at the origin; a
-        body of an Ephemeris (Ephemeris.body); or a callable f(seconds) -> six numbers, the
-        state relative to the origin at an instant given in seconds past J2000 of the
-        model's scale."""
+        body of an Ephemeris (Ephemeris.body); a Provider; or a callable f(seconds) -> six
+        numbers, the state relative to the origin at an instant given in seconds past J2000
+        of the model's scale. orientation (None: the inertial axes): a Provider of
+        myb/frames.h or a callable f(seconds) -> Rotation or Orientation."""
         body = ffi.new("myb_env_body*")
         body.id = int(id)
         body.gm = float(gm)
         body.radius = float(radius)
         body.luminosity = float(luminosity)
         body.limb = [float(limb[0]), float(limb[1])]
-        if isinstance(state, _SpkBody):
-            body.state = lib.myb_spk_body_state
-            body.state_context = state.context
-            self._kept.append(state)
-        elif state is not None:
-            calls = self._calls
-
-            @ffi.callback("myb_status(void*, myb_time, double[6])")
-            def provider(context, instant, out):
-                try:
-                    values = [float(v) for v in state(lib.myb_time_seconds(instant))]
-                    if len(values) != 6:
-                        raise ValueError("a state is six numbers, %d given" % len(values))
-                    out[0:6] = values
-                    return lib.MYB_OK
-                except BaseException as error:  # noqa: B902 - nothing may cross the C code
-                    return calls.failed(error)
-
-            body.state = provider
+        body.spin = list(_doubles(spin, 3, "spin"))
+        if state is not None:
+            provider = _state_provider(state, self._calls)
+            body.state = provider.function
+            body.state_context = provider.context
+            self._kept.append(provider)
+        if orientation is not None:
+            provider = _orientation_provider(orientation, self._calls)
+            body.orientation = provider.function
+            body.orientation_context = provider.context
             self._kept.append(provider)
         index = ffi.new("size_t*")
         _check(lib.myb_env_add_body(self.pointer, body, index))
@@ -392,8 +578,9 @@ class Environment(_Owner):
 # ---- The force model ----------------------------------------------------------------------------
 
 class ForceModel(_Owner):
-    """The forces on one object (myb/model.h) with the ready-made terms of myb/env.h. The
-    model keeps alive the environments, fields and structures its terms point to."""
+    """The forces on one object (myb/model.h) with the ready-made terms of myb/env.h and
+    the terms of the CR3BP, of thrust arcs and of the Q-law. The model keeps alive the
+    environments, fields and structures its terms point to."""
 
     _destroy = staticmethod(lib.myb_force_model_destroy)
 
@@ -402,12 +589,14 @@ class ForceModel(_Owner):
         _check(lib.myb_force_model_create(ffi.NULL, out))
         super().__init__(out[0])
         self._calls = _Calls()
+        self._contexts = {}
 
     def _add(self, name, function, jacobian, context, *kept):
         index = ffi.new("size_t*")
         _check(lib.myb_force_model_add(self.pointer, name.encode("ascii"), function, jacobian,
                                        context, index))
         self._kept += [context] + list(kept)
+        self._contexts[index[0]] = context
         return index[0]
 
     def add_raw(self, name, function, jacobian, context, *kept):
@@ -415,6 +604,11 @@ class ForceModel(_Owner):
         ffi.NULL) and their context (cdata). The context and whatever else is given are
         kept alive with the model."""
         return self._add(name, function, jacobian, context, *kept)
+
+    def term_context(self, index):
+        """The context (cdata) of a term added through this class — for a parameter
+        (add_parameter with ffi.addressof) or to change a value in place."""
+        return self._contexts[int(index)]
 
     def add_point_mass(self, name, gm):
         """The attraction of a point mass at the origin."""
@@ -498,6 +692,20 @@ class ForceModel(_Owner):
         return self._add(name, lib.myb_term_schwarzschild, lib.myb_term_schwarzschild_jacobian,
                          term, env)
 
+    def add_cr3bp(self, name, mu):
+        """The circular restricted three-body problem in its rotating frame and units
+        (myb_cr3bp_term, with its Jacobian)."""
+        term = ffi.new("double*", float(mu))
+        return self._add(name, lib.myb_cr3bp_term, lib.myb_cr3bp_term_jacobian, term)
+
+    def add_thrust(self, name, thrust):
+        """The burn arcs of a myb.targeting.Thrust (myb_thrust_acceleration)."""
+        return self._add(name, lib.myb_thrust_acceleration, ffi.NULL, thrust.pointer, thrust)
+
+    def add_qlaw(self, name, engine):
+        """The engine of a Q-law, a myb.targeting.QLawTerm (myb_term_qlaw)."""
+        return self._add(name, lib.myb_term_qlaw, ffi.NULL, engine.pointer, engine)
+
     def add_term(self, name, function):
         """A term of the caller's own: function(t, x, v) -> the three components of its
         acceleration at the model time t and the state (x, v), each a tuple of three. Its
@@ -524,12 +732,8 @@ class ForceModel(_Owner):
         return tuple(a)
 
     def _check(self, status):
-        """Raises what a callable of the model, or of one of its environments, raised."""
-        for kept in self._kept:
-            calls = getattr(kept, "_calls", None)
-            if calls is not None and calls.pending is not None:
-                self._calls.pending, calls.pending = self._calls.pending or calls.pending, None
-        self._calls.check(status)
+        """Raises what a callable of the model, or of what it keeps, raised."""
+        _settle(status, self)
 
     @property
     def term_names(self):
@@ -541,6 +745,28 @@ class ForceModel(_Owner):
 
     def enabled(self, index):
         return lib.myb_force_model_enabled(self.pointer, int(index)) != 0
+
+    def add_parameter(self, name, value, step, *kept):
+        """A parameter for the variational equations and the estimators: value is a double*
+        (cdata: ffi.new("double*", x), or ffi.addressof(model.term_context(k), "member"))
+        that a term reads; step that of its central differences. Returns its index."""
+        index = ffi.new("size_t*")
+        _check(lib.myb_force_model_add_parameter(self.pointer, name.encode("ascii"), value,
+                                                 float(step), index))
+        self._kept += [value] + list(kept)
+        return index[0]
+
+    def bind_parameter(self, parameter, term):
+        _check(lib.myb_force_model_bind_parameter(self.pointer, int(parameter), int(term)))
+
+    @property
+    def parameter_names(self):
+        return [ffi.string(lib.myb_force_model_parameter_name(self.pointer, k)).decode("ascii")
+                for k in range(lib.myb_force_model_parameter_count(self.pointer))]
+
+    def parameter(self, index):
+        """The present value of a parameter (the estimators correct it in place)."""
+        return lib.myb_force_model_parameter(self.pointer, int(index))[0]
 
 
 # ---- Propagation --------------------------------------------------------------------------------
@@ -634,22 +860,13 @@ class Orbit(_Owner):
 _notations = {"kvn": lib.MYB_ODM_KVN, "xml": lib.MYB_ODM_XML}
 
 
-def _text(write):
-    """A text of the library's writers: they tell the length when the buffer is too small."""
-    length = ffi.new("size_t*")
-    status = write(ffi.NULL, 0, length)
-    if status not in (lib.MYB_OK, lib.MYB_E_OVERFLOW):
-        _check(status)
-    buffer = ffi.new("char[]", length[0] + 1)
-    _check(write(buffer, length[0] + 1, length))
-    return ffi.string(buffer, length[0]).decode("utf-8")
-
-
-def write_oem(originator, creation_date, segments, notation="kvn"):
+def write_oem(originator, creation_date, segments, notation=None):
     """An orbit ephemeris message of the CCSDS as text. creation_date and the epochs are
     calendar labels (year, month, day, hour, minute, second); each segment is a mapping
     with object_name, object_id, center_name, ref_frame, time_system, epochs and states
-    (six numbers each, m and m/s), and optionally interpolation with interpolation_degree."""
+    (six numbers each, m and m/s), and optionally interpolation with interpolation_degree,
+    and covariances: a list of (epoch, 6 x 6 matrix) with covariance_frame. notation: "kvn"
+    or "xml" (myb_oem_write_as), None for the default of myb_oem_write (KVN)."""
     kept = []
 
     def text(value):
@@ -673,29 +890,39 @@ def write_oem(originator, creation_date, segments, notation="kvn"):
         made[k].count = len(epochs)
         made[k].epochs = labels
         made[k].states = values
+        covariances = list(segment.get("covariances", ()))
+        if covariances:
+            cov_epochs = ffi.new("myb_calendar[]", [_calendar(e)[0] for e, _ in covariances])
+            numbers = [_flat(m) for _, m in covariances]
+            if any(len(m) != 36 for m in numbers):
+                raise ValueError("segment %d: a covariance is 36 numbers" % k)
+            matrices = ffi.new("double[]", [v for m in numbers for v in m])
+            kept += [cov_epochs, matrices]
+            made[k].covariance_count = len(covariances)
+            made[k].covariance_epochs = cov_epochs
+            made[k].covariances = matrices
+            if segment.get("covariance_frame") is not None:
+                made[k].covariance_frame = text(segment["covariance_frame"])
     data = ffi.new("myb_oem_data*")
     data.originator = text(originator)
     data.creation_date = _calendar(creation_date)[0]
     data.segment_count = len(segments)
     data.segments = made
+    if notation is None:
+        return _text(lambda buffer, size, length: lib.myb_oem_write(data, buffer, size, length))
     return _text(lambda buffer, size, length: lib.myb_oem_write_as(
         data, _notations[notation], buffer, size, length))
 
 
-def read_oem(text):
-    """An orbit ephemeris message in either notation: a list of segments, each a mapping
-    with "meta" (the keywords of its metadata) and "states" (pairs of a calendar label and
-    six numbers); the keywords asked for most are also keys of the segment itself."""
-    raw = text.encode("utf-8")
-    out = ffi.new("myb_oem**")
-    diag = ffi.new("myb_diag*")
-    _check(lib.myb_oem_load(raw, len(raw), ffi.NULL, out, diag), diag)
-    oem = ffi.gc(out[0], lib.myb_oem_destroy)
+def _read_oem(oem):
     keys = ("OBJECT_NAME", "OBJECT_ID", "CENTER_NAME", "REF_FRAME", "TIME_SYSTEM", "START_TIME",
             "STOP_TIME", "INTERPOLATION", "INTERPOLATION_DEGREE")
     segments = []
     epoch = ffi.new("myb_calendar*")
     y = ffi.new("double[6]")
+    a = ffi.new("double[3]")
+    frame = ffi.new("char**")
+    matrix = ffi.new("double[36]")
     for s in range(lib.myb_oem_segment_count(oem)):
         meta = {}
         for key in keys:
@@ -703,8 +930,73 @@ def read_oem(text):
             if value != ffi.NULL:
                 meta[key] = ffi.string(value).decode("utf-8")
         states = []
+        accelerations = []
         for k in range(lib.myb_oem_state_count(oem, s)):
-            lib.myb_oem_state(oem, s, k, epoch, y, ffi.NULL)
+            given = lib.myb_oem_state(oem, s, k, epoch, y, a)
             states.append((_label(epoch), tuple(y)))
-        segments.append({"meta": meta, "states": states})
+            accelerations.append(tuple(a) if given == 3 else None)
+        covariances = []
+        for k in range(lib.myb_oem_covariance_count(oem, s)):
+            lib.myb_oem_covariance(oem, s, k, epoch, frame, matrix)
+            covariances.append((_label(epoch), _string(frame[0]), _rows(matrix, 6, 6)))
+        segment = {"meta": meta, "states": states, "covariances": covariances}
+        if any(acceleration is not None for acceleration in accelerations):
+            segment["accelerations"] = accelerations
+        segments.append(segment)
     return segments
+
+
+def read_oem(text):
+    """An orbit ephemeris message in either notation: a list of segments, each a mapping
+    with "meta" (the keywords of its metadata), "states" (pairs of a calendar label and
+    six numbers), "covariances" (triples of a label, the frame or None and six rows) and,
+    where the lines give them, "accelerations" (three numbers or None for each state)."""
+    raw = text.encode("utf-8")
+    out = ffi.new("myb_oem**")
+    diag = ffi.new("myb_diag*")
+    _check(lib.myb_oem_load(raw, len(raw), ffi.NULL, out, diag), diag)
+    return _read_oem(ffi.gc(out[0], lib.myb_oem_destroy))
+
+
+def read_oem_file(path):
+    out = ffi.new("myb_oem**")
+    diag = ffi.new("myb_diag*")
+    _check(lib.myb_oem_load_file(str(path).encode("utf-8"), ffi.NULL, out, diag), diag)
+    return _read_oem(ffi.gc(out[0], lib.myb_oem_destroy))
+
+
+def oem_header(text, key):
+    """The value of a header keyword of an ephemeris message (myb_oem_header), or None."""
+    raw = text.encode("utf-8")
+    out = ffi.new("myb_oem**")
+    diag = ffi.new("myb_diag*")
+    _check(lib.myb_oem_load(raw, len(raw), ffi.NULL, out, diag), diag)
+    oem = ffi.gc(out[0], lib.myb_oem_destroy)
+    return _string(lib.myb_oem_header(oem, key.encode("ascii")))
+
+
+# ---- The rest of the interface -------------------------------------------------------------------
+
+from . import attitude, cr3bp, estim, files, frames, nbody, observe, targeting  # noqa: E402
+from .attitude import *  # noqa: E402,F401,F403
+from .cr3bp import *  # noqa: E402,F401,F403
+from .estim import *  # noqa: E402,F401,F403
+from .files import *  # noqa: E402,F401,F403
+from .frames import *  # noqa: E402,F401,F403
+from .nbody import *  # noqa: E402,F401,F403
+from .observe import *  # noqa: E402,F401,F403
+from .targeting import *  # noqa: E402,F401,F403
+
+__all__ = [
+    "Elements", "Environment", "Ephemeris", "Equinoctial", "Error", "ForceModel",
+    "GravityField", "KernelPool", "Orbit", "Orientation", "Polyhedron", "Provider", "Rotation",
+    "TimeSystem", "calendar_to_time", "calendar_to_time_many", "elements_from_state",
+    "elements_from_state_many", "equinoctial_from_state", "equinoctial_from_state_many",
+    "extension", "ffi", "kepler_propagate", "kepler_propagate_many", "kepler_stm",
+    "kepler_stm_many", "lib", "library_path", "oem_header", "read_oem", "read_oem_file",
+    "seconds", "seconds_many", "state_from_elements", "state_from_elements_many",
+    "state_from_equinoctial", "state_from_equinoctial_many", "time_from_seconds",
+    "time_from_seconds_many", "time_to_calendar", "time_to_calendar_many", "version",
+    "write_oem",
+] + attitude.__all__ + cr3bp.__all__ + estim.__all__ + files.__all__ + frames.__all__ \
+    + nbody.__all__ + observe.__all__ + targeting.__all__

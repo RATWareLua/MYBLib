@@ -22,9 +22,14 @@
 -- same calls made in C. States are position (m) and velocity (m/s); the times of a model are
 -- seconds from the epoch of its environment.
 --
--- The rest of the interface (N bodies, estimation, CR3BP, targeting, attitude, observables,
--- the writers of files) is taken through "Myb.C"; the two mix freely: each object gives its
--- 'Foreign.ForeignPtr.ForeignPtr' (forceModelPtr, ...).
+-- The rest of the interface has its modules too: N bodies ("Myb.NBody", "Myb.System"),
+-- estimation ("Myb.Estimation"), the restricted three-body problem ("Myb.Cr3bp"), targeting and
+-- optimal transfers ("Myb.Transfer", "Myb.Optimal", "Myb.Thrust", "Myb.Iod", "Myb.Relative"),
+-- conjunctions and uncertainty ("Myb.Conjunction", "Myb.Uncertainty"), attitude
+-- ("Myb.Attitude"), observables ("Myb.Observe"), files ("Myb.Files", "Myb.Ck", "Myb.Message"),
+-- providers ("Myb.Source") and the array forms of frames ("Myb.Frames"); two-line elements are
+-- in the library myb:tle ("Myb.Tle"). What has no upper layer is taken through "Myb.C"; the two
+-- mix freely: each object gives its 'Foreign.ForeignPtr.ForeignPtr' (forceModelPtr, ...).
 --
 -- > import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
 -- > import qualified Myb
@@ -51,15 +56,49 @@ module Myb
   , module Myb.Force
   , module Myb.Orbit
   , module Myb.Message
+  , module Myb.Source
+  , module Myb.NBody
+  , module Myb.System
+  , module Myb.Estimation
+  , module Myb.Cr3bp
+  , module Myb.Transfer
+  , module Myb.Optimal
+  , module Myb.Thrust
+  , module Myb.Iod
+  , module Myb.Relative
+  , module Myb.Conjunction
+  , module Myb.Uncertainty
+  , module Myb.Attitude
+  , module Myb.Observe
+  , module Myb.Files
+  , module Myb.Ck
+  , module Myb.Frames
   ) where
 
+import Myb.Attitude
+import Myb.Ck
+import Myb.Conjunction
+import Myb.Cr3bp
 import Myb.Environment
 import Myb.Ephemeris
 import Myb.Error
+import Myb.Estimation
+import Myb.Files
 import Myb.Force
+import Myb.Frames
 import Myb.Gravity
+import Myb.Iod
 import Myb.Kepler
 import Myb.Message
+import Myb.NBody
+import Myb.Observe
+import Myb.Optimal
 import Myb.Orbit
+import Myb.Relative
+import Myb.Source
+import Myb.System
+import Myb.Thrust
 import Myb.Time
+import Myb.Transfer
 import Myb.Types
+import Myb.Uncertainty

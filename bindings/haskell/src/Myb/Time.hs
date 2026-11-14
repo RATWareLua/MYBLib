@@ -6,6 +6,11 @@ module Myb.Time
     KernelPool
   , newKernelPool
   , loadKernelFile
+  , loadKernelText
+  , KernelType (..)
+  , describeKernel
+  , kernelNumbers
+  , kernelString
   , kernelPoolPtr
     -- * Time scales
   , TimeSystem
@@ -19,13 +24,24 @@ module Myb.Time
   , Calendar (..)
   , timeFromSeconds
   , seconds
+    -- * Array forms
+  , timeFromSecondsMany
+  , secondsMany
+  , calendarToTimeMany
+  , timeToCalendarMany
+  , convertTimeMany
+  , fromUtcMany
+  , toUtcMany
   ) where
 
 import Foreign.ForeignPtr (ForeignPtr, withForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray, peekArray, withArrayLen)
 import Foreign.Marshal.Utils (with)
-import Foreign.Ptr (nullPtr)
+import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Storable (peek)
+import qualified GHC.Foreign as Foreign
+import GHC.IO.Encoding (char8)
 import qualified Myb.C as C
 import Myb.Error
 import Myb.Internal
@@ -97,3 +113,104 @@ toUtc ts@(TimeSystem system) t from = do
 
 timeSystemPtr :: TimeSystem -> ForeignPtr C.Myb_timesys
 timeSystemPtr (TimeSystem system) = system
+
+-- ---- The pool's variables (myb/io.h) ---------------------------------------------------------
+
+-- | Loads kernel text into the pool (atomic: on an error the pool is unchanged).
+loadKernelText :: KernelPool -> String -> IO (Result ())
+loadKernelText (KernelPool pool) text =
+  withTextLen text $ \ctext n -> withForeignPtr pool $ \p -> withDiag (C.myb_kpool_load_text p ctext n)
+
+-- | What a variable holds.
+data KernelType = KernelNumbers | KernelStrings
+  deriving (Eq, Show)
+
+-- | The type and the number of values of a variable.
+describeKernel :: KernelPool -> String -> IO (Result (KernelType, Int))
+describeKernel (KernelPool pool) name =
+  withText name $ \cname -> withForeignPtr pool $ \p -> alloca $ \kind -> alloca $ \count -> do
+    code <- C.myb_kpool_describe p cname kind count
+    andThen code $ do
+      k <- peek kind
+      n <- peek count
+      pure (Right (if k == C.MYB_KVAR_STRINGS then KernelStrings else KernelNumbers, fromSize n))
+
+-- | The numeric values of a variable.
+kernelNumbers :: KernelPool -> String -> IO (Result [Double])
+kernelNumbers (KernelPool pool) name =
+  withText name $ \cname -> withForeignPtr pool $ \p -> alloca $ \values -> alloca $ \count -> do
+    code <- C.myb_kpool_numbers p cname values count
+    andThen code $ do
+      n <- fromSize <$> peek count
+      v <- peek values
+      Right <$> peekDoubles n v
+
+-- | One string value of a variable.
+kernelString :: KernelPool -> String -> Int -> IO (Result String)
+kernelString (KernelPool pool) name index =
+  withText name $ \cname -> withForeignPtr pool $ \p -> alloca $ \value -> alloca $ \len -> do
+    code <- C.myb_kpool_string p cname (toSize index) value len
+    andThen code $ do
+      v <- peek value
+      n <- fromSize <$> peek len
+      Right <$> Foreign.peekCStringLen char8 (v, n)
+
+-- ---- Array forms ---------------------------------------------------------------------------
+
+withTimes :: [Time] -> (Int -> Ptr C.Myb_time -> IO a) -> IO a
+withTimes ts = withArrayLen (map timeToC ts)
+
+-- | myb_time_from_seconds of every value.
+timeFromSecondsMany :: [Double] -> [Time]
+timeFromSecondsMany xs = pureCall $ withDoublesLen xs $ \n px -> allocaArray (max 1 n) $ \o -> do
+  C.myb_time_from_seconds_many px (toSize n) o
+  map timeFromC <$> peekArray n o
+
+-- | myb_time_seconds of every instant.
+secondsMany :: [Time] -> [Double]
+secondsMany ts = pureCall $ withTimes ts $ \n pt -> allocaArray (max 1 n) $ \o -> do
+  C.myb_time_seconds_many pt (toSize n) o
+  peekDoubles n o
+
+-- | The instants of calendar labels on their own scale (myb_calendar_to_time).
+calendarToTimeMany :: [Calendar] -> Result [Time]
+calendarToTimeMany labels = pureCall $ withArrayLen (map calendarToC labels) $ \n pc -> allocaArray (max 1 n) $ \o -> do
+  done <- arrayForm (C.myb_calendar_to_time_many pc (toSize n) o)
+  either (pure . Left) (const (Right . map timeFromC <$> peekArray n o)) done
+
+-- | The calendar labels of instants (myb_time_to_calendar).
+timeToCalendarMany :: [Time] -> [Calendar]
+timeToCalendarMany ts = pureCall $ withTimes ts $ \n pt -> allocaArray (max 1 n) $ \o -> do
+  C.myb_time_to_calendar_many pt (toSize n) o
+  map calendarFromC <$> peekArray n o
+
+-- | 'convertTime' of every instant.
+convertTimeMany :: TimeSystem -> [Time] -> String -> String -> IO (Result [Time])
+convertTimeMany ts@(TimeSystem system) instants from to = do
+  scales <- (,) <$> scale ts from <*> scale ts to
+  case scales of
+    (Right a, Right b) -> withForeignPtr system $ \s -> withTimes instants $ \n pt -> allocaArray (max 1 n) $ \o -> do
+      done <- arrayForm (C.myb_timesys_convert_many s pt (toSize n) a b o)
+      either (pure . Left) (const (Right . map timeFromC <$> peekArray n o)) done
+    (Left e, _) -> pure (Left e)
+    (_, Left e) -> pure (Left e)
+
+-- | 'fromUtc' of every label.
+fromUtcMany :: TimeSystem -> [Calendar] -> String -> IO (Result [Time])
+fromUtcMany ts@(TimeSystem system) labels to = do
+  target <- scale ts to
+  case target of
+    Left e -> pure (Left e)
+    Right b -> withForeignPtr system $ \s -> withArrayLen (map calendarToC labels) $ \n pc -> allocaArray (max 1 n) $ \o -> do
+      done <- arrayForm (C.myb_timesys_from_utc_many s pc (toSize n) b o)
+      either (pure . Left) (const (Right . map timeFromC <$> peekArray n o)) done
+
+-- | 'toUtc' of every instant.
+toUtcMany :: TimeSystem -> [Time] -> String -> IO (Result [Calendar])
+toUtcMany ts@(TimeSystem system) instants from = do
+  source <- scale ts from
+  case source of
+    Left e -> pure (Left e)
+    Right a -> withForeignPtr system $ \s -> withTimes instants $ \n pt -> allocaArray (max 1 n) $ \o -> do
+      done <- arrayForm (C.myb_timesys_to_utc_many s pt (toSize n) a o)
+      either (pure . Left) (const (Right . map calendarFromC <$> peekArray n o)) done

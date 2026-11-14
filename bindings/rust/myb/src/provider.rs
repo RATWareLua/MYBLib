@@ -6,7 +6,9 @@
 //!   ([`SpkBody`]);
 //! * [`OrientationSource`] — the rotation of a body-fixed frame at an instant
 //!   (`myb_orientation_function` of `myb/frames.h`): a closure, a constant rotation
-//!   ([`FixedOrientation`]) or an instrument of a CK file ([`CkOrientation`]);
+//!   ([`FixedOrientation`]), an instrument of a CK file ([`CkOrientation`]), or the models of
+//!   [`crate::frames`] ([`crate::CipOrientation`], [`crate::PckOrientation`],
+//!   [`crate::WgccreOrientation`], [`crate::GraphOrientation`]);
 //! * [`AttitudeSource`] — the attitude of an object at a model time and state
 //!   (`myb_attitude_function` of `myb/surface.h`): a closure or one of the laws of the library
 //!   ([`Attitude`]).
@@ -15,8 +17,8 @@
 //! it ends the process (it runs inside a function called from C).
 //!
 //! The traits are `unsafe` to implement: what `as_raw` gives is called by C. Implementing one
-//! for a structure of `myb::sys` with its C function (a `myb_cip_orientation` with
-//! `myb_orientation_cip`, say) is how a provider of the lower layer joins the upper one.
+//! for a structure of `myb::sys` with its C function is how a provider of the lower layer
+//! joins the upper one.
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -70,6 +72,7 @@ pub(crate) unsafe extern "C" fn call_state<F: Fn(Time) -> Result<State>>(
 pub struct SpkBody {
     raw: sys::myb_spk_body,
     _ephemeris: Rc<Ephemeris>,
+    _graph: Option<Rc<crate::FrameGraph>>,
 }
 
 impl SpkBody {
@@ -77,6 +80,17 @@ impl SpkBody {
         SpkBody {
             raw: sys::myb_spk_body { spk: ephemeris.as_ptr(), target, center, frame, graph: std::ptr::null() },
             _ephemeris: Rc::clone(ephemeris),
+            _graph: None,
+        }
+    }
+
+    /// The same in `frame` whatever frames the segments are in, turned by a graph of frames
+    /// (`myb_spk_state_in`); the provider keeps the graph.
+    pub fn in_frame(ephemeris: &Rc<Ephemeris>, graph: &Rc<crate::FrameGraph>, target: i32, center: i32, frame: i32) -> Self {
+        SpkBody {
+            raw: sys::myb_spk_body { spk: ephemeris.as_ptr(), target, center, frame, graph: graph.as_ptr() },
+            _ephemeris: Rc::clone(ephemeris),
+            _graph: Some(Rc::clone(graph)),
         }
     }
 

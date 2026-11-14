@@ -81,9 +81,10 @@ MYB_API MYB_NODISCARD myb_status myb_sclk_encode(const myb_sclk* sclk, const cha
                                                  size_t length, double* ticks);
 
 /* Encoded ticks (rounded to a whole tick) -> the string with the partition, every field at
- * the width of its largest value. *length (may be NULL): its characters without the NUL.
- * Errors: MYB_E_RANGE (ticks outside the partitions, a field of more than 18 digits),
- * MYB_E_OVERFLOW (the buffer). */
+ * the width of its largest value. *length (may be NULL): its characters without the NUL;
+ * text may be NULL with size 0 to ask for the length alone (then MYB_E_OVERFLOW). Errors:
+ * MYB_E_RANGE (ticks outside the partitions, a field of more than 18 digits), MYB_E_OVERFLOW
+ * (the buffer). */
 MYB_API MYB_NODISCARD myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text,
                                                  size_t size, size_t* length);
 

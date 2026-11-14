@@ -27,19 +27,38 @@ common lower
 library
   import:          lower
   hs-source-dirs:  src generated/core
+  -- file images in memory (SPK and CK writers, CK files)
+  build-depends:   bytestring
   -- The upper layer, written by hand.
   exposed-modules:
     Myb
+    Myb.Attitude
+    Myb.Ck
+    Myb.Conjunction
+    Myb.Cr3bp
     Myb.Environment
     Myb.Ephemeris
     Myb.Error
+    Myb.Estimation
+    Myb.Files
     Myb.Force
+    Myb.Frames
     Myb.Gravity
+    Myb.Iod
     Myb.Kepler
     Myb.Message
+    Myb.NBody
+    Myb.Observe
+    Myb.Optimal
     Myb.Orbit
+    Myb.Relative
+    Myb.Source
+    Myb.System
+    Myb.Thrust
     Myb.Time
+    Myb.Transfer
     Myb.Types
+    Myb.Uncertainty
   other-modules:
     Myb.Internal
   -- The libraries to link: libmyb (static, or the import library of the shared one) in a
@@ -146,6 +165,15 @@ library troposphere
   build-depends: myb
 -- END myb-generate: ext
 
+-- The upper layer over the library of ext/sgp4: two-line elements and SGP4 (written by hand).
+library tle
+  default-language: Haskell2010
+  visibility:       public
+  hs-source-dirs:   ext-sgp4
+  exposed-modules:  Myb.Tle
+  build-depends:    base >= 4.14 && < 5, myb, myb:sgp4
+  ghc-options:      -Wall
+
 -- Writes the lower layer from the headers: cabal run myb-generate -- <repository root>
 executable myb-generate
   default-language: Haskell2010
@@ -168,5 +196,6 @@ test-suite binding
   default-language: Haskell2010
   hs-source-dirs:   test
   main-is:          Main.hs
-  build-depends:    base >= 4.14 && < 5, filepath, myb, myb:sgp4, process
+  other-modules:    Areas, Checks
+  build-depends:    base >= 4.14 && < 5, bytestring, directory, filepath, myb, myb:sgp4, myb:tle, process
   ghc-options:      -Wall -rtsopts

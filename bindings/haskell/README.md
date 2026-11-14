@@ -7,22 +7,28 @@ objects in space. A cabal package with two layers:
   `include/myb`, by the names of the C headers, generated from them (`tools/Generate.hs`). The
   libraries of `ext/` are the public sublibraries `myb:sgp4`, `myb:nrlmsise00`,
   `myb:troposphere`, `myb:ionosphere`, `myb:jb2008`.
-- `Myb` — the path most programs take, in the manner of the language: kernels and time scales,
-  Kepler, SPK ephemerides, gravity fields, the environment and the force model with its
-  ready-made terms, terms written in Haskell, the orbit with states, events, impulses and the
-  transition matrix, OEM messages written and read. An object of the library is released by its
-  finalizer (`ForeignPtr`); a call that can fail returns `Result a`, that is
-  `Either Error a` with the status of the library; terms, providers and events are Haskell
-  functions.
+- `Myb` — the interface in the manner of the language: kernels and time scales, Kepler, SPK
+  ephemerides, gravity fields, the environment and the force model with its ready-made terms,
+  terms written in Haskell, the orbit with states, events, impulses and the transition matrix;
+  and N bodies and systems of bodies, estimation, the restricted three-body problem, targeting
+  and optimal transfers, thrust, initial orbit determination, relative motion, conjunctions,
+  uncertainty, attitude, observables, files (numbers, tables, SPK and CK written, SP3, OEM,
+  OPM, OMM, OCM, spacecraft clocks), the array forms; two-line elements and SGP4 in the
+  sublibrary `myb:tle`. An object of the library is released by its finalizer (`ForeignPtr`); a
+  call that can fail returns `Result a`, that is `Either Error a` with the status of the
+  library; terms, providers, events, actions, measurements, torques, residuals and the
+  functions of a nonlinear program are Haskell functions.
 
 No arithmetic is done in Haskell: a number has the bits of the same calls made in C. The test
 builds the orbit of `examples/low_orbit.c` from `Myb` and from the C functions and compares the
-15 ascending nodes, the final state and the 776 steps bit for bit.
+15 ascending nodes, the final state and the 776 steps bit for bit, and in every area of the rest
+compares the upper layer with the same calls made through `Myb.C`.
 
 The package needs GHC and cabal-install and nothing else: it depends on the boot packages of GHC
-only (`base`, and `containers`, `directory`, `filepath`, `process` for the generator and the
-test), and `cabal.project` names no repository, so neither `cabal update` nor a network is
-needed. Checked with GHC 9.10.3 and cabal 3.16.1.0.
+only (`base` and `bytestring`, and `containers`, `directory`, `filepath`, `process`,
+`transformers` for the generator, the test and the example), and `cabal.project` names no
+repository, so neither `cabal update` nor a network is needed. Checked with GHC 9.10.3 and
+cabal 3.16.1.0.
 
 ## Linking
 
@@ -105,22 +111,61 @@ needs only `base`. `ExceptT` only carries the `Either` of each call: nothing is 
 | `Myb.Environment` | `Environment`, `Body`: `addOrigin`, `addFromEphemeris`, `addWith` (a Haskell provider), `bodyState` |
 | `Myb.Force` | `ForceModel`: `addPointMass`, `addThirdBody`, `addField`, `addRadiation`, `addDrag`, `addSchwarzschild`, `addTerm` (a Haskell term), `addRaw`, `acceleration` |
 | `Myb.Orbit` | `Orbit`: `start`, `stateAt`, `statesAt`, `nextEvent` (a Haskell event), `kick`, `partials` |
-| `Myb.Message` | `writeOem`, `parseOem` and the reading of a message |
+| `Myb.Message` | OEM written (with covariances) and read (header, states, accelerations, covariances, from text or a file); OPM and OMM parsed and written (`parseOpm`, `opmText`, `parseOmm`, `ommText`); OCM read (blocks, values, lines, trajectory states) and written (`writeOcm`, `ocmFormatLine`) |
+| `Myb.Source` | providers: `fromEphemeris` (a body of an SPK set, passed as its own provider of C), `fromFunction` (a Haskell function), `fromC`; `orientationFunction`, `orientationC` |
+| `Myb.NBody` | `NBody`: `accelerations`, `accelerationsXV`, `setInteraction`, `setRelativity`, `invariants`, `pnInvariants`, `setApproximation` (FMM), `setPool`; `Wh` (Wisdom-Holman): `whStart`, `whStep`, `whIntegrate`, `whState`, `whDense`, `whStatistics` |
+| `Myb.System` | `System`: `setOrientation`, `setField`, `setRotation`, `setTide`, `addFieldPair`, `addFigures`, `addTide`, `addDistortion`, `addPnPair`, `addAction` (a Haskell action), `addLightAction`, `addFrameDragging`, `setMassRate`, `addGuided`, `addContact`, `systemAcceleration`, `systemInertia`, `systemPartials`, the (un)packing of rotations and spins; `SystemIntegrator` (IAS15); `advance`, `merge`, `bounce` |
+| `Myb.Estimation` | `Station`, `Measure` (ready-made, with the light time, off the centre of mass, or a Haskell function), `evaluateMeasure`, `Observation`, `fitOrbit`, `Filter` (`filterStart`, `filterUpdate`, `filterPredict`, `filterSmooth`, `filterStep`, the shifts) |
+| `Myb.Cr3bp` | Lagrange points, Jacobi, `correct`, `monodromy`, `stability`, `manifold`, `richardson`, the families (`orbitCorrect`, `orbitContinue`), tori (`torusFromOrbit`, `torusContinue`, `torusState`, `torusStability`, `torusManifold`), `propagate` to a section, the frames of real bodies, `addCr3bp` (the term) |
+| `Myb.Transfer` | `bplane`, the patched conics, `shoot` (a Haskell residual), `lambert` |
+| `Myb.Optimal` | `indirectSolve`, `indirectSample`, `nlpSolve` (a Haskell program), Sims and Flanagan, chains of legs (`Chain`, powered flybys, `chainFlyby`, `chainSize`, `chainGuess`, `chainEvaluate`, `chainSolve`) |
+| `Myb.Thrust` | arcs of thrust (`thrustInit`, `addThrust`), `equinoctialRates`, Edelbaum, the Q-law (`qlawDirection`, `addQlaw`, `qlawFly`) |
+| `Myb.Iod` | `gibbs`, `herrickGibbs`, `gauss`, `laplace`, `doubleR`, `gooding` |
+| `Myb.Relative` | relative states, their transition matrices, `rendezvous`, relative orbital elements |
+| `Myb.Conjunction` | `approachFind` (two providers), `approachOrbits`, the plane of the encounter, the probabilities, `conjunctionFind`, long encounters |
+| `Myb.Uncertainty` | `Variational`, `covarianceTransform`, `covarianceRtn`, `Rng`, `sampleStatistics` |
+| `Myb.Attitude` | quaternions, Euler angles, principal axes, rigid and core-mantle rates, torques, the exact free rotation, `rotationSplit` (a Haskell torque) |
+| `Myb.Observe` | `lightTime`, `roundTrip`, the Shapiro delay, aberration, deflection, directions, plasma |
+| `Myb.Files` | numbers read and printed, tables, `SpkWriter` (types 2, 3, 9, 13, raw), SP3 read and written |
+| `Myb.Ck` | `Sclk`, `Ck` (`ckPointing`, `ckOrientation` as a provider), `CkWriter` (types 1 to 6) |
+| `Myb.Frames` | the array forms of myb/frames.h over its objects of `Myb.C` |
+| `Myb.Tle` | (sublibrary `myb:tle`) two-line elements, OMM, SGP4, the fit, SPK type 10 |
 | `Myb.C` | the whole C interface; `Myb.C.<Header>` one module per header (`Myb.C.Orbit` is `myb/orbit.h`) |
 | `Myb.C.Ext.<Name>` | a library of `ext/`, in the sublibrary `myb:<name>` |
 
-The upper layers for the rest of the interface (N bodies, estimation, CR3BP, targeting,
-attitude, observables, the writers of files) come in a second round for all the bindings at
-once, as modules beside these (`Myb.NBody`, `Myb.Estimation`, ...). Until then they are taken
-through `Myb.C`; the two mix freely: every object gives its `ForeignPtr` (`forceModelPtr`,
-`environmentPtr`, ...), and `forceModelKeep`, `environmentKeep` tie the life of what a term or
-a body added through `Myb.C` points to.
+The array forms (`timeFromSecondsMany`, `convertTimeMany`, `keplerPropagateMany`,
+`ephemerisStateMany`, ...) are list functions beside their single forms; a failure names the
+element that failed ("element 3"). The structures of parameters and results of the rest of the
+interface (an orbit of the CR3BP, a chain result, a light path, ...) are the records of `Myb.C`,
+re-exported by the modules that take or give them; enumerations of a few values that a call
+takes are sum types (`Interaction`, `WhScheme`, `Symmetry`, ...).
+
+The two layers mix freely: every object gives its `ForeignPtr` (`forceModelPtr`,
+`environmentPtr`, `systemPtr`, ...), and `forceModelKeep`, `environmentKeep`, `systemKeep` tie
+the life of what a term, a body or a level added through `Myb.C` points to.
+
+### What stays on the lower layer
+
+Every public function of dyn.h, system.h, estim.h, cr3bp.h, transfer.h, lambert.h, optimal.h,
+thrust.h, iod.h, relative.h, conjunction.h, uncert.h, attitude.h, observe.h, io.h, ccsds.h,
+ck.h, of the SPK writers and SP3 of kin.h, of ext/sgp4 and the array forms of time.h, kin.h,
+frames.h and kepler.h is reachable from `Myb`: called, or passed as the function pointer it is
+meant to be (the measurements, `myb_cr3bp_term`, `myb_thrust_acceleration`, `myb_term_qlaw`,
+`myb_system_light_action`, `myb_orientation_ck`, `myb_spk_body_state`). What has no upper layer
+is taken through `Myb.C`: the headers outside these (the objects of myb/frames.h — CIP, EOP,
+equinox, WGCCRE, PCK, the graph of frames — whose array forms take them as `ForeignPtr`s; the
+surface models and meshes of surface.h; the force functions of force.h; contact.h, site.h,
+weather.h, events.h, integ.h beyond the integrator of a system, grav.h and env.h beyond the
+path above), the libraries of ext/ other than sgp4, and the allocators: the upper layer always
+takes the default one.
 
 ### The lower layer
 
 - A function is a foreign import by its C name: `myb_orbit_state :: Ptr Myb_orbit -> CDouble
   -> Ptr CDouble -> IO Myb_status`; its address is `p'myb_orbit_state`. Every call is in IO and
   `safe`, since any of them may call back into Haskell.
+- A pointer parameter is a `Ptr` of its element; a parameter written as an array of arrays
+  (`double points[5][3]`) is a `Ptr CDouble` to its numbers in a row.
 - A structure `myb_x` is the record `Myb_x` with the fields `myb_x'<field>` (an array is a
   list), a `Storable` instance whose size, alignment and offsets hsc2hs takes from the header,
   and `zero`, the value of all bits zero: `zero {myb_point_mass_term'gm = 3.986004418e14}`. An
@@ -146,8 +191,13 @@ any of them may be dropped in any order. A finalizer of GHC is not certain to ru
 program ends; the system takes the memory back then. An object of the library has working
 memory for one thread: use it from one thread at a time.
 
+A system keeps the fields, providers, actions and contact points it was given; an orbit, a
+filter, a variational object or an integrator keeps its model or its system; a station keeps
+its environment. The objects of files (tables, SP3, OEM, OCM, CK, the writers) keep nothing.
+
 Nothing is thrown or caught by the package. A Haskell function the library calls (a term, a
-provider, an event) reports a failure through its result (`Left Range`), which comes back as
+provider, an event, an action, a measurement, a torque, a residual, a nonlinear program, a
+Gaussian of a long encounter) reports a failure through its result (`Left Range`), which comes back as
 the status of the call that was going on. An exception that leaves such a function is not
 caught: it ends the program (GHC's handler of a call from C prints it and exits), as a broken
 contract stops at once in the library (`MYB_CHECK`); it never unwinds through the frames of C.
@@ -180,12 +230,26 @@ that builds the library), and the boot packages of GHC suffice for it.
 and in `~/.ghcup/bin`) runs `tools/test.cmake`: the generator with `--check`, the test suite,
 then the example. Everything cabal writes, its configuration, store and logs and the build, stays in
 `build/<preset>/haskell` (`CABAL_DIR`). `MYB_HASKELL_LINK` (`static`, or `shared`, the default
-on Windows) chooses the library; it is copied alone into `build/<preset>/haskell/lib`.
+on Windows) chooses the library; it is copied alone into `build/<preset>/haskell/lib`, and what
+the test writes (an SPK file read back) goes to `build/<preset>/haskell/output`.
 
-The test suite (160 checks) holds: the low orbit of the example bit for bit with the C calls;
+The test suite (309 checks) holds: the low orbit of the example bit for bit with the C calls;
 failures as values with the status and the line of a parser; terms, providers and events as
 Haskell functions, and their failures; the radiation and relativity terms; that a model keeps
 its environment alive and both are finalized once dropped (watched through their finalizers);
 time scales, an SPK set and a body of it, OEM messages in both notations; the lower layer (the
 constants, a structure passed and returned by value, a callback that takes one, `myb:sgp4`);
-and, run as a second process, that an exception in a term or an event ends the process.
+and, run as a second process, that an exception in a term or an event ends the process. Then,
+area by area, the upper layer against the same calls made through `Myb.C` (doubles by their
+bits, structures by their bytes, texts and file images by their characters and bytes), with
+failures as `Left` and the status: point masses, their invariants, the fast multipole method,
+the Wisdom-Holman integrator; a system, its integrator, an advance, an action; a fit, the filter,
+a range from a station, a measurement of Haskell; the Lagrange points, a halo corrected, its
+monodromy, a section, patches, a torus with its points and its spectrum; Lambert, Gibbs,
+Clohessy-Wiltshire, relative motion, Edelbaum, the Q-law, a powered flyby, Sims and Flanagan, a
+nonlinear program and shooting of Haskell, an encounter and its probability, approaches of two
+Haskell providers, random numbers, sample statistics; quaternions, Euler angles, the free
+rotation, the splitting integrator; aberration, a direction, a light time to an SPK body;
+numbers, a table, SPK and CK files written byte for byte and read back, SP3, OPM, OCM, an OEM
+with a covariance, a CK pointing, a clock, the variables of a pool, SGP4, a TLE through an OMM;
+the array forms against their single forms, and the element that failed.

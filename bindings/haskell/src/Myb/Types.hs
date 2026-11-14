@@ -6,6 +6,10 @@ module Myb.Types
   ( Vec3 (..)
   , State (..)
   , stateList
+  , stateFromList
+  , Quaternion (..)
+  , Mat3 (..)
+  , mat3List
   , Elements (..)
   , Calendar (..)
   , Time (..)
@@ -57,6 +61,44 @@ instance Storable State where
   alignment _ = alignment (0 :: Double)
   peek p = State <$> peek (castPtr p) <*> peekElemOff (castPtr p) 1
   poke p (State r v) = poke (castPtr p) r >> pokeElemOff (castPtr p) 1 v
+
+-- | A state from six numbers in the order of C; 'Nothing' for another count.
+stateFromList :: [Double] -> Maybe State
+stateFromList [x, y, z, vx, vy, vz] = Just (State (Vec3 x y z) (Vec3 vx vy vz))
+stateFromList _ = Nothing
+
+-- | A quaternion in the order of myb/attitude.h: the scalar first, (w, x, y, z).
+data Quaternion = Quaternion !Double !Double !Double !Double
+  deriving (Eq, Show)
+
+-- | Four doubles in a row, as C writes double[4].
+instance Storable Quaternion where
+  sizeOf _ = 4 * sizeOf (0 :: Double)
+  alignment _ = alignment (0 :: Double)
+  peek p = Quaternion <$> peekElemOff q 0 <*> peekElemOff q 1 <*> peekElemOff q 2 <*> peekElemOff q 3
+    where
+      q = castPtr p
+  poke p (Quaternion w x y z) = pokeElemOff q 0 w >> pokeElemOff q 1 x >> pokeElemOff q 2 y >> pokeElemOff q 3 z
+    where
+      q = castPtr p
+
+-- | A 3 x 3 matrix by its rows, as C writes double[9] (row-major).
+data Mat3 = Mat3 !Vec3 !Vec3 !Vec3
+  deriving (Eq, Show)
+
+-- | The nine numbers by rows.
+mat3List :: Mat3 -> [Double]
+mat3List (Mat3 (Vec3 a b c) (Vec3 d e f) (Vec3 g h i)) = [a, b, c, d, e, f, g, h, i]
+
+instance Storable Mat3 where
+  sizeOf _ = 3 * sizeOf (Vec3 0 0 0)
+  alignment _ = alignment (0 :: Double)
+  peek p = Mat3 <$> peekElemOff q 0 <*> peekElemOff q 1 <*> peekElemOff q 2
+    where
+      q = castPtr p
+  poke p (Mat3 a b c) = pokeElemOff q 0 a >> pokeElemOff q 1 b >> pokeElemOff q 2 c
+    where
+      q = castPtr p
 
 -- | Classical elements.
 data Elements = Elements

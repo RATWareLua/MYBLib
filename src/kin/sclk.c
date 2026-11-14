@@ -397,7 +397,7 @@ myb_status myb_sclk_encode(const myb_sclk* sclk, const char* text, size_t length
 
 myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text, size_t size,
                            size_t* length) {
-  MYB_CHECK(sclk != NULL && text != NULL);
+  MYB_CHECK(sclk != NULL && (text != NULL || size == 0));
   const myb_sclk* s = sclk;
   if (!(ticks >= 0.0) || !(ticks <= s->part_total[s->partitions - 1])) {
     return MYB_E_RANGE;

@@ -63,17 +63,17 @@ foreign import ccall "myb_iod_herrick_gibbs" myb_iod_herrick_gibbs :: CDouble ->
 foreign import ccall "&myb_iod_herrick_gibbs" p'myb_iod_herrick_gibbs :: FunPtr (CDouble -> Ptr CDouble -> CDouble -> Ptr CDouble -> CDouble -> Ptr CDouble -> CDouble -> Ptr CDouble -> IO Myb_status)
 
 -- | myb_status myb_iod_gauss(double mu, const double *t, const double (*observer)[3], const double (*sight)[3], myb_iod_solution *solutions, size_t *count)
-foreign import ccall "myb_iod_gauss" myb_iod_gauss :: CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status
-foreign import ccall "&myb_iod_gauss" p'myb_iod_gauss :: FunPtr (CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status)
+foreign import ccall "myb_iod_gauss" myb_iod_gauss :: CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status
+foreign import ccall "&myb_iod_gauss" p'myb_iod_gauss :: FunPtr (CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status)
 
 -- | myb_status myb_iod_laplace(double mu, const double *t, const double (*observer)[3], const double (*sight)[3], myb_iod_solution *solutions, size_t *count)
-foreign import ccall "myb_iod_laplace" myb_iod_laplace :: CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status
-foreign import ccall "&myb_iod_laplace" p'myb_iod_laplace :: FunPtr (CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status)
+foreign import ccall "myb_iod_laplace" myb_iod_laplace :: CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status
+foreign import ccall "&myb_iod_laplace" p'myb_iod_laplace :: FunPtr (CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_iod_solution -> Ptr CSize -> IO Myb_status)
 
 -- | myb_status myb_iod_double_r(double mu, const double *t, const double (*observer)[3], const double (*sight)[3], const double *distance, myb_iod_solution *solution)
-foreign import ccall "myb_iod_double_r" myb_iod_double_r :: CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr CDouble -> Ptr Myb_iod_solution -> IO Myb_status
-foreign import ccall "&myb_iod_double_r" p'myb_iod_double_r :: FunPtr (CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr CDouble -> Ptr Myb_iod_solution -> IO Myb_status)
+foreign import ccall "myb_iod_double_r" myb_iod_double_r :: CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_iod_solution -> IO Myb_status
+foreign import ccall "&myb_iod_double_r" p'myb_iod_double_r :: FunPtr (CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr Myb_iod_solution -> IO Myb_status)
 
 -- | myb_status myb_iod_gooding(double mu, const double *t, const double (*observer)[3], const double (*sight)[3], const double *range, int revolutions, int branch, myb_iod_solution *solution)
-foreign import ccall "myb_iod_gooding" myb_iod_gooding :: CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr CDouble -> CInt -> CInt -> Ptr Myb_iod_solution -> IO Myb_status
-foreign import ccall "&myb_iod_gooding" p'myb_iod_gooding :: FunPtr (CDouble -> Ptr CDouble -> Ptr [CDouble] -> Ptr [CDouble] -> Ptr CDouble -> CInt -> CInt -> Ptr Myb_iod_solution -> IO Myb_status)
+foreign import ccall "myb_iod_gooding" myb_iod_gooding :: CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> CInt -> CInt -> Ptr Myb_iod_solution -> IO Myb_status
+foreign import ccall "&myb_iod_gooding" p'myb_iod_gooding :: FunPtr (CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> CInt -> CInt -> Ptr Myb_iod_solution -> IO Myb_status)

@@ -284,8 +284,8 @@ foreign import ccall "myb_cr3bp_term_jacobian" myb_cr3bp_term_jacobian :: Ptr ()
 foreign import ccall "&myb_cr3bp_term_jacobian" p'myb_cr3bp_term_jacobian :: FunPtr (Ptr () -> CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> Ptr CDouble -> IO Myb_status)
 
 -- | myb_status myb_cr3bp_lagrange(double mu, double (*points)[3])
-foreign import ccall "myb_cr3bp_lagrange" myb_cr3bp_lagrange :: CDouble -> Ptr [CDouble] -> IO Myb_status
-foreign import ccall "&myb_cr3bp_lagrange" p'myb_cr3bp_lagrange :: FunPtr (CDouble -> Ptr [CDouble] -> IO Myb_status)
+foreign import ccall "myb_cr3bp_lagrange" myb_cr3bp_lagrange :: CDouble -> Ptr CDouble -> IO Myb_status
+foreign import ccall "&myb_cr3bp_lagrange" p'myb_cr3bp_lagrange :: FunPtr (CDouble -> Ptr CDouble -> IO Myb_status)
 
 -- | myb_status myb_cr3bp_correct(double mu, const myb_cr3bp_correction *correction, double *y0, double *period)
 foreign import ccall "myb_cr3bp_correct" myb_cr3bp_correct :: CDouble -> Ptr Myb_cr3bp_correction -> Ptr CDouble -> Ptr CDouble -> IO Myb_status
