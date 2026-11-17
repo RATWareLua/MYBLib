@@ -27,7 +27,10 @@
 
 /* ---- Symbol visibility ------------------------------------------------------------------
  * MYB_STATIC  — the library is linked statically (set by the CMake target).
- * MYB_BUILDING — defined only while compiling the shared library itself. */
+ * MYB_BUILDING — defined only while compiling the shared library itself.
+ * MYB_API comes before MYB_NODISCARD. In C23 that is a standard attribute, and GCC refuses
+ * a standard attribute after a GNU one (`__attribute__((...)) [[nodiscard]] int f(void);`),
+ * so with standard attributes in C the visibility is spelt as one as well. */
 #if defined(MYB_STATIC)
 #define MYB_API
 #elif defined(_WIN32)
@@ -37,7 +40,11 @@
 #define MYB_API __declspec(dllimport)
 #endif
 #elif defined(__GNUC__) || defined(__clang__)
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ > 201710L
+#define MYB_API [[gnu::visibility("default")]]
+#else
 #define MYB_API __attribute__((visibility("default")))
+#endif
 #else
 #define MYB_API
 #endif
@@ -53,7 +60,11 @@
 #define MYB_EXT_API __declspec(dllimport)
 #endif
 #elif defined(__GNUC__) || defined(__clang__)
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ > 201710L
+#define MYB_EXT_API [[gnu::visibility("default")]]
+#else
 #define MYB_EXT_API __attribute__((visibility("default")))
+#endif
 #else
 #define MYB_EXT_API
 #endif

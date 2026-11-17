@@ -325,6 +325,17 @@ those are the known limits of the release, each written in the passport of its m
   copies the import library into `OUT_DIR` under that name and adds the directory to the search
   path, since the link argument it gave before did not reach the crates that depend on
   `myb-sys`.
+- **Consumers built with GCC.** The check on Gentoo found that the headers did not compile
+  under GCC 15 in C23, its default: the Haskell binding, whose hsc2hs runs gcc, failed. GCC
+  refuses a standard attribute after a GNU one, and every declaration was
+  `__attribute__((visibility("default"))) [[nodiscard]] …`; Clang takes it, and the CI image
+  has GCC 13, whose default is C17 with the GNU spelling of both. In C23 the visibility is
+  `[[gnu::visibility("default")]]` now (the other cure, [[nodiscard]] before the visibility,
+  would have changed 884 declarations). `test_gcc_consumer`
+  (`tests/tools/check_gcc.cmake`): the headers, those of `ext/` among them, as C17 and C23
+  under gcc and as C++17, C++20 and C++23 under g++ with `-Werror`, with the attributes of the
+  shared library and with `MYB_STATIC`; `examples/low_orbit.c` and the C++ face built by gcc
+  and g++ run against `libmyb.so`. With the old spelling the C23 header check gives 1057 errors.
 - **macOS and ARM64.** A toolchain for the Clang of Homebrew's LLVM
   (`cmake/toolchains/clang-macos.cmake`; `MYB_LLVM_ROOT` names another, the SDK from `xcrun`),
   presets `macos-dev`, `macos-release` and `macos-asan` (no LeakSanitizer there),

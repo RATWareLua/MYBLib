@@ -234,7 +234,11 @@ function(myb_apply_flags target)
       target_compile_options(${target} PRIVATE -fsanitize=fuzzer-no-link)
     endif()
     if(MYB_COVERAGE)
-      target_compile_options(${target} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+      # the mapping names the files relative to the source tree, where llvm-cov reads them
+      # (tests/tools/coverage.cmake): its default compilation directory, the build tree, went
+      # through the prefix maps below to build/<preset>, and every file seemed to be in build/
+      target_compile_options(${target} PRIVATE -fprofile-instr-generate -fcoverage-mapping
+        -fcoverage-compilation-dir=.)
       target_link_options(${target} PRIVATE -fprofile-instr-generate)
     endif()
   endif()

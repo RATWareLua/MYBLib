@@ -752,28 +752,40 @@ static int replace_double(unsigned char* image, size_t size, double from, double
   return replaced;
 }
 
+/* A set loaded from an image in memory, with that image: myb_ck_load_memory reads it on
+ * demand, so it lives until the set is destroyed. */
+typedef struct loaded_ck {
+  myb_ck* ck;
+  unsigned char* image;
+} loaded_ck;
+
+static void release_loaded(loaded_ck* loaded) {
+  myb_ck_destroy(loaded->ck);
+  free(loaded->image);
+  loaded->ck = NULL;
+  loaded->image = NULL;
+}
+
 /* The writer's image of one segment, loaded back after `damage` (from -> to) — the status of the
- * load. */
-static myb_status load_damaged(myb_ck_writer* writer, double from, double to, myb_ck** out) {
+ * load; the set and its image in `out` when it loaded (released by release_loaded). */
+static myb_status load_damaged(myb_ck_writer* writer, double from, double to, loaded_ck* out) {
   const size_t bytes = myb_ck_writer_size(writer);
-  unsigned char* image = malloc(bytes);
-  MT_CHECK(image != NULL);
-  if (image == NULL) {
+  loaded_ck loaded = {NULL, malloc(bytes)};
+  MT_CHECK(loaded.image != NULL);
+  if (loaded.image == NULL) {
     return MYB_E_NOMEM;
   }
-  MT_CHECK(myb_ck_writer_write(writer, image, bytes) == MYB_OK);
+  MT_CHECK(myb_ck_writer_write(writer, loaded.image, bytes) == MYB_OK);
   if (from != to) {
-    MT_CHECK(replace_double(image, bytes, from, to) == 1);
+    MT_CHECK(replace_double(loaded.image, bytes, from, to) == 1);
   }
-  myb_ck* ck = NULL;
   myb_diag diag;
-  MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
-  const myb_status st = myb_ck_load_memory(ck, image, bytes, &diag);
-  free(image);
+  MT_CHECK(myb_ck_create(NULL, &loaded.ck) == MYB_OK);
+  const myb_status st = myb_ck_load_memory(loaded.ck, loaded.image, bytes, &diag);
   if (out != NULL && st == MYB_OK) {
-    *out = ck;
+    *out = loaded;
   } else {
-    myb_ck_destroy(ck);
+    release_loaded(&loaded);
   }
   return st;
 }
@@ -794,8 +806,9 @@ static void test_reviewed_edges(void) {
     MT_CHECK(myb_ck_writer_create("myb test: one packet", NULL, &writer) == MYB_OK);
     const myb_ck_segment_header h = {-9099051, 1, "type 5, one packet"};
     MT_CHECK(myb_ck_writer_add_packets(writer, &h, &one, 1, tick[0], tick[0], NULL, 0) == MYB_OK);
-    myb_ck* ck = NULL;
-    MT_CHECK(load_damaged(writer, 0.0, 0.0, &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_damaged(writer, 0.0, 0.0, &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       myb_ck_pointing at;
       myb_ck_pointing near;
@@ -807,8 +820,8 @@ static void test_reviewed_edges(void) {
       const double row = at.rotation.m[0] * at.rotation.m[0] + at.rotation.m[1] * at.rotation.m[1] +
                          at.rotation.m[2] * at.rotation.m[2];
       MT_CHECK(fabs(row - 1.0) < 1e-15);
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     myb_ck_writer_destroy(writer);
   }
   /* interval starts twice: refused, nothing written */
@@ -856,16 +869,17 @@ static void test_reviewed_edges(void) {
      * (the speed overflowed and the answer was NaN with MYB_OK) */
     MT_CHECK(load_damaged(writer, rates[0], 1.0e308, NULL) == MYB_E_FORMAT);
     /* a rate whose squares overflow while the turn is a number: read, and a rotation inside */
-    myb_ck* big = NULL;
-    MT_CHECK(load_damaged(writer, rates[0], 1.0e200, &big) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_damaged(writer, rates[0], 1.0e200, &loaded) == MYB_OK);
+    myb_ck* big = loaded.ck;
     if (big != NULL) {
       myb_ck_pointing p;
       MT_CHECK(myb_ck_pointing_at(big, -9099053, begin[0] + 100.0, 0.0, 1, &p) == MYB_OK);
       const double row = p.rotation.m[0] * p.rotation.m[0] + p.rotation.m[1] * p.rotation.m[1] +
                          p.rotation.m[2] * p.rotation.m[2];
       MT_CHECK(fabs(row - 1.0) < 1e-12);
-      myb_ck_destroy(big);
     }
+    release_loaded(&loaded);
     myb_ck_writer_destroy(writer);
     /* the writer refuses what the reader would: a tick of no time or of negative time, a turn
      * over an interval that is not a number, an interval whose length overflows */
@@ -911,9 +925,10 @@ static int replace_last_double(unsigned char* image, size_t size, double from, d
  * equal), loaded back: the status of the load. With MYB_CK_SEED_DIR set the image is also
  * written there as <name>.bc (the seeds of tests/fuzz/corpus/ck). */
 static myb_status load_changed(myb_ck_writer* writer, double from, double to, const char* name,
-                               myb_ck** out) {
+                               loaded_ck* out) {
   const size_t bytes = myb_ck_writer_size(writer);
-  unsigned char* image = malloc(bytes);
+  loaded_ck loaded = {NULL, malloc(bytes)};
+  unsigned char* image = loaded.image;
   MT_CHECK(image != NULL);
   if (image == NULL) {
     return MYB_E_NOMEM;
@@ -933,15 +948,13 @@ static myb_status load_changed(myb_ck_writer* writer, double from, double to, co
       fclose(f);
     }
   }
-  myb_ck* ck = NULL;
   myb_diag diag;
-  MT_CHECK(myb_ck_create(NULL, &ck) == MYB_OK);
-  const myb_status st = myb_ck_load_memory(ck, image, bytes, &diag);
-  free(image);
+  MT_CHECK(myb_ck_create(NULL, &loaded.ck) == MYB_OK);
+  const myb_status st = myb_ck_load_memory(loaded.ck, image, bytes, &diag);
   if (out != NULL && st == MYB_OK) {
-    *out = ck;
+    *out = loaded;
   } else {
-    myb_ck_destroy(ck);
+    release_loaded(&loaded);
   }
   return st;
 }
@@ -1011,16 +1024,17 @@ static void test_audited_edges(void) {
     MT_CHECK(myb_ck_writer_create("myb test: type 3 rates", NULL, &writer) == MYB_OK);
     const myb_ck_segment_header h = {-9099062, 1, "type 3, fast"};
     MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 3, ticks, q, rates, 2, NULL, 0) == MYB_OK);
-    myb_ck* ck = NULL;
-    MT_CHECK(load_changed(writer, 0.0, 0.0, "type3-rates", &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type3-rates", &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       myb_ck_pointing p;
       MT_CHECK(myb_ck_pointing_at(ck, -9099062, ticks[0] + 500.0, 0.0, 1, &p) == MYB_OK);
       MT_CHECK(pointing_finite(&p) && p.rate[0] == 0.0);
       MT_CHECK(myb_ck_pointing_at(ck, -9099062, ticks[0] + 250.0, 0.0, 1, &p) == MYB_OK);
       MT_CHECK(pointing_finite(&p) && fabs(p.rate[0] - 0.75e308) < 1e293);
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     myb_ck_writer_destroy(writer);
   }
   /* type 1: an angular velocity of no finite magnitude, refused by the writer and on a request */
@@ -1035,13 +1049,14 @@ static void test_audited_edges(void) {
     MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 1, tick, q, fast, 1, NULL, 0) ==
              MYB_E_DOMAIN);
     MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 1, tick, q, slower, 1, NULL, 0) == MYB_OK);
-    myb_ck* ck = NULL;
-    MT_CHECK(load_changed(writer, 3.0625, 1.375e308, "regress-type1-rate", &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_changed(writer, 3.0625, 1.375e308, "regress-type1-rate", &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       myb_ck_pointing p;
       MT_CHECK(myb_ck_pointing_at(ck, -9099063, tick[0], 0.0, 1, &p) == MYB_E_FORMAT);
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     myb_ck_writer_destroy(writer);
   }
   /* type 6: a first boundary after the start of the segment, a last one before its stop:
@@ -1061,16 +1076,17 @@ static void test_audited_edges(void) {
     const myb_ck_segment_header h = {-9099064, 1, "type 6, two mini-segments"};
     MT_CHECK(myb_ck_writer_add_minisegments(writer, &h, minis, bounds, 2, 1, 1, 1010.5, 1640.5) ==
              MYB_OK);
-    myb_ck* ck = NULL;
-    MT_CHECK(load_changed(writer, 0.0, 0.0, "type6", &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type6", &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       myb_ck_pointing p;
       MT_CHECK(myb_ck_pointing_at(ck, -9099064, 1010.5, 0.0, 1, &p) == MYB_OK);
       /* in the gap: the next mini-segment's boundary within the tolerance */
       MT_CHECK(myb_ck_pointing_at(ck, -9099064, 1290.0, 10.0, 1, &p) == MYB_OK &&
                p.ticks == 1295.5);
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     MT_CHECK(load_changed(writer, 1000.5, 1020.5, "regress-type6-boundary", NULL) ==
              MYB_E_FORMAT);
     MT_CHECK(load_changed(writer, 1650.5, 1630.5, NULL, NULL) == MYB_E_FORMAT);
@@ -1101,8 +1117,9 @@ static void test_audited_edges(void) {
       MT_CHECK(myb_ck_writer_add_packets(writer, &h, &set, 1, ticks[0], ticks[N - 1], NULL, 0) ==
                MYB_OK);
     }
-    myb_ck* ck = NULL;
-    MT_CHECK(load_changed(writer, 0.0, 0.0, "type5-scales", &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type5-scales", &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       const double probes[3] = {ticks[3] + 37.0, ticks[0], ticks[N - 1] - 10.0};
       for (int i = 0; i < 3; ++i) {
@@ -1119,8 +1136,8 @@ static void test_audited_edges(void) {
           }
         }
       }
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     myb_ck_writer_destroy(writer);
   }
   /* type 4: a series at the scale 2^600, and one whose recurrence overflows at the end of its
@@ -1164,8 +1181,9 @@ static void test_audited_edges(void) {
     const myb_ck_segment_header h4 = {-9099085, 1, "type 4, four intervals"};
     MT_CHECK(myb_ck_writer_add_chebyshev(writer, &h4, starts4, stops4, counts4, plain4, 4, 1) ==
              MYB_OK);
-    myb_ck* ck = NULL;
-    MT_CHECK(load_changed(writer, 0.0, 0.0, "type4-scales", &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_changed(writer, 0.0, 0.0, "type4-scales", &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       myb_ck_pointing reference;
       myb_ck_pointing p;
@@ -1179,8 +1197,8 @@ static void test_audited_edges(void) {
       const double norm = sqrt(38.0 * 38.0 + 3.0);
       const myb_ck_pointing expected = {.q = {38.0 / norm, 1.0 / norm, 1.0 / norm, 1.0 / norm}};
       MT_CHECK(q_difference(&p, &expected) < 1e-15 && pointing_finite(&p));
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     /* refused: coefficients that sum beyond the largest double, angular velocities of no finite
      * magnitude, intervals whose middle or half-length is not a number or is zero */
     const size_t before = myb_ck_writer_size(writer);
@@ -1218,8 +1236,9 @@ static void test_audited_edges(void) {
     MT_CHECK(myb_ck_writer_create("myb test: quaternion scales", NULL, &writer) == MYB_OK);
     const myb_ck_segment_header h = {-9099091, 1, "type 1, scales"};
     MT_CHECK(myb_ck_writer_add_pointings(writer, &h, 1, ticks, q, NULL, 2, NULL, 0) == MYB_OK);
-    myb_ck* ck = NULL;
-    MT_CHECK(load_changed(writer, 0.0, 0.0, NULL, &ck) == MYB_OK);
+    loaded_ck loaded = {NULL, NULL};
+    MT_CHECK(load_changed(writer, 0.0, 0.0, NULL, &loaded) == MYB_OK);
+    myb_ck* ck = loaded.ck;
     if (ck != NULL) {
       myb_ck_pointing p;
       const myb_ck_pointing first = {.q = {0.6, 0.8, 0.0, 0.0}};
@@ -1228,8 +1247,8 @@ static void test_audited_edges(void) {
       MT_CHECK(q_difference(&p, &first) < 2e-16);
       MT_CHECK(myb_ck_pointing_at(ck, -9099091, ticks[1], 0.0, 0, &p) == MYB_OK);
       MT_CHECK(q_difference(&p, &second) < 2e-16);
-      myb_ck_destroy(ck);
     }
+    release_loaded(&loaded);
     myb_ck_writer_destroy(writer);
   }
 }
@@ -1352,8 +1371,9 @@ static void test_name_blanks(void) {
       MT_CHECK(myb_ck_writer_size(writer) == 0);
     }
   }
-  myb_ck* ck = NULL;
-  MT_CHECK(load_damaged(writer, 0.0, 0.0, &ck) == MYB_OK);
+  loaded_ck loaded = {NULL, NULL};
+  MT_CHECK(load_damaged(writer, 0.0, 0.0, &loaded) == MYB_OK);
+  myb_ck* ck = loaded.ck;
   if (ck != NULL) {
     MT_CHECK(myb_ck_segment_count(ck) == 5);
     for (size_t k = 0; k < 5 && k < myb_ck_segment_count(ck); ++k) {
@@ -1361,8 +1381,8 @@ static void test_name_blanks(void) {
       myb_ck_segment(ck, k, &info);
       MT_CHECK(strcmp(info.name, good[k].name) == 0);
     }
-    myb_ck_destroy(ck);
   }
+  release_loaded(&loaded);
   myb_ck_writer_destroy(writer);
 }
 

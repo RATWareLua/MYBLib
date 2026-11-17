@@ -245,7 +245,8 @@ version the API only grows. Details, checks and measured accuracies of every pha
   `macos-dev`, `macos-release`, `macos-asan`. CI: Linux on ARM64, macOS, fuzzing, coverage,
   Go and GHC, the consumers built with MSVC.
 - Tests: `test_msvc_consumer` (the headers as C17, C++17 and C++20 under `cl`, the example
-  and the C++ face built by `cl` against `libmyb.dll`), `test_rust_binding_msvc`,
+  and the C++ face built by `cl` against `libmyb.dll`), `test_gcc_consumer` (the same with gcc
+  and g++ against `libmyb.so`, the headers also as C23 and C++23), `test_rust_binding_msvc`,
   `test_go_binding`, `test_haskell_binding`; on Linux under ASan `test_python_binding_asan`,
   `test_rust_binding_asan`.
 - `docs/models/`: 45 model passports and an index, in English and Russian.
@@ -333,6 +334,11 @@ version the API only grows. Details, checks and measured accuracies of every pha
   Lambert); no behaviour changes.
 
 ### Fixed
+- The public headers compile under GCC in C23, its default since GCC 15: GCC refuses a standard
+  attribute after a GNU one, and every declaration had `__attribute__((visibility("default")))`
+  before `[[nodiscard]]` (Clang takes it, so the bindings over hsc2hs on Linux were the first to
+  see it). In C23 the visibility of the shared library is spelt `[[gnu::visibility("default")]]`
+  now; `test_gcc_consumer` checks the headers and two programs built by gcc and g++.
 - Phase 21, found by review and by the audit that followed (every case has a regression test
   that fails without its fix). Reading DAF: a word outside the file is NaN in a release build
   instead of a read beyond the image. CK: a type-5 window that took one tick past the end

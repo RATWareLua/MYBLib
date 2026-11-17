@@ -270,6 +270,24 @@ if(WIN32 AND MYB_BUILD_SHARED AND MYB_SANITIZE STREQUAL "")
   endif()
 endif()
 
+# Consumers built with GCC (Linux, the shared library): the headers as C17, C23 and C++, the
+# example and the C++ face compiled by gcc and g++ against libmyb.so (tests/tools/check_gcc.cmake).
+# MYB_GCC and MYB_GXX name the compilers; gcc and g++ of PATH otherwise.
+if(UNIX AND NOT APPLE AND NOT CMAKE_CROSSCOMPILING AND MYB_BUILD_SHARED
+    AND MYB_SANITIZE STREQUAL "" AND NOT MYB_COVERAGE)
+  find_program(MYB_GCC gcc)
+  find_program(MYB_GXX g++)
+  if(MYB_GCC AND MYB_GXX)
+    add_test(NAME test_gcc_consumer
+      COMMAND "${CMAKE_COMMAND}" "-DGCC=${MYB_GCC}" "-DGXX=${MYB_GXX}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}" "-DLIB_DIR=$<TARGET_FILE_DIR:myb_shared>"
+        "-DWORK_DIR=${PROJECT_BINARY_DIR}/gcc-consumer"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_gcc.cmake")
+  else()
+    message(STATUS "no gcc and g++: test_gcc_consumer is not registered")
+  endif()
+endif()
+
 # The Python package (bindings/python) over the shared library: needs an interpreter with cffi
 # (MYB_PYTHON names one; otherwise the first of those found that has it). Not with a
 # sanitizer: its runtime would have to be loaded into the interpreter first.

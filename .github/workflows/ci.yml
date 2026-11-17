@@ -128,6 +128,7 @@ jobs:
             grep -q test_go_binding registered.txt
             if grep -q 'MYB_BUILD_SHARED:BOOL=ON' build/${{ matrix.preset }}/CMakeCache.txt; then
               grep -q test_python_binding registered.txt
+              grep -q test_gcc_consumer registered.txt
             fi
             if [ "${{ matrix.preset }}" = linux-release ] && [ "${{ matrix.arch }}" = x86-64 ]; then
               grep -q test_haskell_binding registered.txt

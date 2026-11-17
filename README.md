@@ -279,6 +279,11 @@ reads the import library `libmyb.dll.a` under the name `myb.lib`). The tests
 (`MYB_MSVC_VCVARS` names its `vcvars64.bat`) and the toolchain `stable-x86_64-pc-windows-msvc`
 are found.
 
+Programs built with GCC use it as well: the headers compile as C17 and C23 under gcc and as
+C++17, C++20 and C++23 under g++ with `-Wall -Wextra -Wpedantic -Werror`, and the example and
+the C++ face built by them run against `libmyb.so` (`test_gcc_consumer`, registered on Linux
+when gcc and g++ are found; `MYB_GCC` and `MYB_GXX` name others).
+
 ## Numerical contract
 
 IEEE-754 binary64, round to nearest; the library never changes the floating-point environment.
