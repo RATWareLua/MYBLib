@@ -1,5 +1,13 @@
 # MYBLib
 
+[![CI 1.2.2.0](https://github.com/RATWareLua/MYBLib/actions/workflows/ci.yml/badge.svg?branch=1.2.2.0)](https://github.com/RATWareLua/MYBLib/actions/workflows/ci.yml?query=branch%3A1.2.2.0)
+[![C23](https://img.shields.io/badge/C-C23%2C_headers_C17-A8B9CC?logo=c&logoColor=white)](include/myb)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)](bindings/cpp)
+[![Rust 1.82+](https://img.shields.io/badge/Rust-1.82%2B-B7410E?logo=rust&logoColor=white)](bindings/rust)
+[![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go&logoColor=white)](bindings/go)
+[![Haskell GHC 9.10](https://img.shields.io/badge/Haskell-GHC_9.10-5D4F85?logo=haskell&logoColor=white)](bindings/haskell)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](bindings/python)
+
 **English** | [Русский](README.ru.md)
 
 A library for simulating and computing the motion of objects in space.
@@ -10,7 +18,7 @@ general relativity in the post-Newtonian approximation wherever the effect is me
 the results are reproducible to the bit on Windows and Linux. The core knows no particular
 body: the Sun, the planets and spacecraft are given as data.
 
-Status: **version 1.2.0.0, phases 0–22 (the whole roadmap), bindings for C++, Python, Rust, Go and Haskell** — numerical foundation, correctly rounded functions,
+Status: **version 1.2.2.0, phases 0–22 (the whole roadmap), bindings for C++, Python, Rust, Go and Haskell** — numerical foundation, correctly rounded functions,
 data reading, time scales, the body model, the two-body problem, Lambert's problem, integrators
 (DOP853, RKN12(10), IAS15, Gauss–Jackson, symplectic compositions), the N-body problem (direct
 summation, interaction graph, threads, WH/WHFast, SABA, SBAB), SPK ephemerides and reference

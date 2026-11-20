@@ -40,7 +40,7 @@ var (
 )
 
 // Version is the version of the linked library in the format of MYB_VERSION_NUMBER
-// (major.minor.patch.tweak, two digits each: 1.2.0.0 is 1020000).
+// (major.minor.patch.tweak, two digits each: 1.2.2.0 is 1020200).
 func Version() int {
 	return int(C.myb_version_number())
 }

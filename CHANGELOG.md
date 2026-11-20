@@ -6,7 +6,10 @@ Versions are major.minor.patch.tweak (`MYB_VERSION_*` in `include/myb/core.h`). 
 version the API only grows. Details, checks and measured accuracies of every phase:
 [`docs/PLAN.en.md`](docs/PLAN.en.md), §12.
 
-## 1.2.0.0 — in progress (no tag)
+## 1.2.2.0 — 2026-11-20
+
+The first tagged release after 1.0.0.0: everything since 1.1.0.0 (phases 12–22, the bindings).
+On the way the version stood at 1.2.0.0, pushed to `main` without a tag.
 
 ### Added
 - `myb/env.h`: the environment of a force model (bodies with providers of state and
