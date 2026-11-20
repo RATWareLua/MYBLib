@@ -33,7 +33,7 @@ typedef struct myb_lambert_solution {
  * Errors: MYB_E_DOMAIN (non-finite input, tof <= 0, mu <= 0, r1 or r2 zero, r1 and r2
  * collinear: the plane of the transfer is undefined), MYB_E_NOCONV (iteration budget; not expected). Multi-revolution
  * solutions that do not exist for this tof are simply absent from the result. */
-MYB_API MYB_NODISCARD myb_status myb_lambert(double mu, const double r1[3], const double r2[3],
+MYB_NODISCARD MYB_API myb_status myb_lambert(double mu, const double r1[3], const double r2[3],
                                              double tof, int retrograde, int max_revolutions,
                                              myb_lambert_solution* solutions, size_t capacity,
                                              size_t* count);

@@ -56,7 +56,7 @@ typedef struct myb_sclk myb_sclk;
  * MYB_E_FORMAT (a type other than 1, inconsistent values, a time of the table more than
  * 2^40 s from J2000, a table that starts at negative ticks, partitions whose ticks add up
  * beyond the largest double; diag tells which), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_sclk_create(const myb_kpool* pool, int64_t id,
+MYB_NODISCARD MYB_API myb_status myb_sclk_create(const myb_kpool* pool, int64_t id,
                                                  const myb_allocator* allocator, myb_sclk** sclk,
                                                  myb_diag* diag);
 MYB_API void myb_sclk_destroy(myb_sclk* sclk); /* accepts NULL */
@@ -69,16 +69,16 @@ MYB_API size_t myb_sclk_partitions(const myb_sclk* sclk);
  * are not continuous has no single inverse: the row is chosen by the time, as SPICE does).
  * Errors: MYB_E_RANGE (before the first row of the table or after the end of the last
  * partition, or an instant more than 2^40 s past the time of its row). */
-MYB_API MYB_NODISCARD myb_status myb_sclk_to_time(const myb_sclk* sclk, double ticks,
+MYB_NODISCARD MYB_API myb_status myb_sclk_to_time(const myb_sclk* sclk, double ticks,
                                                   myb_time* t);
-MYB_API MYB_NODISCARD myb_status myb_sclk_from_time(const myb_sclk* sclk, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_sclk_from_time(const myb_sclk* sclk, myb_time t,
                                                     double* ticks);
 
 /* A clock string -> encoded ticks: "partition/field field ..." with the fields separated by
  * any of . : - , or blanks, whole numbers, missing fields on the right taken at their
  * offsets; without a partition the first one that holds the count is taken. Errors:
  * MYB_E_FORMAT (not such a string), MYB_E_DOMAIN (no such partition, a count outside it). */
-MYB_API MYB_NODISCARD myb_status myb_sclk_encode(const myb_sclk* sclk, const char* text,
+MYB_NODISCARD MYB_API myb_status myb_sclk_encode(const myb_sclk* sclk, const char* text,
                                                  size_t length, double* ticks);
 
 /* Encoded ticks (rounded to a whole tick) -> the string with the partition, every field at
@@ -86,20 +86,20 @@ MYB_API MYB_NODISCARD myb_status myb_sclk_encode(const myb_sclk* sclk, const cha
  * text may be NULL with size 0 to ask for the length alone (then MYB_E_OVERFLOW). Errors:
  * MYB_E_RANGE (ticks outside the partitions, a field of more than 18 digits or negative — by
  * a negative offset — which no clock string can hold), MYB_E_OVERFLOW (the buffer). */
-MYB_API MYB_NODISCARD myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text,
+MYB_NODISCARD MYB_API myb_status myb_sclk_decode(const myb_sclk* sclk, double ticks, char* text,
                                                  size_t size, size_t* length);
 
 /* ---- Orientation files ----------------------------------------------------------------------- */
 
 typedef struct myb_ck myb_ck;
 
-MYB_API MYB_NODISCARD myb_status myb_ck_create(const myb_allocator* allocator, myb_ck** ck);
+MYB_NODISCARD MYB_API myb_status myb_ck_create(const myb_allocator* allocator, myb_ck** ck);
 MYB_API void myb_ck_destroy(myb_ck* ck); /* accepts NULL */
 
 /* As myb_spk_load_file / myb_spk_load_memory (myb/kin.h): later files take precedence over
  * earlier ones, later segments of a file over earlier ones. */
-MYB_API MYB_NODISCARD myb_status myb_ck_load_file(myb_ck* ck, const char* path, myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_ck_load_memory(myb_ck* ck, const void* data, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_ck_load_file(myb_ck* ck, const char* path, myb_diag* diag);
+MYB_NODISCARD MYB_API myb_status myb_ck_load_memory(myb_ck* ck, const void* data, size_t size,
                                                     myb_diag* diag);
 
 typedef struct myb_ck_segment_info {
@@ -134,7 +134,7 @@ typedef struct myb_ck_pointing {
  * without angular velocities. Errors: MYB_E_RANGE (no segment gives one), MYB_E_DOMAIN (a
  * negative or non-finite tolerance), MYB_E_FORMAT (data that turn out invalid, among them an
  * answer that would not be finite); on an error *pointing is left as it was. Thread-safe. */
-MYB_API MYB_NODISCARD myb_status myb_ck_pointing_at(const myb_ck* ck, int32_t instrument,
+MYB_NODISCARD MYB_API myb_status myb_ck_pointing_at(const myb_ck* ck, int32_t instrument,
                                                     double ticks, double tolerance,
                                                     int need_rate, myb_ck_pointing* pointing);
 
@@ -151,7 +151,7 @@ typedef struct myb_ck_orientation {
   double tolerance; /* ticks; 0 asks for the instant itself */
 } myb_ck_orientation;
 
-MYB_API MYB_NODISCARD myb_status myb_orientation_ck(void* context, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_orientation_ck(void* context, myb_time t,
                                                     myb_orientation* orientation);
 
 /* ---- Writing orientation files ------------------------------------------------------------------
@@ -160,7 +160,7 @@ MYB_API MYB_NODISCARD myb_status myb_orientation_ck(void* context, myb_time t,
 
 typedef struct myb_ck_writer myb_ck_writer;
 
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_create(const char* internal_name,
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_create(const char* internal_name,
                                                       const myb_allocator* allocator,
                                                       myb_ck_writer** writer);
 MYB_API void myb_ck_writer_destroy(myb_ck_writer* writer); /* accepts NULL */
@@ -180,7 +180,7 @@ typedef struct myb_ck_segment_header {
  * increasing, a zero quaternion, values not finite, an angular velocity whose magnitude is
  * not a finite number, interval starts that are not among the ticks), MYB_E_NOMEM,
  * MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_pointings(
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_add_pointings(
     myb_ck_writer* writer, const myb_ck_segment_header* header, int type, const double* ticks,
     const double* quaternions, const double* rates, size_t count,
     const double* interval_starts, size_t interval_count);
@@ -190,7 +190,7 @@ MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_pointings(
  * rad/s) and the seconds a tick lasts in it (> 0). Errors as above, and MYB_E_DOMAIN for an
  * interval whose length or largest turn |w| seconds_per_tick (stop - start) is not a finite
  * number — what the reader refuses (MYB_E_FORMAT). */
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_intervals(
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_add_intervals(
     myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
     const double* stops, const double* quaternions, const double* rates,
     const double* seconds_per_tick, size_t count);
@@ -207,7 +207,7 @@ MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_intervals(
  * finite, a series that could exceed the largest double: the sum of the magnitudes of its
  * coefficients, or the magnitude of the vector of those sums of the angular velocity, beyond
  * it), MYB_E_NOMEM, MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_chebyshev(
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_add_chebyshev(
     myb_ck_writer* writer, const myb_ck_segment_header* header, const double* starts,
     const double* stops, const int* counts, const double* coefficients, size_t count,
     int has_rates);
@@ -243,7 +243,7 @@ typedef struct myb_ck_packets {
  * segment gives angular velocities. Errors: MYB_E_DOMAIN (the header, the subtype, the
  * window, the rate, ticks not increasing or negative, a zero quaternion, values not finite,
  * interval starts that are not among the ticks, start > stop), MYB_E_NOMEM, MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_packets(
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_add_packets(
     myb_ck_writer* writer, const myb_ck_segment_header* header, const myb_ck_packets* packets,
     int has_rates, double start, double stop, const double* interval_starts,
     size_t interval_count);
@@ -256,15 +256,15 @@ MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_packets(
  * two packets. select_last != 0: an instant on a common boundary is given by the later
  * mini-segment, otherwise by the earlier one. Errors as above, and MYB_E_DOMAIN for
  * boundaries that do not cover the segment or do not match the ticks. */
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_add_minisegments(
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_add_minisegments(
     myb_ck_writer* writer, const myb_ck_segment_header* header,
     const myb_ck_packets* minisegments, const double* boundaries, size_t count, int has_rates,
     int select_last, double start, double stop);
 
 MYB_API size_t myb_ck_writer_size(const myb_ck_writer* writer);
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_write(const myb_ck_writer* writer, void* buffer,
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_write(const myb_ck_writer* writer, void* buffer,
                                                      size_t size);
-MYB_API MYB_NODISCARD myb_status myb_ck_writer_write_file(const myb_ck_writer* writer,
+MYB_NODISCARD MYB_API myb_status myb_ck_writer_write_file(const myb_ck_writer* writer,
                                                           const char* path);
 
 #ifdef __cplusplus

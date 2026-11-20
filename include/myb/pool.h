@@ -20,7 +20,7 @@ typedef struct myb_pool myb_pool;
 /* threads: threads working on a job, the calling thread included (1 = no extra thread,
  * 0 = one per logical processor), at most 1024. Errors: MYB_E_DOMAIN (threads out of range),
  * MYB_E_NOMEM, MYB_E_IO (the system refused to start a thread). */
-MYB_API MYB_NODISCARD myb_status myb_pool_create(int threads, const myb_allocator* allocator,
+MYB_NODISCARD MYB_API myb_status myb_pool_create(int threads, const myb_allocator* allocator,
                                                  myb_pool** pool);
 
 /* Stops the threads; accepts NULL. */

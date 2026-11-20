@@ -12,6 +12,7 @@
 #              -DWORK_DIR=<dir> -DSOURCE_DIR=<bindings/go> -DREFERENCE=<low_orbit_reference>
 #              -DDATA_DIR=<data> -DTEST_DATA_DIR=<tests/data> [-DPACKAGES=<go packages>]
 #              -P run_go_test.cmake
+cmake_minimum_required(VERSION 3.28)
 foreach(_var GO PKG_CONFIG PC_DIR CC WORK_DIR SOURCE_DIR REFERENCE)
   if(NOT ${_var})
     message(FATAL_ERROR "run_go_test.cmake: ${_var} is not given")
@@ -70,7 +71,17 @@ set(ENV{MYB_TEST_DATA_DIR} "${TEST_DATA_DIR}")
 if(NOT PACKAGES)
   set(PACKAGES ./...)
 endif()
-execute_process(COMMAND "${GO}" test -count=1 -v ${PACKAGES}
+# Before it links, Go asks the C compiler which linker it is (-Wl,--version) with CC and
+# -extldflags, not with CGO_LDFLAGS: a -fuse-ld of the build named only there leaves it asking
+# the compiler's default. A Clang whose default for MinGW is GNU ld (Clang 20) then gets a GNU
+# linker script (-T) that lld, the linker the link really runs, refuses. So the linker of the
+# build goes to -extldflags as well.
+set(_go_ldflags "")
+string(REGEX MATCH "-fuse-ld=[^ ;]+" _fuse_ld "${LDFLAGS}")
+if(_fuse_ld)
+  set(_go_ldflags "-ldflags=-extldflags=${_fuse_ld}")
+endif()
+execute_process(COMMAND "${GO}" test -count=1 -v ${_go_ldflags} ${PACKAGES}
   WORKING_DIRECTORY "${SOURCE_DIR}" RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "go test failed (${rc})")

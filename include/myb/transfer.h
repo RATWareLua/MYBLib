@@ -36,7 +36,7 @@ typedef struct myb_bplane {
 
 /* The B-plane of the two-body hyperbola through (r, v) relative to the target of gravitational
  * parameter gm. MYB_E_DOMAIN: not hyperbolic, or S parallel to the pole. */
-MYB_API MYB_NODISCARD myb_status myb_bplane_compute(double gm, const double r[3],
+MYB_NODISCARD MYB_API myb_status myb_bplane_compute(double gm, const double r[3],
                                                     const double v[3], const double pole[3],
                                                     myb_bplane* bplane);
 
@@ -71,7 +71,7 @@ MYB_API size_t myb_shoot_work_size(size_t n, size_t m);
  * (no allocation, little stack). *iterations and *residual (max |f_i|) may be NULL.
  * Errors: MYB_E_DOMAIN (sizes outside 1 .. 64, invalid options), MYB_E_NOCONV, statuses of
  * the function. */
-MYB_API MYB_NODISCARD myb_status myb_shoot(myb_shoot_function function, void* context, size_t n,
+MYB_NODISCARD MYB_API myb_status myb_shoot(myb_shoot_function function, void* context, size_t n,
                                            size_t m, double* u,
                                            const myb_shoot_options* options, double* work,
                                            int* iterations, double* residual);

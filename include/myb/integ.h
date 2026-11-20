@@ -55,22 +55,22 @@ typedef struct myb_dop853_stats {
 
 /* Creates an integrator for n components. Errors: MYB_E_DOMAIN (invalid options, n == 0),
  * MYB_E_NOMEM, MYB_E_OVERFLOW. allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_dop853_create(size_t n, const myb_dop853_options* options,
+MYB_NODISCARD MYB_API myb_status myb_dop853_create(size_t n, const myb_dop853_options* options,
                                                    const myb_allocator* allocator,
                                                    myb_dop853** integrator);
 MYB_API void myb_dop853_destroy(myb_dop853* integrator); /* NULL is allowed */
 
 /* Sets the problem and the initial state (copied). Evaluates f(t0, y0) once. */
-MYB_API MYB_NODISCARD myb_status myb_dop853_start(myb_dop853* integrator, myb_ode_function f,
+MYB_NODISCARD MYB_API myb_status myb_dop853_start(myb_dop853* integrator, myb_ode_function f,
                                                   void* context, double t0, const double* y0);
 
 /* One accepted step towards t_limit (never beyond it; the direction of integration is the sign
  * of t_limit - t). Rejected attempts are retried inside. Errors: MYB_E_STEP_MIN, MYB_E_NOCONV
  * (budget), a status from f. */
-MYB_API MYB_NODISCARD myb_status myb_dop853_step(myb_dop853* integrator, double t_limit);
+MYB_NODISCARD MYB_API myb_status myb_dop853_step(myb_dop853* integrator, double t_limit);
 
 /* Steps until t_end exactly. */
-MYB_API MYB_NODISCARD myb_status myb_dop853_integrate(myb_dop853* integrator, double t_end);
+MYB_NODISCARD MYB_API myb_status myb_dop853_integrate(myb_dop853* integrator, double t_end);
 
 MYB_API double myb_dop853_time(const myb_dop853* integrator);
 MYB_API const double* myb_dop853_state(const myb_dop853* integrator); /* n values */
@@ -79,12 +79,12 @@ MYB_API myb_dop853_stats myb_dop853_statistics(const myb_dop853* integrator);
 /* Dense output: the state at any t within the last accepted step (order 7). The first call
  * after a step evaluates f three more times. MYB_E_RANGE if t is outside the last step or no
  * step was taken. */
-MYB_API MYB_NODISCARD myb_status myb_dop853_dense(myb_dop853* integrator, double t, double* y);
+MYB_NODISCARD MYB_API myb_status myb_dop853_dense(myb_dop853* integrator, double t, double* y);
 
 /* Root of g(t, y(t)) inside the last accepted step, if g changes sign between its ends, located
  * on the dense output by the Illinois variant of regula falsi to the resolution of t.
  * *found = 0 without a sign change. y_event may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_dop853_locate(myb_dop853* integrator, myb_event_function g,
+MYB_NODISCARD MYB_API myb_status myb_dop853_locate(myb_dop853* integrator, myb_event_function g,
                                                    void* context, int* found, double* t_event,
                                                    double* y_event);
 
@@ -177,7 +177,7 @@ typedef struct myb_ias15_stats {
 /* Creates an integrator for n coordinates (state of 2n values). Errors: MYB_E_DOMAIN (invalid
  * options, n == 0, block not dividing n, an unknown timescale), MYB_E_NOMEM, MYB_E_OVERFLOW.
  * allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
+MYB_NODISCARD MYB_API myb_status myb_ias15_create(size_t n, const myb_ias15_options* options,
                                                   const myb_allocator* allocator,
                                                   myb_ias15** integrator);
 MYB_API void myb_ias15_destroy(myb_ias15* integrator); /* NULL is allowed */
@@ -185,16 +185,16 @@ MYB_API void myb_ias15_destroy(myb_ias15* integrator); /* NULL is allowed */
 /* Sets the problem and the initial state y0 = (x0, v0) (copied); evaluates a(t0) once.
  * Automatic first step: (7! epsilon)^(1/7) times the smallest of sqrt(|x|/|a|) and |v|/|a| over
  * the blocks (zero terms ignored); a first step that is too long is rejected and redone. */
-MYB_API MYB_NODISCARD myb_status myb_ias15_start(myb_ias15* integrator, myb_accel_function a,
+MYB_NODISCARD MYB_API myb_status myb_ias15_start(myb_ias15* integrator, myb_accel_function a,
                                                  void* context, double t0, const double* y0);
 
 /* One accepted step towards t_limit (never beyond it; the direction is the sign of
  * t_limit - t). Errors: MYB_E_STEP_MIN, MYB_E_NOCONV (100 rejections in a row), a status
  * from the acceleration. */
-MYB_API MYB_NODISCARD myb_status myb_ias15_step(myb_ias15* integrator, double t_limit);
+MYB_NODISCARD MYB_API myb_status myb_ias15_step(myb_ias15* integrator, double t_limit);
 
 /* Steps until t_end exactly. */
-MYB_API MYB_NODISCARD myb_status myb_ias15_integrate(myb_ias15* integrator, double t_end);
+MYB_NODISCARD MYB_API myb_status myb_ias15_integrate(myb_ias15* integrator, double t_end);
 
 MYB_API double myb_ias15_time(const myb_ias15* integrator);
 MYB_API const double* myb_ias15_state(const myb_ias15* integrator); /* 2n values: x, then v */
@@ -202,10 +202,10 @@ MYB_API myb_ias15_stats myb_ias15_statistics(const myb_ias15* integrator);
 
 /* Dense output: y = (x, v) at any t within the last accepted step, from the step's polynomial
  * (no evaluations). MYB_E_RANGE if t is outside the last step or no step was taken. */
-MYB_API MYB_NODISCARD myb_status myb_ias15_dense(myb_ias15* integrator, double t, double* y);
+MYB_NODISCARD MYB_API myb_status myb_ias15_dense(myb_ias15* integrator, double t, double* y);
 
 /* As myb_dop853_locate; g receives the 2n-value state (x, v). */
-MYB_API MYB_NODISCARD myb_status myb_ias15_locate(myb_ias15* integrator, myb_event_function g,
+MYB_NODISCARD MYB_API myb_status myb_ias15_locate(myb_ias15* integrator, myb_event_function g,
                                                   void* context, int* found, double* t_event,
                                                   double* y_event);
 
@@ -237,22 +237,22 @@ enum { MYB_SYMPLECTIC_6_S7 = 607, MYB_SYMPLECTIC_8_S15 = 815 };
 
 /* order: 2, 4, 6 or 8 (the triple jump), MYB_SYMPLECTIC_6_S7 or MYB_SYMPLECTIC_8_S15. Errors:
  * MYB_E_DOMAIN (other order, n == 0), MYB_E_NOMEM, MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_symplectic_create(size_t n, int order,
+MYB_NODISCARD MYB_API myb_status myb_symplectic_create(size_t n, int order,
                                                        const myb_allocator* allocator,
                                                        myb_symplectic** integrator);
 MYB_API void myb_symplectic_destroy(myb_symplectic* integrator); /* NULL is allowed */
 
 /* Sets the problem and y0 = (x0, v0) (copied); evaluates a(t0) once. */
-MYB_API MYB_NODISCARD myb_status myb_symplectic_start(myb_symplectic* integrator,
+MYB_NODISCARD MYB_API myb_status myb_symplectic_start(myb_symplectic* integrator,
                                                       myb_position_accel_function a,
                                                       void* context, double t0, const double* y0);
 
 /* One step of length h (either sign, not 0). A status from the acceleration leaves the state
  * in the middle of the step: start again. */
-MYB_API MYB_NODISCARD myb_status myb_symplectic_step(myb_symplectic* integrator, double h);
+MYB_NODISCARD MYB_API myb_status myb_symplectic_step(myb_symplectic* integrator, double h);
 
 /* Equal steps of at most h_max from the current time to exactly t_end. */
-MYB_API MYB_NODISCARD myb_status myb_symplectic_integrate(myb_symplectic* integrator,
+MYB_NODISCARD MYB_API myb_status myb_symplectic_integrate(myb_symplectic* integrator,
                                                           double t_end, double h_max);
 
 MYB_API double myb_symplectic_time(const myb_symplectic* integrator);
@@ -298,32 +298,32 @@ typedef struct myb_rkn12_stats {
 
 /* Creates an integrator for n coordinates (state of 2n values). Errors: MYB_E_DOMAIN
  * (invalid options, n == 0), MYB_E_NOMEM, MYB_E_OVERFLOW. allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_rkn12_create(size_t n, const myb_rkn12_options* options,
+MYB_NODISCARD MYB_API myb_status myb_rkn12_create(size_t n, const myb_rkn12_options* options,
                                                   const myb_allocator* allocator,
                                                   myb_rkn12** integrator);
 MYB_API void myb_rkn12_destroy(myb_rkn12* integrator); /* NULL is allowed */
 
 /* Sets the problem and y0 = (x0, v0) (copied); evaluates a(t0) once. */
-MYB_API MYB_NODISCARD myb_status myb_rkn12_start(myb_rkn12* integrator,
+MYB_NODISCARD MYB_API myb_status myb_rkn12_start(myb_rkn12* integrator,
                                                  myb_position_accel_function a, void* context,
                                                  double t0, const double* y0);
 
 /* One accepted step towards t_limit (never beyond it). Errors: MYB_E_STEP_MIN, MYB_E_NOCONV
  * (100 rejections in a row), a status from the acceleration. */
-MYB_API MYB_NODISCARD myb_status myb_rkn12_step(myb_rkn12* integrator, double t_limit);
+MYB_NODISCARD MYB_API myb_status myb_rkn12_step(myb_rkn12* integrator, double t_limit);
 
 /* Steps until t_end exactly. */
-MYB_API MYB_NODISCARD myb_status myb_rkn12_integrate(myb_rkn12* integrator, double t_end);
+MYB_NODISCARD MYB_API myb_status myb_rkn12_integrate(myb_rkn12* integrator, double t_end);
 
 MYB_API double myb_rkn12_time(const myb_rkn12* integrator);
 MYB_API const double* myb_rkn12_state(const myb_rkn12* integrator); /* 2n values: x, then v */
 MYB_API myb_rkn12_stats myb_rkn12_statistics(const myb_rkn12* integrator);
 
 /* State at any t within the last accepted step. MYB_E_RANGE outside it. */
-MYB_API MYB_NODISCARD myb_status myb_rkn12_dense(myb_rkn12* integrator, double t, double* y);
+MYB_NODISCARD MYB_API myb_status myb_rkn12_dense(myb_rkn12* integrator, double t, double* y);
 
 /* As myb_dop853_locate; every iteration costs one dense output. */
-MYB_API MYB_NODISCARD myb_status myb_rkn12_locate(myb_rkn12* integrator, myb_event_function g,
+MYB_NODISCARD MYB_API myb_status myb_rkn12_locate(myb_rkn12* integrator, myb_event_function g,
                                                   void* context, int* found, double* t_event,
                                                   double* y_event);
 
@@ -356,23 +356,23 @@ typedef struct myb_gauss_jackson_stats {
 
 /* Errors: MYB_E_DOMAIN (h = 0 or not finite, n == 0, negative options), MYB_E_NOMEM,
  * MYB_E_OVERFLOW. allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_gauss_jackson_create(
+MYB_NODISCARD MYB_API myb_status myb_gauss_jackson_create(
     size_t n, const myb_gauss_jackson_options* options, const myb_allocator* allocator,
     myb_gauss_jackson** integrator);
 MYB_API void myb_gauss_jackson_destroy(myb_gauss_jackson* integrator); /* NULL is allowed */
 
 /* Sets the problem and y0 = (x0, v0) at t0 (copied) and runs the start. Errors: a status from
  * the acceleration, MYB_E_NOCONV (the start iteration does not converge: h is too long). */
-MYB_API MYB_NODISCARD myb_status myb_gauss_jackson_start(myb_gauss_jackson* integrator,
+MYB_NODISCARD MYB_API myb_status myb_gauss_jackson_start(myb_gauss_jackson* integrator,
                                                          myb_accel_function a, void* context,
                                                          double t0, const double* y0);
 
 /* Advances the state to the next node (one step of h). */
-MYB_API MYB_NODISCARD myb_status myb_gauss_jackson_step(myb_gauss_jackson* integrator);
+MYB_NODISCARD MYB_API myb_status myb_gauss_jackson_step(myb_gauss_jackson* integrator);
 
 /* Steps until the node reaches t_end or just passes it; the state at t_end itself then comes
  * from myb_gauss_jackson_dense. MYB_E_DOMAIN if t_end lies behind the current node. */
-MYB_API MYB_NODISCARD myb_status myb_gauss_jackson_integrate(myb_gauss_jackson* integrator,
+MYB_NODISCARD MYB_API myb_status myb_gauss_jackson_integrate(myb_gauss_jackson* integrator,
                                                              double t_end);
 
 MYB_API double myb_gauss_jackson_time(const myb_gauss_jackson* integrator);
@@ -382,11 +382,11 @@ MYB_API myb_gauss_jackson_stats myb_gauss_jackson_statistics(
 
 /* State at any t within the window: up to 4 steps around its centre, which covers the last
  * 4 steps (MYB_E_RANGE otherwise). No evaluations. */
-MYB_API MYB_NODISCARD myb_status myb_gauss_jackson_dense(myb_gauss_jackson* integrator, double t,
+MYB_NODISCARD MYB_API myb_status myb_gauss_jackson_dense(myb_gauss_jackson* integrator, double t,
                                                          double* y);
 
 /* As myb_dop853_locate, within the last step. */
-MYB_API MYB_NODISCARD myb_status myb_gauss_jackson_locate(myb_gauss_jackson* integrator,
+MYB_NODISCARD MYB_API myb_status myb_gauss_jackson_locate(myb_gauss_jackson* integrator,
                                                           myb_event_function g, void* context,
                                                           int* found, double* t_event,
                                                           double* y_event);

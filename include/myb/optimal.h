@@ -121,7 +121,7 @@ typedef struct myb_indirect_solution {
  * that is no ellipse), MYB_E_NOMEM, MYB_E_NOCONV (no first guess led anywhere — the transfer
  * may be impossible in the time given; or the way to the eps asked broke off: *solution then
  * holds the last one found, its `smoothing` saying where). allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_indirect_solve(const myb_indirect_problem* problem,
+MYB_NODISCARD MYB_API myb_status myb_indirect_solve(const myb_indirect_problem* problem,
                                                     const double* guess,
                                                     const myb_allocator* allocator,
                                                     myb_indirect_solution* solution);
@@ -139,7 +139,7 @@ typedef struct myb_indirect_point {
 /* The solution at `count` times in increasing order between t0 and the arrival. Errors:
  * MYB_E_DOMAIN (times out of order or outside the transfer), MYB_E_NOMEM, those of the
  * field. */
-MYB_API MYB_NODISCARD myb_status myb_indirect_sample(const myb_indirect_problem* problem,
+MYB_NODISCARD MYB_API myb_status myb_indirect_sample(const myb_indirect_problem* problem,
                                                      const myb_indirect_solution* solution,
                                                      const double* times, size_t count,
                                                      const myb_allocator* allocator,
@@ -214,7 +214,7 @@ typedef struct myb_nlp_result {
  * MYB_E_NOMEM,
  * MYB_E_NOCONV (x and *result hold what was reached), the statuses of the function at the
  * first point. allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_nlp_solve(const myb_nlp_problem* problem,
+MYB_NODISCARD MYB_API myb_status myb_nlp_solve(const myb_nlp_problem* problem,
                                                const myb_nlp_options* options, double* x,
                                                double* multipliers,
                                                const myb_allocator* allocator,
@@ -272,7 +272,7 @@ typedef struct myb_sims_flanagan {
  * MYB_E_DOMAIN (invalid numbers, a throttle longer than 1 + 1e-9, more propellant than mass),
  * those of the Kepler propagation, with a field MYB_E_NOMEM and those of the integrator and
  * of the model. */
-MYB_API MYB_NODISCARD myb_status myb_sims_flanagan_mismatch(const myb_sims_flanagan* leg,
+MYB_NODISCARD MYB_API myb_status myb_sims_flanagan_mismatch(const myb_sims_flanagan* leg,
                                                             const double* throttles,
                                                             double mismatch[6], double* mass1,
                                                             double* jacobian);
@@ -289,7 +289,7 @@ typedef struct myb_sims_flanagan_result {
  * 1e-6) are in the units of the solver: the first distance from the centre, the time
  * sqrt(length^3 / mu), the first mass. Errors: MYB_E_DOMAIN, MYB_E_NOMEM, MYB_E_NOCONV (the
  * throttles and *result hold what was reached). allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_sims_flanagan_solve(const myb_sims_flanagan* leg,
+MYB_NODISCARD MYB_API myb_status myb_sims_flanagan_solve(const myb_sims_flanagan* leg,
                                                          const myb_nlp_options* options,
                                                          double* throttles,
                                                          const myb_allocator* allocator,
@@ -402,7 +402,7 @@ MYB_API MYB_NODISCARD myb_status myb_sims_flanagan_solve(const myb_sims_flanagan
  * The difference of the speeds is taken as (v_out^2 - v_in^2) / (sum of the speeds at the
  * periapsis), which keeps its relative accuracy as v_out tends to v_in. Errors: MYB_E_DOMAIN
  * (a value not positive or not finite). Any output may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_chain_flyby(double gm, double v_in, double v_out,
+MYB_NODISCARD MYB_API myb_status myb_chain_flyby(double gm, double v_in, double v_out,
                                                  double periapsis, double* dv, double* turn,
                                                  double partials[6]);
 
@@ -446,7 +446,7 @@ typedef struct myb_chain {
  * arrival, more than MYB_NLP_MAX_UNKNOWNS unknowns or MYB_NLP_MAX_CONSTRAINTS constraints in
  * the first pass of the solver: 7 legs + 1 + 4 segments + 2 powered and 8 legs + segments +
  * powered). Any output may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_chain_size(const myb_chain* chain, size_t* unknowns,
+MYB_NODISCARD MYB_API myb_status myb_chain_size(const myb_chain* chain, size_t* unknowns,
                                                 size_t* equalities, size_t* inequalities);
 
 /* The first guess built in: the times in the middle of their bounds, the excess velocities
@@ -456,7 +456,7 @@ MYB_API MYB_NODISCARD myb_status myb_chain_size(const myb_chain* chain, size_t* 
  * conics into each other (the least allowed when they cannot) and the dv there. x:
  * myb_chain_size unknowns. Errors: those of myb_chain_size, of the providers and of the problem
  * of Lambert. */
-MYB_API MYB_NODISCARD myb_status myb_chain_guess(const myb_chain* chain, double* x);
+MYB_NODISCARD MYB_API myb_status myb_chain_guess(const myb_chain* chain, double* x);
 
 /* The propellant spent (kg; may be NULL) and the constraints (may be NULL) at x, with, when
  * not NULL, the gradient of the propellant (unknowns values) and the Jacobian of the
@@ -467,7 +467,7 @@ MYB_API MYB_NODISCARD myb_status myb_chain_guess(const myb_chain* chain, double*
  * the order of the legs, more propellant than mass, a flyby without excess speed, a powered
  * flyby with r_p not positive or dv negative), MYB_E_NOMEM, those of the providers, the
  * propagation and the model. */
-MYB_API MYB_NODISCARD myb_status myb_chain_evaluate(const myb_chain* chain, const double* x,
+MYB_NODISCARD MYB_API myb_status myb_chain_evaluate(const myb_chain* chain, const double* x,
                                                     double* propellant, double* constraints,
                                                     double* gradient, double* jacobian,
                                                     const myb_allocator* allocator);
@@ -493,7 +493,7 @@ typedef struct myb_chain_result {
  * 1e-9 and 1e-6, the weight 1e4) are those of the second pass, in the units of the solver; a
  * weight given there is that of both passes. Errors: those of myb_chain_evaluate,
  * MYB_E_NOCONV (x and *result hold what was reached). allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_chain_solve(const myb_chain* chain,
+MYB_NODISCARD MYB_API myb_status myb_chain_solve(const myb_chain* chain,
                                                  const myb_nlp_options* options, double* x,
                                                  const myb_allocator* allocator,
                                                  myb_chain_result* result);

@@ -67,7 +67,7 @@ typedef struct myb_jb2008_output {
  * sidereal angle plus the east longitude), the geocentric latitude `latitude` (rad) and the
  * height `height` (km, from 90 km up; checked against the program from 90 to 6000 km). Errors:
  * MYB_E_DOMAIN (non-finite input, height below 90 km, negative indices). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008(double mjd, double sun_right_ascension,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008(double mjd, double sun_right_ascension,
                                             double sun_declination, double right_ascension,
                                             double latitude, double height,
                                             const myb_jb2008_indices* indices,
@@ -81,10 +81,10 @@ typedef struct myb_jb2008_solar myb_jb2008_solar;
 typedef struct myb_jb2008_storm myb_jb2008_storm;
 
 /* Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM, MYB_E_IO. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_solar_load(const char* text, size_t size,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_solar_load(const char* text, size_t size,
                                                        const myb_allocator* allocator,
                                                        myb_jb2008_solar** table, myb_diag* diag);
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_solar_load_file(const char* path,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_solar_load_file(const char* path,
                                                             const myb_allocator* allocator,
                                                             myb_jb2008_solar** table,
                                                             myb_diag* diag);
@@ -93,20 +93,20 @@ MYB_EXT_API void myb_jb2008_solar_destroy(myb_jb2008_solar* table); /* NULL is a
 /* The eight solar indices of an instant on the UTC day `mjd` (the integer part is the day),
  * lagged as the model wants them (the dtc of `indices` is left as it is). Errors: MYB_E_RANGE
  * (a day the table does not hold). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_solar_at(const myb_jb2008_solar* table,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_solar_at(const myb_jb2008_solar* table,
                                                      double mjd, myb_jb2008_indices* indices);
 
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_storm_load(const char* text, size_t size,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_storm_load(const char* text, size_t size,
                                                        const myb_allocator* allocator,
                                                        myb_jb2008_storm** table, myb_diag* diag);
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_storm_load_file(const char* path,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_storm_load_file(const char* path,
                                                             const myb_allocator* allocator,
                                                             myb_jb2008_storm** table,
                                                             myb_diag* diag);
 MYB_EXT_API void myb_jb2008_storm_destroy(myb_jb2008_storm* table); /* NULL is allowed */
 
 /* The value of DTCFILE for the UTC hour that holds the instant `mjd`. Errors: MYB_E_RANGE. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_storm_at(const myb_jb2008_storm* table,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_storm_at(const myb_jb2008_storm* table,
                                                      double mjd, double* dtc);
 
 /* ---- The atmosphere of a force model ----------------------------------------------------------
@@ -127,7 +127,7 @@ typedef struct myb_jb2008_atmosphere {
   myb_ellipsoid ellipsoid;  /* of the Earth */
 } myb_jb2008_atmosphere;
 
-MYB_EXT_API MYB_NODISCARD myb_status myb_jb2008_density(void* atmosphere, myb_time t,
+MYB_NODISCARD MYB_EXT_API myb_status myb_jb2008_density(void* atmosphere, myb_time t,
                                                     const double r[3], double* density);
 
 #ifdef __cplusplus

@@ -32,19 +32,19 @@ typedef struct myb_variational_options {
 
 /* The model must outlive the object; its parameters at creation time are those differentiated.
  * Errors: MYB_E_DOMAIN, MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_variational_create(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_variational_create(myb_force_model* model,
                                                         const myb_variational_options* options,
                                                         const myb_allocator* allocator,
                                                         myb_variational** variational);
 MYB_API void myb_variational_destroy(myb_variational* variational); /* accepts NULL */
 
 /* Starts at t0 from y0 = (x0, v0) with Phi = I and S = 0. */
-MYB_API MYB_NODISCARD myb_status myb_variational_start(myb_variational* variational, double t0,
+MYB_NODISCARD MYB_API myb_status myb_variational_start(myb_variational* variational, double t0,
                                                        const double y0[6]);
 /* One step towards t_limit, or up to t_end; errors as IAS15 and the model. */
-MYB_API MYB_NODISCARD myb_status myb_variational_step(myb_variational* variational,
+MYB_NODISCARD MYB_API myb_status myb_variational_step(myb_variational* variational,
                                                       double t_limit);
-MYB_API MYB_NODISCARD myb_status myb_variational_integrate(myb_variational* variational,
+MYB_NODISCARD MYB_API myb_status myb_variational_integrate(myb_variational* variational,
                                                            double t_end);
 MYB_API double myb_variational_time(const myb_variational* variational);
 
@@ -53,7 +53,7 @@ MYB_API double myb_variational_time(const myb_variational* variational);
 MYB_API void myb_variational_get(const myb_variational* variational, double y[6], double phi[36],
                                  double* sensitivity);
 /* The same at any t within the last step (dense output). MYB_E_RANGE outside it. */
-MYB_API MYB_NODISCARD myb_status myb_variational_dense(myb_variational* variational, double t,
+MYB_NODISCARD MYB_API myb_status myb_variational_dense(myb_variational* variational, double t,
                                                        double y[6], double phi[36],
                                                        double* sensitivity);
 
@@ -65,7 +65,7 @@ MYB_API void myb_covariance_transform(size_t n, const double* m, const double* p
 /* A 6 x 6 state covariance in the radial, transverse, normal axes of (r, v) (rotation of both
  * the position and the velocity blocks; the rotation rate of the axes is not included).
  * MYB_E_DOMAIN: r and v parallel. */
-MYB_API MYB_NODISCARD myb_status myb_covariance_rtn(const double r[3], const double v[3],
+MYB_NODISCARD MYB_API myb_status myb_covariance_rtn(const double r[3], const double v[3],
                                                     const double p[36], double out[36]);
 
 /* ---- Deterministic random numbers --------------------------------------------------------------
@@ -90,7 +90,7 @@ MYB_API void myb_rng_gaussian(myb_rng* rng, size_t n, const double* mean, const 
 
 /* Mean and covariance (divisor count - 1) of count samples of dimension n stored one after the
  * other; compensated sums. MYB_E_DOMAIN: count < 2. */
-MYB_API MYB_NODISCARD myb_status myb_sample_statistics(size_t count, size_t n,
+MYB_NODISCARD MYB_API myb_status myb_sample_statistics(size_t count, size_t n,
                                                        const double* samples, double* mean,
                                                        double* covariance);
 

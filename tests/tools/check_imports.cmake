@@ -4,6 +4,7 @@
 # are allowed, although with -fno-math-errno they are normally inlined.
 #
 # Usage: cmake -DNM=<llvm-nm> -DLIB=<libmyb.a> -P check_imports.cmake
+cmake_minimum_required(VERSION 3.28)
 if(NOT NM OR NOT LIB)
   message(FATAL_ERROR "usage: cmake -DNM=<llvm-nm> -DLIB=<library> -P check_imports.cmake")
 endif()

@@ -36,7 +36,7 @@ typedef struct myb_approach {
  * steps of `step` and located to the resolution of the time. Up to `capacity` are written, in
  * the order of the time; *count receives how many were found (it may exceed the capacity).
  * Errors: MYB_E_DOMAIN (t1 <= t0, step <= 0, non-finite input), the statuses of the providers. */
-MYB_API MYB_NODISCARD myb_status myb_approach_find(myb_state_function first, void* first_context,
+MYB_NODISCARD MYB_API myb_status myb_approach_find(myb_state_function first, void* first_context,
                                                    myb_state_function second,
                                                    void* second_context, double t0, double t1,
                                                    double step, myb_approach* approaches,
@@ -48,7 +48,7 @@ MYB_API MYB_NODISCARD myb_status myb_approach_find(myb_state_function first, voi
  * the fourth derivative of the relative position (a quarter of a millimetre for 10 s in a
  * low orbit, a third of a metre for 60 s). Both orbits are left at t1. Errors: MYB_E_DOMAIN
  * (the orbits at different times, t1 not ahead of them, step <= 0), those of myb_orbit_state. */
-MYB_API MYB_NODISCARD myb_status myb_approach_orbits(myb_orbit* first, myb_orbit* second,
+MYB_NODISCARD MYB_API myb_status myb_approach_orbits(myb_orbit* first, myb_orbit* second,
                                                      double t1, double step,
                                                      myb_approach* approaches, size_t capacity,
                                                      size_t* count);
@@ -67,7 +67,7 @@ typedef struct myb_encounter {
  * relative position (3 x 3, row-major, m^2: the sum of the covariances of the two positions,
  * in the frame of the vectors). Errors: MYB_E_DOMAIN (zero relative velocity, a covariance
  * that is not symmetric or not positive in the plane, radius <= 0, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_encounter_plane(const double position[3],
+MYB_NODISCARD MYB_API myb_status myb_encounter_plane(const double position[3],
                                                      const double velocity[3],
                                                      const double covariance[9], double radius,
                                                      myb_encounter* encounter);
@@ -76,7 +76,7 @@ MYB_API MYB_NODISCARD myb_status myb_encounter_plane(const double position[3],
  * of two error functions, by Gauss-Legendre panels in the angle that removes the roots at the
  * rim, doubled until the value settles (relative 1e-13, or absolute 1e-300). Errors:
  * MYB_E_DOMAIN (an invalid encounter), MYB_E_NOCONV. */
-MYB_API MYB_NODISCARD myb_status myb_collision_probability(const myb_encounter* encounter,
+MYB_NODISCARD MYB_API myb_status myb_collision_probability(const myb_encounter* encounter,
                                                            double* probability);
 
 /* The series of F. K. Chan (Spacecraft Collision Probability, 2008, ch. 4): the ellipse of
@@ -90,7 +90,7 @@ MYB_API double myb_collision_probability_chan(const myb_encounter* encounter);
 /* The largest probability that the encounter can have if the covariance is known in shape
  * only — every sigma multiplied by one unknown factor — and the factor at which it is
  * reached (S. Alfano, AAS 03-548). Errors: as myb_collision_probability. */
-MYB_API MYB_NODISCARD myb_status myb_collision_probability_max(const myb_encounter* encounter,
+MYB_NODISCARD MYB_API myb_status myb_collision_probability_max(const myb_encounter* encounter,
                                                                double* probability,
                                                                double* factor);
 
@@ -112,7 +112,7 @@ typedef struct myb_conjunction {
  * the velocities are the rates of those of the positions); then the plane of the encounter
  * and the probability for the sum of the radii `radius`. Errors: as myb_approach_orbits,
  * myb_orbit_partials, myb_encounter_plane and myb_collision_probability. */
-MYB_API MYB_NODISCARD myb_status myb_conjunction_find(myb_orbit* first,
+MYB_NODISCARD MYB_API myb_status myb_conjunction_find(myb_orbit* first,
                                                       const double first_covariance[36],
                                                       myb_orbit* second,
                                                       const double second_covariance[36],
@@ -144,7 +144,7 @@ MYB_API MYB_NODISCARD myb_status myb_conjunction_find(myb_orbit* first,
  * MYB_E_DOMAIN (a covariance of the position that is not positive definite, radius <= 0,
  * non-finite input), MYB_E_NOCONV (the sphere does not settle: a radius far beyond the
  * uncertainty). */
-MYB_API MYB_NODISCARD myb_status myb_collision_rate(const double mean[6],
+MYB_NODISCARD MYB_API myb_status myb_collision_rate(const double mean[6],
                                                     const double covariance[36], double radius,
                                                     double* rate);
 
@@ -160,7 +160,7 @@ typedef myb_status (*myb_relative_gaussian_function)(void* context, double t, do
  * (may be NULL) receives the sum of their disagreements. Errors: MYB_E_DOMAIN (t1 <= t0,
  * step <= 0), MYB_E_NOCONV (the pieces exhausted), those of the function and of
  * myb_collision_rate. */
-MYB_API MYB_NODISCARD myb_status myb_collision_probability_long(myb_relative_gaussian_function f,
+MYB_NODISCARD MYB_API myb_status myb_collision_probability_long(myb_relative_gaussian_function f,
                                                                 void* context, double t0,
                                                                 double t1, double step,
                                                                 double radius,
@@ -177,7 +177,7 @@ MYB_API MYB_NODISCARD myb_status myb_collision_probability_long(myb_relative_gau
  * not small against the result. Both orbits are left at t1. Errors: MYB_E_DOMAIN (the orbits
  * at different times, t1 not ahead of them, step <= 0), those of myb_orbit_partials and of
  * myb_collision_rate. */
-MYB_API MYB_NODISCARD myb_status myb_conjunction_long(myb_orbit* first,
+MYB_NODISCARD MYB_API myb_status myb_conjunction_long(myb_orbit* first,
                                                       const double first_covariance[36],
                                                       myb_orbit* second,
                                                       const double second_covariance[36],

@@ -42,10 +42,10 @@ typedef struct myb_oem myb_oem;
 
 /* Errors: MYB_E_FORMAT (diag gives the line; among others a unit in brackets in a line of
  * data, which states none), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
-MYB_API MYB_NODISCARD myb_status myb_oem_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_oem_load(const char* text, size_t size,
                                               const myb_allocator* allocator, myb_oem** oem,
                                               myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_oem_load_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_oem_load_file(const char* path,
                                                    const myb_allocator* allocator, myb_oem** oem,
                                                    myb_diag* diag);
 MYB_API void myb_oem_destroy(myb_oem* oem); /* accepts NULL */
@@ -108,10 +108,10 @@ typedef struct myb_oem_data {
  * bytes), MYB_E_DOMAIN (no segments, a segment without states, a missing text or one with
  * blanks at its ends — the reader trims them —, values not finite or not finite in the unit
  * they are written in, an invalid date or one whose seconds need more than 60 decimals). */
-MYB_API MYB_NODISCARD myb_status myb_oem_write(const myb_oem_data* data, char* buffer,
+MYB_NODISCARD MYB_API myb_status myb_oem_write(const myb_oem_data* data, char* buffer,
                                                size_t size, size_t* length);
 /* The same in the notation given (myb_oem_write: KVN). */
-MYB_API MYB_NODISCARD myb_status myb_oem_write_as(const myb_oem_data* data,
+MYB_NODISCARD MYB_API myb_status myb_oem_write_as(const myb_oem_data* data,
                                                   myb_odm_notation notation, char* buffer,
                                                   size_t size, size_t* length);
 
@@ -165,12 +165,12 @@ typedef struct myb_opm {
  * kg, m**2, s, km**2, km**2/s, km**2/s**2, n/a; compared without regard to case, never
  * converted —, more than MYB_OPM_MAX_MANEUVERS manoeuvres); the structure is then
  * unspecified. */
-MYB_API MYB_NODISCARD myb_status myb_opm_parse(const char* text, size_t size, myb_opm* opm,
+MYB_NODISCARD MYB_API myb_status myb_opm_parse(const char* text, size_t size, myb_opm* opm,
                                                myb_diag* diag);
 /* As myb_oem_write and myb_oem_write_as. */
-MYB_API MYB_NODISCARD myb_status myb_opm_write(const myb_opm* opm, char* buffer, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_opm_write(const myb_opm* opm, char* buffer, size_t size,
                                                size_t* length);
-MYB_API MYB_NODISCARD myb_status myb_opm_write_as(const myb_opm* opm, myb_odm_notation notation,
+MYB_NODISCARD MYB_API myb_status myb_opm_write_as(const myb_opm* opm, myb_odm_notation notation,
                                                   char* buffer, size_t size, size_t* length);
 
 /* ---- OMM: mean elements -----------------------------------------------------------------------
@@ -215,11 +215,11 @@ typedef struct myb_omm {
 
 /* Errors: as myb_opm_parse; the units of the mean elements are rev/day, km, deg, km**3/s**2,
  * those of the element set 1/ER (or 1/[Earth radii]), rev/day**2, rev/day**3, n/a. */
-MYB_API MYB_NODISCARD myb_status myb_omm_parse(const char* text, size_t size, myb_omm* omm,
+MYB_NODISCARD MYB_API myb_status myb_omm_parse(const char* text, size_t size, myb_omm* omm,
                                                myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_omm_write(const myb_omm* omm, char* buffer, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_omm_write(const myb_omm* omm, char* buffer, size_t size,
                                                size_t* length);
-MYB_API MYB_NODISCARD myb_status myb_omm_write_as(const myb_omm* omm, myb_odm_notation notation,
+MYB_NODISCARD MYB_API myb_status myb_omm_write_as(const myb_omm* omm, myb_odm_notation notation,
                                                   char* buffer, size_t size, size_t* length);
 
 /* ---- OCM: the comprehensive message ------------------------------------------------------------
@@ -247,10 +247,10 @@ typedef enum myb_ocm_kind {
 } myb_ocm_kind;
 
 /* Errors: as myb_oem_load. */
-MYB_API MYB_NODISCARD myb_status myb_ocm_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_ocm_load(const char* text, size_t size,
                                               const myb_allocator* allocator, myb_ocm** ocm,
                                               myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_ocm_load_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_ocm_load_file(const char* path,
                                                    const myb_allocator* allocator, myb_ocm** ocm,
                                                    myb_diag* diag);
 MYB_API void myb_ocm_destroy(myb_ocm* ocm); /* accepts NULL */
@@ -274,7 +274,7 @@ MYB_API const char* myb_ocm_line_text(const myb_ocm* ocm, myb_ocm_kind kind, siz
  * them into values (may be NULL with max 0); *count: how many the line has. Errors:
  * MYB_E_FORMAT (a word that is neither a time nor a number: lines of manoeuvres may carry
  * words — take those from the text). */
-MYB_API MYB_NODISCARD myb_status myb_ocm_line(const myb_ocm* ocm, myb_ocm_kind kind,
+MYB_NODISCARD MYB_API myb_status myb_ocm_line(const myb_ocm* ocm, myb_ocm_kind kind,
                                               size_t index, size_t line, int* absolute,
                                               myb_calendar* epoch, double* offset,
                                               double* values, size_t max, size_t* count);
@@ -282,7 +282,7 @@ MYB_API MYB_NODISCARD myb_status myb_ocm_line(const myb_ocm* ocm, myb_ocm_kind k
 /* A line of a trajectory of TRAJ_TYPE CARTP, CARTPV or CARTPVA in m, m/s and m/s^2: *count is
  * 3, 6 or 9, the rest of state is zero. Errors: MYB_E_DOMAIN (another type), MYB_E_FORMAT (as
  * myb_ocm_line, another count, a number of km that is not finite in m). */
-MYB_API MYB_NODISCARD myb_status myb_ocm_state(const myb_ocm* ocm, size_t index, size_t line,
+MYB_NODISCARD MYB_API myb_status myb_ocm_state(const myb_ocm* ocm, size_t index, size_t line,
                                                int* absolute, myb_calendar* epoch,
                                                double* offset, double state[9], int* count);
 
@@ -316,14 +316,14 @@ typedef struct myb_ocm_data {
  * keeps —, a line that the reader would take for something else: a comment, a keyword =
  * value line, the word of a section, metadata without TIME_SYSTEM or EPOCH_TZERO, lines in a
  * block that has none). */
-MYB_API MYB_NODISCARD myb_status myb_ocm_write(const myb_ocm_data* data,
+MYB_NODISCARD MYB_API myb_status myb_ocm_write(const myb_ocm_data* data,
                                                myb_odm_notation notation, char* buffer,
                                                size_t size, size_t* length);
 
 /* A line of data: the time — the label *epoch, or `offset` seconds if epoch is NULL — and
  * `count` values, each the shortest decimal that reads back. Errors: MYB_E_OVERFLOW (call
  * again with *length + 1 bytes), MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_ocm_format_line(const myb_calendar* epoch, double offset,
+MYB_NODISCARD MYB_API myb_status myb_ocm_format_line(const myb_calendar* epoch, double offset,
                                                      const double* values, size_t count,
                                                      char* buffer, size_t size, size_t* length);
 

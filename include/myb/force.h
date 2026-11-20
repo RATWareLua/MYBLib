@@ -72,7 +72,7 @@ typedef struct myb_plate {
  * (usually the body frame of the object). No self-shadowing. MYB_E_DOMAIN: mass <= 0, a plate
  * with a negative area, a normal that is not unit to 1e-12, fractions outside [0, 1] or summing
  * to more than 1. */
-MYB_API MYB_NODISCARD myb_status myb_force_radiation_plates(double pressure, double mass,
+MYB_NODISCARD MYB_API myb_status myb_force_radiation_plates(double pressure, double mass,
                                                             const myb_plate* plates, size_t count,
                                                             const double u[3], double a[3]);
 
@@ -156,7 +156,7 @@ typedef struct myb_planet_radiation {
  * cr_area_over_mass: cr A / m of the object treated as a sphere; rings: 1 .. 50.
  * a += acceleration (same frame). MYB_E_DOMAIN: object inside the planet, invalid rings or
  * values. */
-MYB_API MYB_NODISCARD myb_status myb_force_planet_radiation(const myb_planet_radiation* planet,
+MYB_NODISCARD MYB_API myb_status myb_force_planet_radiation(const myb_planet_radiation* planet,
                                                             const double r[3], const double sun[3],
                                                             double solar_flux, double phase,
                                                             double cr_area_over_mass, int rings,
@@ -166,7 +166,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_planet_radiation(const myb_planet_rad
  * elements of the surface with the derivative of what each sends, so it is the gradient of
  * the radiation field to the accuracy of the rings, not the derivative of their sum (whose
  * elements move with the object). */
-MYB_API MYB_NODISCARD myb_status myb_force_planet_radiation_gradient(
+MYB_NODISCARD MYB_API myb_status myb_force_planet_radiation_gradient(
     const myb_planet_radiation* planet, const double r[3], const double sun[3], double solar_flux,
     double phase, double cr_area_over_mass, int rings, double dadr[9]);
 
@@ -189,7 +189,7 @@ MYB_API void myb_force_emission(double power, double efficiency, double mass, do
  * For a circular orbit in the equator da/dt = 6 k2 lag (m / M) (R / a)^5 n a (omega - n).
  * The tide raised on the raiser by the body is the same call with the roles exchanged.
  * Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_force_tidal_lag(double gm_body, double gm_raiser, double k2,
+MYB_NODISCARD MYB_API myb_status myb_force_tidal_lag(double gm_body, double gm_raiser, double k2,
                                                      double radius, double lag,
                                                      const double omega[3], const double r[3],
                                                      const double v[3], int with_static,
@@ -198,7 +198,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_tidal_lag(double gm_body, double gm_r
 /* The torque of the same tide on the body, per unit of its mass (the unit of myb/attitude.h),
  * in the axes of r: what the orbit gains in angular momentum the rotation of the body loses.
  * It is written, not added. Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_torque_tidal_lag(double gm_body, double gm_raiser, double k2,
+MYB_NODISCARD MYB_API myb_status myb_torque_tidal_lag(double gm_body, double gm_raiser, double k2,
                                                       double radius, double lag,
                                                       const double omega[3], const double r[3],
                                                       const double v[3], double torque[3]);
@@ -234,7 +234,7 @@ MYB_API double myb_nongrav_g(const myb_nongrav* model, double r);
 
 /* a += the acceleration at the position r and velocity v relative to the Sun. Errors:
  * MYB_E_DOMAIN (r = 0, r parallel to v, values not finite). */
-MYB_API MYB_NODISCARD myb_status myb_force_nongrav(const myb_nongrav* model, const double r[3],
+MYB_NODISCARD MYB_API myb_status myb_force_nongrav(const myb_nongrav* model, const double r[3],
                                                    const double v[3], double a[3]);
 
 /* The same with the activity lagging behind the heating (D. K. Yeomans, P. W. Chodas, Astron.
@@ -242,7 +242,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_nongrav(const myb_nongrav* model, con
  * orbit about the Sun — the two-body orbit of GM = gm through r, v. A positive delay puts the
  * peak of the outgassing after the perihelion. Errors: MYB_E_DOMAIN, those of
  * myb_kepler_propagate. */
-MYB_API MYB_NODISCARD myb_status myb_force_nongrav_delayed(const myb_nongrav* model, double gm,
+MYB_NODISCARD MYB_API myb_status myb_force_nongrav_delayed(const myb_nongrav* model, double gm,
                                                            double delay, const double r[3],
                                                            const double v[3], double a[3]);
 
@@ -267,7 +267,7 @@ typedef struct myb_yarkovsky {
 /* da/dt (m/s) of the diurnal effect — outwards for a prograde rotation — and of the seasonal
  * one, always inwards, at the flux (W m^-2) of the Sun on the orbit and the mean motion
  * (rad/s); either output may be NULL. Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_yarkovsky_drift(const myb_yarkovsky* body, double flux,
+MYB_NODISCARD MYB_API myb_status myb_yarkovsky_drift(const myb_yarkovsky* body, double flux,
                                                      double mean_motion, double c,
                                                      double* diurnal, double* seasonal);
 
@@ -288,7 +288,7 @@ MYB_API void myb_yarkovsky_response(double ratio, double theta, double* real, do
  * along the spin axis — the seasonal effect — depends on the whole orbit and is not here
  * (myb_yarkovsky_drift gives its mean on a circular orbit). obliquity of *body is not used.
  * Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_force_yarkovsky(const myb_yarkovsky* body,
+MYB_NODISCARD MYB_API myb_status myb_force_yarkovsky(const myb_yarkovsky* body,
                                                      const double spin[3], double flux, double c,
                                                      const double to_sun[3], double a[3]);
 
@@ -297,7 +297,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_yarkovsky(const myb_yarkovsky* body,
  * (m) and flux the flux there, falling as 1 / |d|^2. The response R depends on the flux only
  * through the thermal parameter, in which 1 / R is linear: dR / d theta = -R (1 - R) / theta.
  * Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_force_yarkovsky_gradient(const myb_yarkovsky* body,
+MYB_NODISCARD MYB_API myb_status myb_force_yarkovsky_gradient(const myb_yarkovsky* body,
                                                               const double spin[3], double flux,
                                                               double c, const double d[3],
                                                               double dadr[9]);
@@ -319,7 +319,7 @@ typedef struct myb_yarkovsky_season myb_yarkovsky_season;
 /* state: the body relative to the Sun (m, m/s) — it gives the orbit; gm of the Sun; spin: the
  * axis (unit); flux (W m^-2) of the Sun at `distance` (m). Errors: MYB_E_DOMAIN (the body, a
  * spin that is not a unit vector, an orbit that is not an ellipse of e <= 0.95), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_yarkovsky_season_create(const myb_yarkovsky* body,
+MYB_NODISCARD MYB_API myb_status myb_yarkovsky_season_create(const myb_yarkovsky* body,
                                                              const double spin[3], double gm,
                                                              const double state[6], double flux,
                                                              double distance, double c,
@@ -380,7 +380,7 @@ typedef struct myb_exponential_atmosphere {
 
 /* myb_density_function; context: const myb_exponential_atmosphere*; t is not used. Errors:
  * MYB_E_DOMAIN (an invalid table or ellipsoid, non-finite r). */
-MYB_API MYB_NODISCARD myb_status myb_density_exponential(void* atmosphere, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_density_exponential(void* atmosphere, myb_time t,
                                                          const double r[3], double* density);
 
 /* ---- Empirical ------------------------------------------------------------------------------- */
@@ -388,7 +388,7 @@ MYB_API MYB_NODISCARD myb_status myb_density_exponential(void* atmosphere, myb_t
 /* An acceleration given in the radial, transverse (along-track for a circular orbit) and normal
  * directions of the orbit (r, v): a += a_rtn[0] R + a_rtn[1] T + a_rtn[2] N. MYB_E_DOMAIN: r
  * and v parallel or zero. */
-MYB_API MYB_NODISCARD myb_status myb_force_empirical_rtn(const double r[3], const double v[3],
+MYB_NODISCARD MYB_API myb_status myb_force_empirical_rtn(const double r[3], const double v[3],
                                                          const double a_rtn[3], double a[3]);
 
 /* ---- Charge and plasma ------------------------------------------------------------------------
@@ -402,7 +402,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_empirical_rtn(const double r[3], cons
 typedef struct myb_magnetic_field myb_magnetic_field;
 
 /* Errors: MYB_E_DOMAIN (degree < 1, radius <= 0, non-finite coefficients), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_magnetic_field_create(double radius, int degree,
+MYB_NODISCARD MYB_API myb_status myb_magnetic_field_create(double radius, int degree,
                                                            const double* g, const double* h,
                                                            const myb_allocator* allocator,
                                                            myb_magnetic_field** field);
@@ -414,7 +414,7 @@ MYB_API MYB_NODISCARD myb_status myb_magnetic_field_create(double radius, int de
  * (6371.2 km for the IGRF) is the caller's. Errors: MYB_E_FORMAT (diag gives the line; also
  * epochs that are not 1 .. 64 increasing numbers, coefficients that are not finite or whose
  * value at the year is not), MYB_E_RANGE (year before the table or not finite), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_magnetic_field_load_table(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_magnetic_field_load_table(const char* text, size_t size,
                                                                double radius, double year,
                                                                const myb_allocator* allocator,
                                                                myb_magnetic_field** field,
@@ -425,7 +425,7 @@ MYB_API int myb_magnetic_field_degree(const myb_magnetic_field* field);
 
 /* B (T) at the body-fixed position r (m); work created for at least the degree. Errors:
  * MYB_E_DOMAIN (r = 0 or non-finite). */
-MYB_API MYB_NODISCARD myb_status myb_magnetic_field_eval(const myb_magnetic_field* field,
+MYB_NODISCARD MYB_API myb_status myb_magnetic_field_eval(const myb_magnetic_field* field,
                                                          myb_gravity_work* work,
                                                          const double r[3], double b[3]);
 
@@ -484,7 +484,7 @@ typedef struct myb_photoemission {
 /* Total current (A; positive charges the body positively) to a sphere of radius a at the
  * potential phi from `count` species and, if photo is not NULL, photoemission. Errors:
  * MYB_E_DOMAIN (invalid input). */
-MYB_API MYB_NODISCARD myb_status myb_charging_current(const myb_plasma_species* species,
+MYB_NODISCARD MYB_API myb_status myb_charging_current(const myb_plasma_species* species,
                                                       size_t count,
                                                       const myb_photoemission* photo,
                                                       double radius, double potential,
@@ -494,7 +494,7 @@ MYB_API MYB_NODISCARD myb_status myb_charging_current(const myb_plasma_species* 
  * phi (bracketing outwards from 0 in steps of the largest k T / |q|, then bisection to the
  * resolution of the doubles). Errors: MYB_E_DOMAIN (invalid input, or currents of one sign
  * only, so that no potential balances them), MYB_E_NOCONV. */
-MYB_API MYB_NODISCARD myb_status myb_charging_equilibrium(const myb_plasma_species* species,
+MYB_NODISCARD MYB_API myb_status myb_charging_equilibrium(const myb_plasma_species* species,
                                                           size_t count,
                                                           const myb_photoemission* photo,
                                                           double radius, double* potential);
@@ -544,7 +544,7 @@ typedef struct myb_charging_model {
 
 /* The total current (A) as myb_charging_current, with the model. Errors: MYB_E_DOMAIN (invalid
  * input, an unknown sheath). */
-MYB_API MYB_NODISCARD myb_status myb_charging_current_model(const myb_plasma_species* species,
+MYB_NODISCARD MYB_API myb_status myb_charging_current_model(const myb_plasma_species* species,
                                                             size_t count,
                                                             const myb_charging_model* model,
                                                             double radius, double potential,
@@ -562,7 +562,7 @@ enum { MYB_CHARGING_MAX_EQUILIBRIA = 3 };
  * single balance is the rule (with or without secondaries: none of a grid of two-temperature
  * plasmas gave two); a strong emitter floats positive at a few k T_s where the electrons release
  * more than one secondary each. Errors: MYB_E_DOMAIN (invalid input; no root in the range). */
-MYB_API MYB_NODISCARD myb_status myb_charging_equilibria(
+MYB_NODISCARD MYB_API myb_status myb_charging_equilibria(
     const myb_plasma_species* species, size_t count, const myb_charging_model* model,
     double radius, double potentials[MYB_CHARGING_MAX_EQUILIBRIA], size_t* found);
 

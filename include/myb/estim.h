@@ -56,9 +56,9 @@ typedef struct myb_observation {
 
 /* The position (3 values) and the whole state (6 values) of the object itself, e.g. an
  * orbit to be fitted by the model; context is not used. */
-MYB_API MYB_NODISCARD myb_status myb_measure_position(void* context, double t, const double y[6],
+MYB_NODISCARD MYB_API myb_status myb_measure_position(void* context, double t, const double y[6],
                                                       double* values, double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_state(void* context, double t, const double y[6],
+MYB_NODISCARD MYB_API myb_status myb_measure_state(void* context, double t, const double y[6],
                                                    double* values, double* partials);
 
 /* What moves a station on its body (myb/site.h): the tides of the body raised by bodies of
@@ -90,7 +90,7 @@ typedef struct myb_station {
 
 /* A station at geodetic longitude, latitude (rad) and height (m) on an ellipsoid of the body,
  * fixed on it (motion = NULL). Errors: those of myb_geodetic_to_cartesian. */
-MYB_API MYB_NODISCARD myb_status myb_station_init(myb_station* station, myb_env* env, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_station_init(myb_station* station, myb_env* env, size_t body,
                                                   const myb_ellipsoid* ellipsoid,
                                                   double longitude, double latitude,
                                                   double height);
@@ -98,7 +98,7 @@ MYB_API MYB_NODISCARD myb_status myb_station_init(myb_station* station, myb_env*
 /* State of the station at the model time t relative to the origin of the environment, in its
  * inertial axes (the body's state and orientation). Errors: those of the environment and,
  * with a motion, of myb_site_displacement. */
-MYB_API MYB_NODISCARD myb_status myb_station_state(const myb_station* station, double t,
+MYB_NODISCARD MYB_API myb_status myb_station_state(const myb_station* station, double t,
                                                    double state[6]);
 
 /* Measurements from a station (context: const myb_station*), all of the vector d from the
@@ -111,14 +111,14 @@ MYB_API MYB_NODISCARD myb_status myb_station_state(const myb_station* station, d
  *               station's horizon, 2 values (periodic = 1).
  * Errors: MYB_E_DOMAIN (the object at the station; for the angles also exactly at the pole of
  * their axes), the statuses of the environment. */
-MYB_API MYB_NODISCARD myb_status myb_measure_range(void* station, double t, const double y[6],
+MYB_NODISCARD MYB_API myb_status myb_measure_range(void* station, double t, const double y[6],
                                                    double* values, double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_range_rate(void* station, double t,
+MYB_NODISCARD MYB_API myb_status myb_measure_range_rate(void* station, double t,
                                                         const double y[6], double* values,
                                                         double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_radec(void* station, double t, const double y[6],
+MYB_NODISCARD MYB_API myb_status myb_measure_radec(void* station, double t, const double y[6],
                                                    double* values, double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_azel(void* station, double t, const double y[6],
+MYB_NODISCARD MYB_API myb_status myb_measure_azel(void* station, double t, const double y[6],
                                                   double* values, double* partials);
 
 /* A measurement of a point of the object that is not its centre of mass — a retroreflector,
@@ -144,7 +144,7 @@ typedef struct myb_offset_measure {
   double gm; /* of the body at the origin, m^3 s^-2; 0: the velocity kept over the second */
 } myb_offset_measure;
 
-MYB_API MYB_NODISCARD myb_status myb_measure_offset(void* offset, double t, const double y[6],
+MYB_NODISCARD MYB_API myb_status myb_measure_offset(void* offset, double t, const double y[6],
                                                     double* values, double* partials);
 
 /* ---- Measurements with the light time --------------------------------------------------------
@@ -178,16 +178,16 @@ typedef struct myb_light_measure {
   int aberration; /* the angles: 0: where the object was; 1: where the station sees it */
 } myb_light_measure;
 
-MYB_API MYB_NODISCARD myb_status myb_measure_light_range(void* light, double t,
+MYB_NODISCARD MYB_API myb_status myb_measure_light_range(void* light, double t,
                                                          const double y[6], double* values,
                                                          double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_light_range_rate(void* light, double t,
+MYB_NODISCARD MYB_API myb_status myb_measure_light_range_rate(void* light, double t,
                                                               const double y[6],
                                                               double* values, double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_light_radec(void* light, double t,
+MYB_NODISCARD MYB_API myb_status myb_measure_light_radec(void* light, double t,
                                                          const double y[6], double* values,
                                                          double* partials);
-MYB_API MYB_NODISCARD myb_status myb_measure_light_azel(void* light, double t,
+MYB_NODISCARD MYB_API myb_status myb_measure_light_azel(void* light, double t,
                                                         const double y[6], double* values,
                                                         double* partials);
 
@@ -231,7 +231,7 @@ typedef struct myb_fit_result {
  * that is not positive definite: the observations do not determine the unknowns),
  * MYB_E_NOMEM, the statuses of the propagation and of the measurements. On an error y0 and
  * the parameters hold the values of the last iteration. */
-MYB_API MYB_NODISCARD myb_status myb_fit_orbit(myb_force_model* model, double t0, double y0[6],
+MYB_NODISCARD MYB_API myb_status myb_fit_orbit(myb_force_model* model, double t0, double y0[6],
                                                const myb_observation* observations,
                                                size_t count, const myb_fit_options* options,
                                                const myb_allocator* allocator,
@@ -259,7 +259,7 @@ typedef struct myb_filter_options {
 } myb_filter_options;
 
 /* The model must outlive the filter. Errors: MYB_E_DOMAIN (negative options), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_filter_create(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_filter_create(myb_force_model* model,
                                                    const myb_filter_options* options,
                                                    const myb_allocator* allocator,
                                                    myb_filter** filter);
@@ -268,7 +268,7 @@ MYB_API void myb_filter_destroy(myb_filter* filter); /* accepts NULL */
 /* Starts at t0 with the state y0, the present values of the parameters and the covariance of
  * the 6 + np + bias_count unknowns ((6 + np + bias_count)^2 values, row-major, symmetric); observations follow in time order towards
  * t_end, which is never passed. Errors: MYB_E_DOMAIN (times, values not finite). */
-MYB_API MYB_NODISCARD myb_status myb_filter_start(myb_filter* filter, double t0,
+MYB_NODISCARD MYB_API myb_status myb_filter_start(myb_filter* filter, double t0,
                                                   const double y0[6], const double* covariance,
                                                   double t_end);
 
@@ -276,12 +276,12 @@ MYB_API MYB_NODISCARD myb_status myb_filter_start(myb_filter* filter, double t0,
  * before the correction, `count` values. Errors: MYB_E_DOMAIN (an invalid observation, a time
  * behind the filter's or beyond t_end, an innovation covariance that is not positive
  * definite), the statuses of the propagation and the measurement. */
-MYB_API MYB_NODISCARD myb_status myb_filter_update(myb_filter* filter,
+MYB_NODISCARD MYB_API myb_status myb_filter_update(myb_filter* filter,
                                                    const myb_observation* observation,
                                                    double* innovation);
 
 /* Propagates to t without an observation (the covariance grows). Errors as above. */
-MYB_API MYB_NODISCARD myb_status myb_filter_predict(myb_filter* filter, double t);
+MYB_NODISCARD MYB_API myb_status myb_filter_predict(myb_filter* filter, double t);
 
 /* The time, the state and the covariance ((6 + np + bias_count)^2 values) of the filter; any
  * output may be NULL. */
@@ -290,7 +290,7 @@ MYB_API void myb_filter_get(const myb_filter* filter, double* t, double y[6],
 
 /* The systematic shifts: their first values (after myb_filter_start, before the first
  * observation; MYB_E_DOMAIN if not finite) and their present estimates. */
-MYB_API MYB_NODISCARD myb_status myb_filter_set_bias(myb_filter* filter, const double* bias);
+MYB_NODISCARD MYB_API myb_status myb_filter_set_bias(myb_filter* filter, const double* bias);
 MYB_API void myb_filter_bias(const myb_filter* filter, double* bias);
 
 /* ---- Smoother ----------------------------------------------------------------------------------
@@ -306,7 +306,7 @@ MYB_API size_t myb_filter_steps(const myb_filter* filter);
  * repeated. Errors: MYB_E_DOMAIN (a filter without history, a predicted covariance that is
  * not positive definite). MYB_E_OVERFLOW comes from the filter itself when an observation
  * would need more instants than it keeps. */
-MYB_API MYB_NODISCARD myb_status myb_filter_smooth(myb_filter* filter);
+MYB_NODISCARD MYB_API myb_status myb_filter_smooth(myb_filter* filter);
 
 /* The estimate at an instant kept: its time, the 6 + np + bias_count unknowns (state,
  * parameters, shifts) and their covariance — the filter's own until myb_filter_smooth has

@@ -36,7 +36,7 @@ MYB_API int myb_ray_ellipsoid(const double radii[3], const double origin[3],
  * the point under it. Deep inside, in a plane of symmetry, two points (or a circle of them)
  * may be equally near: the one on the positive side of the shortest axis is given. Errors:
  * MYB_E_DOMAIN (input not finite), MYB_E_NOCONV. */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoid_nearest(const double radii[3],
+MYB_NODISCARD MYB_API myb_status myb_ellipsoid_nearest(const double radii[3],
                                                        const double position[3],
                                                        double point[3], double* height);
 
@@ -48,7 +48,7 @@ MYB_API void myb_ellipsoid_normal(const double radii[3], const double point[3],
  * the surface. It is an ellipse in a plane: centre + cos(u) major + sin(u) minor, major and
  * minor its semi-axes, perpendicular, |major| >= |minor|. Errors: MYB_E_DOMAIN (the observer
  * on or inside the ellipsoid, input not finite). */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoid_limb(const double radii[3],
+MYB_NODISCARD MYB_API myb_status myb_ellipsoid_limb(const double radii[3],
                                                     const double observer[3], double centre[3],
                                                     double major[3], double minor[3]);
 
@@ -61,7 +61,7 @@ MYB_API MYB_NODISCARD myb_status myb_ellipsoid_limb(const double radii[3],
  * the region that sees all of it. For a source of radius 0 both are where the source is on
  * the horizon. Errors: MYB_E_DOMAIN (the source not outside the ellipsoid, a negative
  * radius, input not finite). */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoid_terminator(const double radii[3],
+MYB_NODISCARD MYB_API myb_status myb_ellipsoid_terminator(const double radii[3],
                                                           const double source[3],
                                                           double source_radius, int penumbral,
                                                           size_t count, double* points);
@@ -101,7 +101,7 @@ MYB_API double myb_polyhedron_solid_angle(const myb_polyhedron* polyhedron, cons
  * (the gradient of the distance), and the angle-weighted normal for a position on the edge or
  * the corner itself. Of a point shared by faces equally near the face given is the first in
  * the mesh. Errors: MYB_E_DOMAIN (a position that is not finite). */
-MYB_API MYB_NODISCARD myb_status myb_polyhedron_nearest(const myb_polyhedron* polyhedron,
+MYB_NODISCARD MYB_API myb_status myb_polyhedron_nearest(const myb_polyhedron* polyhedron,
                                                         const double position[3],
                                                         double point[3], double normal[3],
                                                         double* distance, size_t* face);
@@ -118,7 +118,7 @@ MYB_API MYB_NODISCARD myb_status myb_polyhedron_nearest(const myb_polyhedron* po
  * exact transformation; the classical formula of other software differs from it by
  * (v / c)^2) —, the orientation of the body at t - tau and tau (s). Any output may be NULL.
  * Errors: MYB_E_DOMAIN, the statuses of the environment. */
-MYB_API MYB_NODISCARD myb_status myb_view_body(myb_env* env, double t, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_view_body(myb_env* env, double t, size_t body,
                                                const double y[6], double c, int aberration,
                                                double position[3], myb_orientation* orientation,
                                                double* light_time);
@@ -128,7 +128,7 @@ MYB_API MYB_NODISCARD myb_status myb_view_body(myb_env* env, double t, size_t bo
  * body taken where it was and turned as it was that long before t. *hit = 0 if the line of
  * sight misses the body (point and light_time, which may be NULL, are then untouched).
  * Errors as above. */
-MYB_API MYB_NODISCARD myb_status myb_view_intercept(myb_env* env, double t, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_view_intercept(myb_env* env, double t, size_t body,
                                                     const double radii[3], const double y[6],
                                                     const double direction[3], double c,
                                                     int* hit, double point[3],
@@ -142,7 +142,7 @@ MYB_API MYB_NODISCARD myb_status myb_view_intercept(myb_env* env, double t, size
  * local horizon); emission — between the normal and the direction to the observer. Radians in
  * [0, pi]; any output may be NULL. Errors: MYB_E_DOMAIN (a vector of zero length, the source
  * or the observer at the point, input not finite). */
-MYB_API MYB_NODISCARD myb_status myb_illumination_angles(const double point[3],
+MYB_NODISCARD MYB_API myb_status myb_illumination_angles(const double point[3],
                                                          const double normal[3],
                                                          const double source[3],
                                                          const double observer[3],

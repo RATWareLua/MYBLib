@@ -53,7 +53,7 @@ typedef struct myb_site_tides myb_site_tides;
 
 /* Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable), MYB_E_DOMAIN (prefix longer
  * than 20 characters), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_site_tides_create(const myb_kpool* pool, const char* prefix,
+MYB_NODISCARD MYB_API myb_status myb_site_tides_create(const myb_kpool* pool, const char* prefix,
                                                        const myb_allocator* allocator,
                                                        myb_site_tides** tides, myb_diag* diag);
 MYB_API void myb_site_tides_destroy(myb_site_tides* tides); /* accepts NULL */
@@ -72,7 +72,7 @@ typedef struct myb_ocean_loading myb_ocean_loading;
  * <prefix>_BLQ: three rows of myb_site_tides_given_waves numbers each — along the radius
  * (up), to the west, to the south. Errors: MYB_E_DOMAIN (a value that is negative or not
  * finite), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_ocean_loading_create(const myb_site_tides* tides,
+MYB_NODISCARD MYB_API myb_status myb_ocean_loading_create(const myb_site_tides* tides,
                                                           const double* amplitudes,
                                                           const double* phases,
                                                           const myb_allocator* allocator,
@@ -83,13 +83,13 @@ MYB_API MYB_NODISCARD myb_status myb_ocean_loading_create(const myb_site_tides* 
  * line of its own, then three lines of amplitudes and three of phases). The name is compared
  * without regard to case and to the blanks around it. Errors: MYB_E_NOT_FOUND (no such
  * point), MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM, MYB_E_IO. */
-MYB_API MYB_NODISCARD myb_status myb_ocean_loading_load(const myb_site_tides* tides,
+MYB_NODISCARD MYB_API myb_status myb_ocean_loading_load(const myb_site_tides* tides,
                                                         const char* text, size_t size,
                                                         const char* site,
                                                         const myb_allocator* allocator,
                                                         myb_ocean_loading** loading,
                                                         myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_ocean_loading_load_file(const myb_site_tides* tides,
+MYB_NODISCARD MYB_API myb_status myb_ocean_loading_load_file(const myb_site_tides* tides,
                                                              const char* path, const char* site,
                                                              const myb_allocator* allocator,
                                                              myb_ocean_loading** loading,
@@ -114,11 +114,11 @@ MYB_API void myb_ocean_loading_at(const myb_site_tides* tides, const myb_ocean_l
  * not read — eq. 19 has S1 and S2); the first line of the name is taken. The name is
  * compared as in myb_ocean_loading_load. Errors: MYB_E_NOT_FOUND (no such point),
  * MYB_E_FORMAT (diag gives the line), MYB_E_IO. */
-MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_site_atmosphere_load(const char* text, size_t size,
                                                           const char* site,
                                                           double coefficients[12],
                                                           myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_load_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_site_atmosphere_load_file(const char* path,
                                                                const char* site,
                                                                double coefficients[12],
                                                                myb_diag* diag);
@@ -135,10 +135,10 @@ enum { MYB_SITE_GRID_MAX_VALUES = 12 };
 typedef struct myb_site_grid myb_site_grid;
 
 /* Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM, MYB_E_IO. */
-MYB_API MYB_NODISCARD myb_status myb_site_grid_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_site_grid_load(const char* text, size_t size,
                                                     const myb_allocator* allocator,
                                                     myb_site_grid** grid, myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_site_grid_load_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_site_grid_load_file(const char* path,
                                                          const myb_allocator* allocator,
                                                          myb_site_grid** grid, myb_diag* diag);
 MYB_API void myb_site_grid_destroy(myb_site_grid* grid); /* accepts NULL */
@@ -148,7 +148,7 @@ MYB_API size_t myb_site_grid_values(const myb_site_grid* grid); /* per node */
  * grid that goes round the body is continued across its first meridian. Errors: MYB_E_RANGE
  * (outside the grid), MYB_E_DOMAIN (not finite, or a longitude of so many turns that its
  * place in the turn is lost; values of the grid whose differences overflow). */
-MYB_API MYB_NODISCARD myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude,
+MYB_NODISCARD MYB_API myb_status myb_site_grid_at(const myb_site_grid* grid, double longitude,
                                                   double latitude, double* values);
 
 /* The coefficients of the atmospheric tides on a grid, from the file of S1, S2 and S3 of TU
@@ -161,11 +161,11 @@ MYB_API MYB_NODISCARD myb_status myb_site_grid_at(const myb_site_grid* grid, dou
  * point. The grid of TU Wien runs from 89.5 to -89.5 degrees: a point nearer a pole is
  * outside it (MYB_E_RANGE). Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM,
  * MYB_E_IO. */
-MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_grid_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_site_atmosphere_grid_load(const char* text, size_t size,
                                                                const myb_allocator* allocator,
                                                                myb_site_grid** grid,
                                                                myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_site_atmosphere_grid_load_file(
+MYB_NODISCARD MYB_API myb_status myb_site_atmosphere_grid_load_file(
     const char* path, const myb_allocator* allocator, myb_site_grid** grid, myb_diag* diag);
 
 /* ---- The displacement ------------------------------------------------------------------------ */
@@ -212,7 +212,7 @@ typedef struct myb_site_input {
  * `loads` are needed by the loads only and may be NULL without them. Errors: MYB_E_DOMAIN (a
  * point or a raiser at the centre, a point on the axis of rotation — its longitude is not
  * defined —, gm that is not positive, input that is not finite, loads without the axes). */
-MYB_API MYB_NODISCARD myb_status myb_site_displacement(const myb_site_tides* tides,
+MYB_NODISCARD MYB_API myb_status myb_site_displacement(const myb_site_tides* tides,
                                                        const double position[3],
                                                        const double* enu,
                                                        const myb_site_loads* loads,

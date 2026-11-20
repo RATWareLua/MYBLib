@@ -86,7 +86,7 @@ enum {
 
 /* `bodies` >= 1 massive bodies with gm[0 .. bodies-1] (finite, >= 0). Errors: MYB_E_DOMAIN,
  * MYB_E_OVERFLOW, MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_system_create(size_t bodies, const double* gm,
+MYB_NODISCARD MYB_API myb_status myb_system_create(size_t bodies, const double* gm,
                                                    const myb_allocator* allocator,
                                                    myb_system** system);
 MYB_API void myb_system_destroy(myb_system* system); /* accepts NULL */
@@ -101,7 +101,7 @@ MYB_API myb_nbody* myb_system_nbody(myb_system* system);
  * inertial frame of the system at the time t of the integration (seconds, as
  * myb_time_from_seconds). The provider must outlive the system. Errors: MYB_E_DOMAIN (the
  * body, a body whose rotation is integrated). */
-MYB_API MYB_NODISCARD myb_status myb_system_set_orientation(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_set_orientation(myb_system* system, size_t body,
                                                             myb_orientation_function orientation,
                                                             void* context);
 
@@ -110,7 +110,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_set_orientation(myb_system* system, 
  * rotation is integrated the degrees from 3 are taken from the field and the degree 2 from
  * the inertia tensor. Errors: MYB_E_DOMAIN (the body, a degree of 1 or below other than 0, a
  * degree above the field), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_system_set_field(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_set_field(myb_system* system, size_t body,
                                                       const myb_gravity_field* field, int degree);
 
 /* An integrated rotation. Every moment is per unit mass of the body (m^2). The inertia tensor
@@ -136,7 +136,7 @@ typedef struct myb_system_rotation {
 
 /* Errors: MYB_E_DOMAIN (the body, a body with an orientation from outside or without mass,
  * invalid values), MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_ROTATIONS). */
-MYB_API MYB_NODISCARD myb_status myb_system_set_rotation(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_set_rotation(myb_system* system, size_t body,
                                                          const myb_system_rotation* rotation);
 
 /* The answer of a body to tides, by band (order j = 0 long-period, 1 diurnal, 2 semi-diurnal,
@@ -162,7 +162,7 @@ typedef struct myb_system_tide {
  * accelerations are asked for: a body whose rotation is integrated answers tides through its
  * distortion (myb_system_add_distortion), and myb_system_add_tide refuses it. Errors:
  * MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_system_set_tide(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_set_tide(myb_system* system, size_t body,
                                                      const myb_system_tide* tide);
 
 /* ---- The levels of the graph ----------------------------------------------------------------- */
@@ -171,20 +171,20 @@ MYB_API MYB_NODISCARD myb_status myb_system_set_tide(myb_system* system, size_t 
  * reaction on the body, and the torque on a body whose rotation is integrated. The body
  * needs a field or an integrated rotation. Errors: MYB_E_DOMAIN (indices, the same body
  * twice, a body without mass), MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_system_add_field(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_add_field(myb_system* system, size_t body,
                                                       size_t point);
 
 /* The quadrupoles of two bodies on each other (myb_figure_figure): accelerations of both and
  * the torques on those whose rotation is integrated. Errors: as above. */
-MYB_API MYB_NODISCARD myb_status myb_system_add_figures(myb_system* system, size_t a, size_t b);
+MYB_NODISCARD MYB_API myb_status myb_system_add_figures(myb_system* system, size_t a, size_t b);
 
 /* The tide that `raiser` raises on `body` (myb_system_set_tide) acts on `point`, which acts
  * back on the body; the raiser and the point may be one. Errors: as above. */
-MYB_API MYB_NODISCARD myb_status myb_system_add_tide(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_add_tide(myb_system* system, size_t body,
                                                      size_t raiser, size_t point);
 
 /* `raiser` distorts `body`, whose rotation is integrated. Errors: as above. */
-MYB_API MYB_NODISCARD myb_status myb_system_add_distortion(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_add_distortion(myb_system* system, size_t body,
                                                            size_t raiser);
 
 /* The terms beyond 1PN of two bodies (myb_pn_binary_evaluate of myb/rel.h: `orders` of
@@ -209,7 +209,7 @@ typedef struct myb_system_pn_pair {
   double kappa2; /* of body b */
 } myb_system_pn_pair;
 
-MYB_API MYB_NODISCARD myb_status myb_system_add_pn_pair(myb_system* system, size_t a, size_t b,
+MYB_NODISCARD MYB_API myb_status myb_system_add_pn_pair(myb_system* system, size_t a, size_t b,
                                                         const myb_system_pn_pair* pair);
 
 /* What the levels above do not give — light, thrust, a gas. The function is called once an
@@ -229,7 +229,7 @@ typedef myb_status (*myb_system_action)(void* context, double t, const myb_syste
                                         double acceleration[3], double torque[3]);
 
 /* Errors: MYB_E_DOMAIN (the body), MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_ACTIONS). */
-MYB_API MYB_NODISCARD myb_status myb_system_add_action(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_add_action(myb_system* system, size_t body,
                                                        myb_system_action action, void* context);
 
 /* The spin of `body` drags `point` (J. Lense, H. Thirring, 1918): the acceleration
@@ -242,7 +242,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_add_action(myb_system* system, size_
  * j = 0.06884 R^2 w along its pole: 2e-12 of the attraction at Mercury. Errors:
  * MYB_E_DOMAIN (the bodies, the same body twice, a spin that is not finite, no
  * relativity), MYB_E_OVERFLOW (more than MYB_SYSTEM_MAX_DRAGS). */
-MYB_API MYB_NODISCARD myb_status myb_system_add_frame_dragging(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_add_frame_dragging(myb_system* system, size_t body,
                                                                size_t point,
                                                                const double spin[3]);
 
@@ -252,7 +252,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_add_frame_dragging(myb_system* syste
  * the mass of the moment; what leaves carries its own momentum away, so the body is not
  * pushed. A rate of 0 keeps the mass as it stands. Errors: MYB_E_DOMAIN (the body, values
  * not finite); from myb_system_acceleration MYB_E_DOMAIN once the mass would be negative. */
-MYB_API MYB_NODISCARD myb_status myb_system_set_mass_rate(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_set_mass_rate(myb_system* system, size_t body,
                                                           double rate, double epoch);
 
 /* A body with a given motion: state(context, t, y) gives its position (and velocity, which
@@ -265,7 +265,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_set_mass_rate(myb_system* system, si
  * guided bodies. The provider must outlive the system. Errors: MYB_E_DOMAIN (gm negative or
  * not finite), MYB_E_NOMEM, MYB_E_OVERFLOW; from myb_system_acceleration then the statuses
  * of the provider, MYB_E_DOMAIN for a place that is not finite or that of a body. */
-MYB_API MYB_NODISCARD myb_status myb_system_add_guided(myb_system* system, double gm,
+MYB_NODISCARD MYB_API myb_status myb_system_add_guided(myb_system* system, double gm,
                                                        myb_state_function state, void* context,
                                                        size_t* index);
 MYB_API size_t myb_system_guided(const myb_system* system);
@@ -294,7 +294,7 @@ typedef struct myb_system_light {
   int phases;                  /* with theta > 0: steps of a turn, 8 .. 256 (0: 64) */
 } myb_system_light;
 
-MYB_API MYB_NODISCARD myb_status myb_system_light_action(void* light, double t,
+MYB_NODISCARD MYB_API myb_status myb_system_light_action(void* light, double t,
                                                          const myb_system_view* view,
                                                          double acceleration[3],
                                                          double torque[3]);
@@ -328,7 +328,7 @@ typedef struct myb_system_contact {
   size_t point_count;
 } myb_system_contact;
 
-MYB_API MYB_NODISCARD myb_status myb_system_add_contact(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_add_contact(myb_system* system, size_t body,
                                                         size_t ground,
                                                         const myb_system_contact* contact);
 
@@ -343,31 +343,31 @@ MYB_API size_t myb_system_coordinates(const myb_system* system);
  * on the way out), the angular velocity of the mantle and that of the core (may be NULL: no
  * core), both in the mantle frame (rad/s). Errors: MYB_E_DOMAIN (the rotation of the body is
  * not integrated, q = 0). */
-MYB_API MYB_NODISCARD myb_status myb_system_pack_rotation(const myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_pack_rotation(const myb_system* system, size_t body,
                                                           const double q[4],
                                                           const double omega[3],
                                                           const double omega_core[3], double* y);
-MYB_API MYB_NODISCARD myb_status myb_system_unpack_rotation(const myb_system* system,
+MYB_NODISCARD MYB_API myb_status myb_system_unpack_rotation(const myb_system* system,
                                                             size_t body, const double* y,
                                                             double q[4], double omega[3],
                                                             double omega_core[3]);
 
 /* The spins of the PN pair number `pair` (in the order of myb_system_add_pn_pair), chi1 of its
  * body a and chi2 of its body b. Errors: MYB_E_DOMAIN (no such pair, a pair without spins). */
-MYB_API MYB_NODISCARD myb_status myb_system_pack_spins(const myb_system* system, size_t pair,
+MYB_NODISCARD MYB_API myb_status myb_system_pack_spins(const myb_system* system, size_t pair,
                                                        const double chi1[3],
                                                        const double chi2[3], double* y);
-MYB_API MYB_NODISCARD myb_status myb_system_unpack_spins(const myb_system* system, size_t pair,
+MYB_NODISCARD MYB_API myb_status myb_system_unpack_spins(const myb_system* system, size_t pair,
                                                          const double* y, double chi1[3],
                                                          double chi2[3]);
 
 /* The deflections of the springs of the contact number `contact` (among those in place, in the
  * order of myb_system_add_contact): 3 values a point, in the axes of its surface (m). Errors:
  * MYB_E_DOMAIN (no such contact, a friction that does not stick). */
-MYB_API MYB_NODISCARD myb_status myb_system_pack_contact(const myb_system* system,
+MYB_NODISCARD MYB_API myb_status myb_system_pack_contact(const myb_system* system,
                                                          size_t contact,
                                                          const double* deflection, double* y);
-MYB_API MYB_NODISCARD myb_status myb_system_unpack_contact(const myb_system* system,
+MYB_NODISCARD MYB_API myb_status myb_system_unpack_contact(const myb_system* system,
                                                            size_t contact, const double* y,
                                                            double* deflection);
 
@@ -377,7 +377,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_unpack_contact(const myb_system* sys
  * so that each sets the step by its own timescale. Of `options` (may be NULL) the precision,
  * the step limits and the budget are used. Start it with myb_system_acceleration and the
  * system. Errors: those of myb_ias15_create. */
-MYB_API MYB_NODISCARD myb_status myb_system_integrator(const myb_system* system,
+MYB_NODISCARD MYB_API myb_status myb_system_integrator(const myb_system* system,
                                                        const myb_ias15_options* options,
                                                        const myb_allocator* allocator,
                                                        myb_ias15** integrator);
@@ -386,13 +386,13 @@ MYB_API MYB_NODISCARD myb_status myb_system_integrator(const myb_system* system,
  * Errors: those of myb_nbody_acceleration_xv, of the orientation providers and of the fields;
  * MYB_E_DOMAIN (a level that needs a frame the body does not have, coincident bodies, an
  * inertia tensor that cannot be inverted). */
-MYB_API MYB_NODISCARD myb_status myb_system_acceleration(void* system, double t, const double* x,
+MYB_NODISCARD MYB_API myb_status myb_system_acceleration(void* system, double t, const double* x,
                                                          const double* v, double* a);
 
 /* The inertia tensor of the whole body (mantle and core, m^2, in the mantle frame) of an
  * integrated rotation at the state (t, y): what the degree 2 of its field is taken from.
  * Errors: as myb_system_acceleration. */
-MYB_API MYB_NODISCARD myb_status myb_system_inertia(myb_system* system, size_t body, double t,
+MYB_NODISCARD MYB_API myb_status myb_system_inertia(myb_system* system, size_t body, double t,
                                                     const double* y, double inertia[9]);
 
 /* ---- Derivatives -------------------------------------------------------------------------------
@@ -444,7 +444,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_inertia(myb_system* system, size_t b
  * (2 n x count: d y1_i / d gm_k) may be NULL; y1 (may be NULL) the state at t1. The system
  * is left as it was. Errors: MYB_E_DOMAIN (t1 == t0, an index or a gm of 0, non-finite
  * input), MYB_E_NOMEM, MYB_E_OVERFLOW, the errors of the integration. */
-MYB_API MYB_NODISCARD myb_status myb_system_partials(myb_system* system,
+MYB_NODISCARD MYB_API myb_status myb_system_partials(myb_system* system,
                                                      const myb_ias15_options* options, double t0,
                                                      const double* y0, double t1,
                                                      const size_t* bodies, size_t count,
@@ -459,7 +459,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_partials(myb_system* system,
  * closest approach of two bodies that pass within `watch` of each other. What happens then
  * is the caller's: myb_system_merge, myb_system_bounce, or going on. */
 
-MYB_API MYB_NODISCARD myb_status myb_system_set_radius(myb_system* system, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_system_set_radius(myb_system* system, size_t body,
                                                        double radius);
 MYB_API double myb_system_radius(const myb_system* system, size_t body);
 /* 0 for a body that has been merged into another. */
@@ -483,7 +483,7 @@ typedef struct myb_system_event {
  * left at event->t. A pair already in contact when the call starts (after an event that was
  * left alone) is not reported again until it has separated. Errors: those of myb_ias15_step;
  * MYB_E_DOMAIN (watch negative or not finite). */
-MYB_API MYB_NODISCARD myb_status myb_system_advance(myb_system* system, myb_ias15* integrator,
+MYB_NODISCARD MYB_API myb_status myb_system_advance(myb_system* system, myb_ias15* integrator,
                                                     double t_end, double watch,
                                                     myb_system_event* event);
 
@@ -513,7 +513,7 @@ typedef struct myb_system_merger {
  * integrated) are set to zero in the state and stand still from then on. The integrator is started again from
  * the new state. Errors: MYB_E_DOMAIN (indices, an absent body, b with an integrated rotation
  * and a without — merge the other way), the errors of myb_ias15_start. */
-MYB_API MYB_NODISCARD myb_status myb_system_merge(myb_system* system, myb_ias15* integrator,
+MYB_NODISCARD MYB_API myb_status myb_system_merge(myb_system* system, myb_ias15* integrator,
                                                   size_t a, size_t b,
                                                   myb_system_merger* merger);
 
@@ -521,7 +521,7 @@ MYB_API MYB_NODISCARD myb_status myb_system_merge(myb_system* system, myb_ias15*
  * is reversed and multiplied by `restitution` (1: elastic, 0: they stay together until
  * something parts them), the momentum is kept. The integrator is started again. Errors:
  * MYB_E_DOMAIN (indices, restitution outside 0 .. 1, coincident centres). */
-MYB_API MYB_NODISCARD myb_status myb_system_bounce(myb_system* system, myb_ias15* integrator,
+MYB_NODISCARD MYB_API myb_status myb_system_bounce(myb_system* system, myb_ias15* integrator,
                                                    size_t a, size_t b, double restitution);
 
 #ifdef __cplusplus

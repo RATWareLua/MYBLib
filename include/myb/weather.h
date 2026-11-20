@@ -35,11 +35,11 @@ typedef struct myb_space_weather myb_space_weather;
 /* Errors: MYB_E_FORMAT (diag gives the line: no DATE column, a date or a number that is not
  * one, an index outside its range — Kp 0 .. 9, ap and Ap 0 .. 400, fluxes 0 .. 10^4 sfu —,
  * days out of order), MYB_E_NOMEM, MYB_E_OVERFLOW; MYB_E_IO (files). */
-MYB_API MYB_NODISCARD myb_status myb_space_weather_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_space_weather_load(const char* text, size_t size,
                                                         const myb_allocator* allocator,
                                                         myb_space_weather** weather,
                                                         myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_space_weather_load_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_space_weather_load_file(const char* path,
                                                              const myb_allocator* allocator,
                                                              myb_space_weather** weather,
                                                              myb_diag* diag);
@@ -67,7 +67,7 @@ typedef struct myb_space_weather_day {
 } myb_space_weather_day;
 
 /* Errors: MYB_E_RANGE (a day outside the table or in a gap of it). */
-MYB_API MYB_NODISCARD myb_status myb_space_weather_day_at(const myb_space_weather* weather,
+MYB_NODISCARD MYB_API myb_status myb_space_weather_day_at(const myb_space_weather* weather,
                                                           int64_t mjd,
                                                           myb_space_weather_day* day);
 
@@ -94,7 +94,7 @@ typedef struct myb_space_weather_inputs {
   double kp;
 } myb_space_weather_inputs;
 
-MYB_API MYB_NODISCARD myb_status myb_space_weather_inputs_at(const myb_space_weather* weather,
+MYB_NODISCARD MYB_API myb_status myb_space_weather_inputs_at(const myb_space_weather* weather,
                                                              int64_t mjd, double seconds,
                                                              int adjusted,
                                                              myb_space_weather_inputs* inputs);
@@ -140,7 +140,7 @@ typedef struct myb_thermosphere_point {
 /* The point of the instant t and the body-fixed place r (m). Errors: those of
  * myb_timesys_to_utc, myb_geodetic_from_cartesian and myb_space_weather_inputs_at
  * (MYB_E_RANGE outside the table). */
-MYB_API MYB_NODISCARD myb_status myb_thermosphere_point_at(
+MYB_NODISCARD MYB_API myb_status myb_thermosphere_point_at(
     const myb_thermosphere_setting* setting, myb_time t, const double r[3],
     myb_thermosphere_point* point);
 

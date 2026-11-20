@@ -11,6 +11,7 @@
 #
 # Usage: cmake -DGCC=<gcc> -DGXX=<g++> -DSOURCE_DIR=<repository> -DLIB_DIR=<dir of libmyb.so>
 #              -DWORK_DIR=<scratch> -P check_gcc.cmake
+cmake_minimum_required(VERSION 3.28)
 foreach(_required GCC GXX SOURCE_DIR LIB_DIR WORK_DIR)
   if(NOT ${_required})
     message(FATAL_ERROR "check_gcc.cmake: ${_required} is not set")

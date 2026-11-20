@@ -35,6 +35,7 @@
 
 #include "mtest.h"
 #include "myb/attitude.h"
+#include "myb/cmath.h"
 #include "myb/contact.h"
 #include "myb/env.h"
 #include "myb/geometry.h"
@@ -213,11 +214,11 @@ static void star_mesh(double* vertices, size_t* faces) {
     for (int i = 0; i < LONGITUDES; ++i) {
       const double phi = 2.0 * PI * i / (double)LONGITUDES;
       const double r =
-          1.0 + 0.3 * sin(theta) * sin(theta) * cos(3.0 * phi) + 0.1 * cos(2.0 * theta);
+          1.0 + 0.3 * myb_sin(theta) * myb_sin(theta) * myb_cos(3.0 * phi) + 0.1 * myb_cos(2.0 * theta);
       const size_t at = 3 * (1 + (size_t)(j - 1) * LONGITUDES + (size_t)i);
-      vertices[at] = r * sin(theta) * cos(phi);
-      vertices[at + 1] = r * sin(theta) * sin(phi);
-      vertices[at + 2] = r * cos(theta);
+      vertices[at] = r * myb_sin(theta) * myb_cos(phi);
+      vertices[at + 1] = r * myb_sin(theta) * myb_sin(phi);
+      vertices[at + 2] = r * myb_cos(theta);
     }
   }
   size_t f = 0;
@@ -527,7 +528,7 @@ typedef struct speed_event {
 
 static double speed_crossing(void* context, double t, const double* y) {
   (void)t;
-  return hypot(y[3], y[4]) - ((const speed_event*)context)->target;
+  return myb_hypot(y[3], y[4]) - ((const speed_event*)context)->target;
 }
 
 /* The time of the regularised law to slow from v0 to v: the integral of
@@ -535,7 +536,7 @@ static double speed_crossing(void* context, double t, const double* y) {
 static double slide_time(double v0, double v, double a, double mu_g) {
   const double s0 = sqrt(v0 * v0 + a * a);
   const double s = sqrt(v * v + a * a);
-  return (s0 - s + a * log((a + s) * v0 / ((a + s0) * v))) / mu_g;
+  return (s0 - s + a * myb_log((a + s) * v0 / ((a + s0) * v))) / mu_g;
 }
 
 static void test_slide(void) {
@@ -794,8 +795,8 @@ typedef struct spinner {
 static myb_status spinner_orientation(void* context, myb_time t, myb_orientation* o) {
   const double w = ((const spinner*)context)->rate;
   const double angle = w * myb_time_seconds(t);
-  const double c = cos(angle);
-  const double sn = sin(angle);
+  const double c = myb_cos(angle);
+  const double sn = myb_sin(angle);
   memset(o, 0, sizeof *o);
   const double m[9] = {c, sn, 0.0, -sn, c, 0.0, 0.0, 0.0, 1.0};
   const double dm[9] = {-sn * w, c * w, 0.0, -c * w, -sn * w, 0.0, 0.0, 0.0, 0.0};
@@ -942,8 +943,8 @@ static void land_with(double slope, double t_end, double sample, int stick, doub
                       landing* out) {
   const double g = 1.62;
   const myb_contact_law law = lander_law(stick);
-  const double n[3] = {sin(slope), 0.0, cos(slope)};
-  const double down[3] = {cos(slope), 0.0, -sin(slope)};
+  const double n[3] = {myb_sin(slope), 0.0, myb_cos(slope)};
+  const double down[3] = {myb_cos(slope), 0.0, -myb_sin(slope)};
   const double gm[2] = {0.0, 1.0e-20};
   myb_system* s = NULL;
   MT_CHECK(myb_system_create(2, gm, NULL, &s) == MYB_OK);
@@ -1065,7 +1066,7 @@ static void test_lander(void) {
   landing settle;
   memset(&settle, 0, sizeof settle);
   land(15.0 * PI / 180.0, 20.0, 2.0, &settle);
-  const double t = tan(settle.slope) / mu;
+  const double t = myb_tan(settle.slope) / mu;
   const double creep = slip * t / sqrt(1.0 - t * t);
   printf(
       "lander on a slope of 15 deg (mu %.1f): after 20 s it creeps at %.9e m/s, the closed "
@@ -1081,7 +1082,7 @@ static void test_lander(void) {
   landing slide;
   memset(&slide, 0, sizeof slide);
   land(40.0 * PI / 180.0, 16.0, 4.0, &slide);
-  const double expected = g * (sin(slide.slope) - mu * cos(slide.slope));
+  const double expected = g * (myb_sin(slide.slope) - mu * myb_cos(slide.slope));
   printf(
       "lander on a slope of 40 deg: slides at %.3f m/s, accelerating at %.9f m/s^2, "
       "g (sin a - mu cos a) to %.1e; %zu legs down; energy never up by more than %.1e\n",
@@ -1123,6 +1124,9 @@ static double tilt_angle(const tilting* w, double t) {
   return w->from + (w->to - w->from) * s;
 }
 
+/* The weight through the library's correctly rounded functions, not libm's (as everywhere in
+ * this test): libm differs between systems in the last bit, and a block held a part in a
+ * thousand below the angle of friction follows its input to that bit. */
 static myb_status tilting_weight(void* context, double t, const myb_system_view* view,
                                  double acceleration[3], double torque[3]) {
   (void)view;
@@ -1130,7 +1134,7 @@ static myb_status tilting_weight(void* context, double t, const myb_system_view*
   const tilting* w = context;
   const double angle = tilt_angle(w, t);
   for (int i = 0; i < 3; ++i) {
-    acceleration[i] = w->g * (sin(angle) * w->down[i] - cos(angle) * w->normal[i]);
+    acceleration[i] = w->g * (myb_sin(angle) * w->down[i] - myb_cos(angle) * w->normal[i]);
   }
   return MYB_OK;
 }
@@ -1175,7 +1179,7 @@ static void block_tilted(double from, double to, double mu, double t_end, double
   MT_CHECK(nc == 9);
   double y[18];
   memset(y, 0, sizeof y);
-  const double depth = g * cos(from) / law.stiffness;
+  const double depth = g * myb_cos(from) / law.stiffness;
   for (int i = 0; i < 3; ++i) {
     y[3 + i] = (r - depth) * n[i];
   }
@@ -1250,8 +1254,8 @@ static void test_stick_block(void) {
     spread = fmax(spread, fabs(run[k].along - run[0].along));
   }
   const block_run* held = &run[3];
-  const double static_spring = g * sin(slope) / kt;
-  const double limit = mu * g * cos(slope) / kt;
+  const double static_spring = g * myb_sin(slope) / kt;
+  const double limit = mu * g * myb_cos(slope) / kt;
   printf(
       "a block put on 25 deg with mu %.1f that sticks: after 60 s %.4e m down the slope (the "
       "spring deflected by its weight %.4e m, its limit %.3e m), %.1e m in the last 30 s, "
@@ -1271,24 +1275,24 @@ static void test_stick_block(void) {
   /* the angle of friction: the slope turned slowly (over 20 s, the spring's period being 63 ms)
    * from 25 deg to a part in a thousand below it — the block stays — or above it: it slides
    * at g (sin a - mu cos a) */
-  const double friction_angle = atan(mu);
-  const double a_below = atan(mu * (1.0 - 1e-3));
-  const double a_above = atan(mu * (1.0 + 1e-3));
+  const double friction_angle = myb_atan(mu);
+  const double a_below = myb_atan(mu * (1.0 - 1e-3));
+  const double a_above = myb_atan(mu * (1.0 + 1e-3));
   block_run below;
   block_run above;
   memset(&below, 0, sizeof below);
   memset(&above, 0, sizeof above);
   block_tilted(slope, a_below, mu, 80.0, 1e-12, &below);
   block_tilted(slope, a_above, mu, 80.0, 1e-12, &above);
-  const double expected = g * (sin(a_above) - mu * cos(a_above));
-  const double limit_below = mu * g * cos(a_below) / kt;
+  const double expected = g * (myb_sin(a_above) - mu * myb_cos(a_above));
+  const double limit_below = mu * g * myb_cos(a_below) / kt;
   printf(
       "at the angle of friction (%.4f deg), turned to slowly: 1e-3 below it the block holds "
       "%.4e m down (%.3f slip deflections: the spring 0.999 and the anchor's slip in the top 5 %% "
-      "of the limit), %.1e m in its last 40 s; 1e-3 above it slides, accelerating at %.9e "
-      "m/s^2, g (sin a - mu cos a) to %.1e\n",
+      "of the limit), %.1e m in its last 40 s, at %.1e m/s; 1e-3 above it slides, accelerating "
+      "at %.9e m/s^2, g (sin a - mu cos a) to %.1e\n",
       friction_angle * 180.0 / PI, below.along, below.along / limit_below, below.moved,
-      above.accel, fabs(above.accel / expected - 1.0));
+      below.speed, above.accel, fabs(above.accel / expected - 1.0));
   MT_CHECK(below.moved < 1e-14 && below.speed < 1e-14);
   MT_CHECK(below.along > 0.999 * limit_below && below.along < 1.5 * limit_below);
   MT_CHECK(fabs(above.accel / expected - 1.0) < 1e-6);
@@ -1329,7 +1333,7 @@ static void test_stick_lander(void) {
   landing slide;
   memset(&slide, 0, sizeof slide);
   land_with(40.0 * PI / 180.0, 16.0, 4.0, 1, 1e-10, &slide);
-  const double expected = g * (sin(slide.slope) - mu * cos(slide.slope));
+  const double expected = g * (myb_sin(slide.slope) - mu * myb_cos(slide.slope));
   printf(
       "lander with friction that sticks on 40 deg: slides at %.3f m/s, accelerating at %.9f "
       "m/s^2, g (sin a - mu cos a) to %.1e; %zu legs down; energy never up by more than %.1e "

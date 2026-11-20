@@ -4,6 +4,7 @@
 # The library has no recursion, so the deepest stack is a finite sum of such frames.
 #
 # Usage: cmake -DDIRS=<dir;dir> -DBUDGET=<bytes> -P check_stack.cmake
+cmake_minimum_required(VERSION 3.28)
 if(NOT DIRS OR NOT BUDGET)
   message(FATAL_ERROR "usage: cmake -DDIRS=<object dirs> -DBUDGET=<bytes> -P check_stack.cmake")
 endif()

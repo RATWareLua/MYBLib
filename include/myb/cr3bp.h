@@ -33,15 +33,15 @@ MYB_API void myb_cr3bp_jacobian(double mu, const double x[3], double dadx[9], do
 MYB_API double myb_cr3bp_jacobi(double mu, const double y[6]);
 
 /* Terms for a force model (myb/model.h), context = a pointer to mu. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_term(void* mu, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_term(void* mu, double t, const double x[3],
                                                 const double v[3], double a[3]);
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_term_jacobian(void* mu, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_term_jacobian(void* mu, double t, const double x[3],
                                                          const double v[3], double dadx[9],
                                                          double dadv[9]);
 
 /* The five Lagrange points (L1 between the primaries, L2 beyond the smaller, L3 beyond the
  * larger, L4 and L5 at +-60 degrees). MYB_E_DOMAIN: mu outside (0, 0.5]. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_lagrange(double mu, double points[5][3]);
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_lagrange(double mu, double points[5][3]);
 
 typedef enum myb_cr3bp_symmetry {
   MYB_CR3BP_SYMMETRY_XZ = 1, /* y0 = (x, 0, z, 0, vy, 0); at T/2: y = 0, vx = vz = 0 */
@@ -60,23 +60,23 @@ typedef struct myb_cr3bp_correction {
 /* Corrects y0 (in place) to a periodic orbit of the given symmetry and returns its period.
  * Errors: MYB_E_DOMAIN (y0 not of the symmetric form, invalid settings), MYB_E_NOCONV (no
  * convergence, or no crossing within 50 time units). */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_correct(double mu,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_correct(double mu,
                                                    const myb_cr3bp_correction* correction,
                                                    double y0[6], double* period);
 
 /* Monodromy matrix (state transition matrix over one period) and its eigenvalues; index =
  * (|lambda_max| + 1 / |lambda_max|) / 2 (1 for a linearly stable orbit), the stability index
  * of the JPL catalogue. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_monodromy(double mu, const double y0[6], double period,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_monodromy(double mu, const double y0[6], double period,
                                                      double monodromy[36]);
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_stability(const double monodromy[36], double re[6],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_stability(const double monodromy[36], double re[6],
                                                      double im[6], double* index);
 
 /* A state on the unstable (unstable != 0) or stable manifold of the periodic orbit at the
  * fraction phase (0 .. 1) of the period: the orbit's state displaced by epsilon (in length
  * units, along the position part of the eigenvector of the monodromy carried to that phase)
  * on the side sign (+1 or -1). MYB_E_DOMAIN: the orbit is not unstable. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_manifold(double mu, const double y0[6], double period,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_manifold(double mu, const double y0[6], double period,
                                                     double phase, int unstable, int sign,
                                                     double epsilon, double y[6]);
 
@@ -84,7 +84,7 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_manifold(double mu, const double y0[6
  * amplitude az (in units of the distance of the primaries), branch +1 (northern, z > 0 at
  * the start) or -1: y0 at the xz-plane crossing with vx = vz = 0 (approximately), and its
  * period. MYB_E_DOMAIN: invalid input or an amplitude without a halo orbit. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_richardson(double mu, int point, double az, int branch,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_richardson(double mu, int point, double az, int branch,
                                                       double y0[6], double* period);
 
 /* ---- Frames ------------------------------------------------------------------------------------
@@ -93,11 +93,11 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_richardson(double mu, int point, doub
  * and time in units of 1 / n, n = sqrt((gm1 + gm2) / distance^3) (the "pulsating" frame of
  * ephemeris-based libration-point studies; the rotation of the orbital plane is neglected in
  * the velocities). States in m, m/s relative to any common origin. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_from_ephemeris(const double body1[6],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_from_ephemeris(const double body1[6],
                                                           const double body2[6], double gm1,
                                                           double gm2, const double state[6],
                                                           double rotating[6]);
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_to_ephemeris(const double body1[6],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_to_ephemeris(const double body1[6],
                                                         const double body2[6], double gm1,
                                                         double gm2, const double rotating[6],
                                                         double state[6]);
@@ -131,14 +131,14 @@ typedef struct myb_cr3bp_orbit {
 /* The cuts of the orbit through y0 with the given period, by propagation. Errors:
  * MYB_E_DOMAIN (mu outside (0, 0.5], the number of patches, period <= 0), those of the
  * propagation. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_from_state(double mu, const double y0[6],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_orbit_from_state(double mu, const double y0[6],
                                                             double period, size_t patches,
                                                             myb_cr3bp_orbit* orbit);
 
 /* Corrects the orbit in place until every condition holds to `tolerance` (0: 1e-11), in at
  * most max_iterations steps (0: 30); its tangent is found as well. Errors: MYB_E_DOMAIN,
  * MYB_E_NOCONV, MYB_E_NOMEM, those of the propagation. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_orbit* orbit,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_orbit* orbit,
                                                          double tolerance, int max_iterations);
 
 /* The next orbit of the family, a distance `step` along the tangent in the space of the
@@ -147,7 +147,7 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_correct(double mu, myb_cr3bp_or
  * period, or towards a larger first coordinate where the period does not change). The orbit
  * must have been corrected. Errors: as myb_cr3bp_orbit_correct; MYB_E_DOMAIN also for an
  * orbit without a tangent; on MYB_E_NOCONV the orbit is left as it was: take a shorter step. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_orbit_continue(double mu, myb_cr3bp_orbit* orbit,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_orbit_continue(double mu, myb_cr3bp_orbit* orbit,
                                                           double step, double tolerance,
                                                           int max_iterations);
 
@@ -200,7 +200,7 @@ typedef enum myb_cr3bp_torus_family {
  * myb_cr3bp_torus_continue with a step of 0 corrects it, with a positive one moves outwards.
  * Errors: MYB_E_DOMAIN (mu, the period, the points, size <= 0, no such pair), MYB_E_NOCONV
  * (the eigenvector), those of the propagation. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_from_orbit(double mu, const double y0[6],
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_torus_from_orbit(double mu, const double y0[6],
                                                             double period, size_t points,
                                                             int pair, double size,
                                                             myb_cr3bp_torus* torus);
@@ -214,7 +214,7 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_from_orbit(double mu, const dou
  * Errors: MYB_E_DOMAIN (an invalid torus or one without a tangent),
  * MYB_E_NOCONV (the torus is left as it was: take a shorter step, or more points),
  * MYB_E_NOMEM, those of the propagation. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_continue(double mu, myb_cr3bp_torus* torus,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_torus_continue(double mu, myb_cr3bp_torus* torus,
                                                           myb_cr3bp_torus_family family,
                                                           double step, double tolerance,
                                                           int max_iterations);
@@ -353,7 +353,7 @@ typedef struct myb_cr3bp_torus_spectrum {
  * torus or tolerance, a turn rho too near 0), MYB_E_NOCONV (the eigenvalues; or a resolved
  * circle off the unit circle with no real member: no spectrum of a torus of this problem —
  * more points, or another tolerance), MYB_E_NOMEM, those of the propagation. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_torus_stability(double mu, const myb_cr3bp_torus* torus,
                                                            double tolerance,
                                                            myb_cr3bp_torus_spectrum* spectrum);
 
@@ -366,7 +366,7 @@ MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_stability(double mu, const myb_
  * and the circle's own error (1e-11 for the tori above) grows with it: an epsilon well above
  * that (1e-6 .. 1e-4) when the manifold is followed far. MYB_E_DOMAIN: invalid input, a
  * spectrum of another number of points, or no hyperbolic pair. */
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_torus_manifold(const myb_cr3bp_torus* torus,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_torus_manifold(const myb_cr3bp_torus* torus,
                                                           const myb_cr3bp_torus_spectrum* spectrum,
                                                           double angle, int unstable, int sign,
                                                           double epsilon, double y[6]);
@@ -390,7 +390,7 @@ typedef struct myb_cr3bp_section {
   int direction; /* +1, -1 or 0 */
 } myb_cr3bp_section;
 
-MYB_API MYB_NODISCARD myb_status myb_cr3bp_propagate(double mu, const double y0[6], double duration,
+MYB_NODISCARD MYB_API myb_status myb_cr3bp_propagate(double mu, const double y0[6], double duration,
                                                      const myb_cr3bp_section* section, double y[6],
                                                      double* elapsed, int* crossed);
 

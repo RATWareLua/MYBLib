@@ -55,7 +55,7 @@ typedef struct myb_thrust {
 
 /* Errors: MYB_E_DOMAIN (mass <= 0, count > MYB_THRUST_MAX_ARCS, an invalid arc, overlapping or
  * unordered arcs, a zero direction, the propellant exceeding the mass). */
-MYB_API MYB_NODISCARD myb_status myb_thrust_init(myb_thrust* thrust, double mass0,
+MYB_NODISCARD MYB_API myb_status myb_thrust_init(myb_thrust* thrust, double mass0,
                                                  const myb_thrust_arc* arcs, size_t count);
 
 /* Mass at t (kg). */
@@ -67,11 +67,11 @@ MYB_API double myb_thrust_mass_at(void* thrust, double t);
 
 /* The acceleration of the thrust at t (zero between arcs), x and v relative to the central body:
  * a term of a force model (myb_term_function, context: const myb_thrust*). */
-MYB_API MYB_NODISCARD myb_status myb_thrust_acceleration(void* thrust, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_thrust_acceleration(void* thrust, double t, const double x[3],
                                                          const double v[3], double a[3]);
 
 /* The same acceleration in the radial, transverse, normal frame of (x, v). */
-MYB_API MYB_NODISCARD myb_status myb_thrust_rtn(const myb_thrust* thrust, double t,
+MYB_NODISCARD MYB_API myb_status myb_thrust_rtn(const myb_thrust* thrust, double t,
                                                 const double x[3], const double v[3],
                                                 double a_rtn[3]);
 
@@ -93,7 +93,7 @@ MYB_API void myb_equinoctial_rates(double mu, const myb_equinoctial* elements,
  *   dV = sqrt(v0^2 - 2 v0 v1 cos(pi di / 2) + v1^2),
  *   tan beta0 = sin(pi di / 2) / (v0 / v1 - cos(pi di / 2)).
  * Errors: MYB_E_DOMAIN (speeds not positive). */
-MYB_API MYB_NODISCARD myb_status myb_edelbaum(double v0, double v1, double di, double* dv,
+MYB_NODISCARD MYB_API myb_status myb_edelbaum(double v0, double v1, double di, double* dv,
                                               double* beta0);
 
 /* Speed v and inclination change di after the velocity increment dv along Edelbaum's law:
@@ -135,7 +135,7 @@ typedef struct myb_qlaw {
  * the best at any of 72 places of the orbit, in [0, 1]. A zero direction where Q does not
  * change with any thrust (at the target). Errors: MYB_E_DOMAIN (an invalid law, an orbit
  * that is not an ellipse, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_qlaw_direction(const myb_qlaw* law, const myb_elements* now,
+MYB_NODISCARD MYB_API myb_status myb_qlaw_direction(const myb_qlaw* law, const myb_elements* now,
                                                     double direction[3], double* q,
                                                     double* q_rate, double* effectivity);
 
@@ -162,7 +162,7 @@ typedef struct myb_qlaw_term {
   double effectivity;  /* the threshold, in [0, 1); 0: the engine always burns */
 } myb_qlaw_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_qlaw(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_qlaw(void* term, double t, const double x[3],
                                                const double v[3], double a[3]);
 
 /* The same engine with the mass as a seventh component of the state, y = (x, v, m): the mass
@@ -179,7 +179,7 @@ typedef struct myb_qlaw_flight {
 /* The right-hand side for an integrator of first-order systems (myb_ode_function of
  * myb/integ.h; the context is a myb_qlaw_flight; 7 components). Errors: MYB_E_DOMAIN (an
  * invalid engine, the mass exhausted, an orbit that is not an ellipse), those of the field. */
-MYB_API MYB_NODISCARD myb_status myb_qlaw_flight_rhs(void* flight, double t, const double* y,
+MYB_NODISCARD MYB_API myb_status myb_qlaw_flight_rhs(void* flight, double t, const double* y,
                                                      double* dydt);
 
 typedef struct myb_qlaw_arrival {
@@ -192,7 +192,7 @@ typedef struct myb_qlaw_arrival {
  * every `step` seconds, or until t_limit. Errors: MYB_E_DOMAIN (t_limit <= t0, step <= 0, a
  * mass that is not positive, non-finite input), MYB_E_NOMEM, those of the right-hand side
  * and of the integrator; the state reached by then is in *arrival. allocator may be NULL. */
-MYB_API MYB_NODISCARD myb_status myb_qlaw_fly(const myb_qlaw_flight* flight, double t0,
+MYB_NODISCARD MYB_API myb_status myb_qlaw_fly(const myb_qlaw_flight* flight, double t0,
                                               const double y0[7], double t_limit, double step,
                                               const myb_allocator* allocator,
                                               myb_qlaw_arrival* arrival);

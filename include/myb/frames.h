@@ -89,7 +89,7 @@ typedef struct myb_cip myb_cip;
  * afterwards. Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable; also numbers
  * that are not finite or beyond 1e20 in magnitude, scales and turns outside [1e-20, 1e20]:
  * then every value of the model is a finite number at every instant), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_cip_create(const myb_kpool* pool, const char* prefix,
+MYB_NODISCARD MYB_API myb_status myb_cip_create(const myb_kpool* pool, const char* prefix,
                                                 const myb_allocator* allocator, myb_cip** cip,
                                                 myb_diag* diag);
 MYB_API void myb_cip_destroy(myb_cip* cip); /* accepts NULL */
@@ -114,7 +114,7 @@ MYB_API void myb_cip_xys_many(const myb_cip* cip, const myb_time* tt, size_t cou
  * call replaces the table. Not to be called while another thread uses the model. Errors:
  * MYB_E_DOMAIN (tt1 not after tt0, a step that is negative or not finite, more than 2^26
  * nodes), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_cip_tabulate(myb_cip* cip, myb_time tt0, myb_time tt1,
+MYB_NODISCARD MYB_API myb_status myb_cip_tabulate(myb_cip* cip, myb_time tt0, myb_time tt1,
                                                   double step);
 
 /* Rotation angle (rad, in [0, 2 pi)) at the UT1 instant ut1, and its rate (rad per UT1 second;
@@ -154,25 +154,25 @@ typedef struct myb_eop_values {
  * data/frames/eop-tides.tk), the LOD variation following from the UT1 one. */
 typedef struct myb_eop myb_eop;
 
-MYB_API MYB_NODISCARD myb_status myb_eop_create(const myb_allocator* allocator, myb_eop** eop);
+MYB_NODISCARD MYB_API myb_status myb_eop_create(const myb_allocator* allocator, myb_eop** eop);
 MYB_API void myb_eop_destroy(myb_eop* eop); /* accepts NULL */
 
 /* Replace the table (atomically; on error it is unchanged). Errors: MYB_E_FORMAT (diag gives
  * the line), MYB_E_NOMEM, MYB_E_IO for files. Rows must have increasing MJD within 10^8 days
  * of J2000, UT1 - UTC and LOD below a day, x, y, dX, dY below a radian. */
-MYB_API MYB_NODISCARD myb_status myb_eop_load_c04(myb_eop* eop, const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_eop_load_c04(myb_eop* eop, const char* text, size_t size,
                                                   myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_eop_load_c04_file(myb_eop* eop, const char* path,
+MYB_NODISCARD MYB_API myb_status myb_eop_load_c04_file(myb_eop* eop, const char* path,
                                                        myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_eop_load_finals(myb_eop* eop, const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_eop_load_finals(myb_eop* eop, const char* text, size_t size,
                                                      myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_eop_load_finals_file(myb_eop* eop, const char* path,
+MYB_NODISCARD MYB_API myb_status myb_eop_load_finals_file(myb_eop* eop, const char* path,
                                                           myb_diag* diag);
 
 /* Diurnal/semidiurnal corrections from kernel variables <prefix>_* (series form of
  * data/frames/eop-tides.tk with prefix "IERS10_EOPT", series XP, YP, UT1; kernel names are
  * limited to 32 characters, so prefixes to 12). Errors as myb_cip_create. */
-MYB_API MYB_NODISCARD myb_status myb_eop_set_tides(myb_eop* eop, const myb_kpool* pool,
+MYB_NODISCARD MYB_API myb_status myb_eop_set_tides(myb_eop* eop, const myb_kpool* pool,
                                                    const char* prefix, myb_diag* diag);
 
 /* First and last MJD (UTC) of the table, and its number of rows (0 if empty). */
@@ -184,12 +184,12 @@ MYB_API size_t myb_eop_rows(const myb_eop* eop, double* first, double* last);
  * missing x, y or UT1 - UTC, rows or tides that interpolate to UT1 more than a day from
  * `scale`, to an LOD beyond a day or to angles beyond a radian),
  * MYB_E_NOT_FOUND (no UTC table). Thread-safe. */
-MYB_API MYB_NODISCARD myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
+MYB_NODISCARD MYB_API myb_status myb_eop_at(const myb_eop* eop, const myb_timesys* system,
                                             myb_time t, myb_scale scale, myb_eop_values* values,
                                             myb_time* ut1);
 
 /* The same at count instants (array form): values[k] and ut1[k] (ut1 may be NULL) at t[k]. */
-MYB_API MYB_NODISCARD myb_status myb_eop_at_many(const myb_eop* eop, const myb_timesys* system,
+MYB_NODISCARD MYB_API myb_status myb_eop_at_many(const myb_eop* eop, const myb_timesys* system,
                                                  const myb_time* t, size_t count,
                                                  myb_scale scale, myb_eop_values* values,
                                                  myb_time* ut1, size_t* failed);
@@ -223,7 +223,7 @@ typedef struct myb_equinox myb_equinox;
 
 /* Reads the model <prefix>_* (format in data/frames/iau1980.tk); the pool may be destroyed
  * afterwards. Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_equinox_create(const myb_kpool* pool, const char* prefix,
+MYB_NODISCARD MYB_API myb_status myb_equinox_create(const myb_kpool* pool, const char* prefix,
                                                     const myb_allocator* allocator,
                                                     myb_equinox** equinox, myb_diag* diag);
 MYB_API void myb_equinox_destroy(myb_equinox* equinox); /* accepts NULL */
@@ -286,7 +286,7 @@ typedef struct myb_wgccre myb_wgccre;
  * BODYn_POLE_RA, or phase angles missing while terms need them), MYB_E_FORMAT (wrong counts,
  * more terms than phase angles, an epoch more than 10^8 days from J2000, a value that is not
  * finite or beyond 1e20), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
+MYB_NODISCARD MYB_API myb_status myb_wgccre_create(const myb_kpool* pool, int64_t body,
                                                    const myb_allocator* allocator,
                                                    myb_wgccre** model, myb_diag* diag);
 MYB_API void myb_wgccre_destroy(myb_wgccre* model); /* accepts NULL */
@@ -319,14 +319,14 @@ typedef struct myb_ellipsoid {
 /* Longitude in (-pi, pi], geodetic latitude in [-pi/2, pi/2] (rad) and height (m) of the
  * body-fixed point xyz (m). The centre gives the north pole at height -b. Errors: MYB_E_DOMAIN
  * (invalid ellipsoid, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_geodetic_from_cartesian(const myb_ellipsoid* ellipsoid,
+MYB_NODISCARD MYB_API myb_status myb_geodetic_from_cartesian(const myb_ellipsoid* ellipsoid,
                                                              const double xyz[3],
                                                              double* longitude,
                                                              double* latitude, double* height);
 
 /* Body-fixed point of geodetic longitude, latitude (rad) and height (m). Errors: MYB_E_DOMAIN
  * (invalid ellipsoid or latitude, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_geodetic_to_cartesian(const myb_ellipsoid* ellipsoid,
+MYB_NODISCARD MYB_API myb_status myb_geodetic_to_cartesian(const myb_ellipsoid* ellipsoid,
                                                            double longitude, double latitude,
                                                            double height, double xyz[3]);
 
@@ -345,7 +345,7 @@ typedef enum myb_orbital_frame {
 /* Rotation from the frame of `state` (r, v) to the orbital frame, with the derivative that
  * follows from the acceleration (the rates of the axes need it; a central force gives a
  * constant pole). Errors: MYB_E_DOMAIN (r or v zero, r parallel to v, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_orbital_rotation(myb_orbital_frame kind,
+MYB_NODISCARD MYB_API myb_status myb_orbital_rotation(myb_orbital_frame kind,
                                                       const double state[6],
                                                       const double acceleration[3],
                                                       myb_rotation* rotation);
@@ -363,7 +363,7 @@ MYB_API MYB_NODISCARD myb_status myb_orbital_rotation(myb_orbital_frame kind,
 /* The rotation relative frame -> frame `id` (constant, dM/dt = 0) and the relative frame's
  * name (NUL-terminated, at most 32 characters). Errors: MYB_E_NOT_FOUND (no definition),
  * MYB_E_FORMAT (unknown SPEC or UNITS, wrong counts, a matrix that is not a rotation). */
-MYB_API MYB_NODISCARD myb_status myb_tkframe(const myb_kpool* pool, int64_t id,
+MYB_NODISCARD MYB_API myb_status myb_tkframe(const myb_kpool* pool, int64_t id,
                                              myb_rotation* rotation, char relative[33],
                                              myb_diag* diag);
 
@@ -371,28 +371,28 @@ MYB_API MYB_NODISCARD myb_status myb_tkframe(const myb_kpool* pool, int64_t id,
 
 typedef struct myb_pck myb_pck;
 
-MYB_API MYB_NODISCARD myb_status myb_pck_create(const myb_allocator* allocator, myb_pck** pck);
+MYB_NODISCARD MYB_API myb_status myb_pck_create(const myb_allocator* allocator, myb_pck** pck);
 MYB_API void myb_pck_destroy(myb_pck* pck); /* accepts NULL */
 
 /* As myb_spk_load_file / myb_spk_load_memory (myb/kin.h), for binary PCK files. */
-MYB_API MYB_NODISCARD myb_status myb_pck_load_file(myb_pck* pck, const char* path, myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_pck_load_memory(myb_pck* pck, const void* data, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_pck_load_file(myb_pck* pck, const char* path, myb_diag* diag);
+MYB_NODISCARD MYB_API myb_status myb_pck_load_memory(myb_pck* pck, const void* data, size_t size,
                                                      myb_diag* diag);
 
 /* Euler angles (rad) and their rates (rad/s) of frame class `id` at t (seconds past J2000 on
  * the file's time scale, TDB for NAIF files) from the highest-priority covering segment, and
  * its base frame code (*base may be NULL). Errors: MYB_E_RANGE (no segment covers t),
  * MYB_E_FORMAT (unsupported type, invalid data). Thread-safe. */
-MYB_API MYB_NODISCARD myb_status myb_pck_euler(const myb_pck* pck, int32_t id, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_pck_euler(const myb_pck* pck, int32_t id, myb_time t,
                                                double angles[3], double rates[3], int32_t* base);
 
 /* The rotation from the base frame to frame class `id` at t; errors as myb_pck_euler. */
-MYB_API MYB_NODISCARD myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_pck_rotation(const myb_pck* pck, int32_t id, myb_time t,
                                                   myb_rotation* rotation, int32_t* base);
 
 /* The same at count instants (array form): rotations[k] and bases[k] (bases may be NULL) at
  * t[k]. */
-MYB_API MYB_NODISCARD myb_status myb_pck_rotation_many(const myb_pck* pck, int32_t id,
+MYB_NODISCARD MYB_API myb_status myb_pck_rotation_many(const myb_pck* pck, int32_t id,
                                                        const myb_time* t, size_t count,
                                                        myb_rotation* rotations, int32_t* bases,
                                                        size_t* failed);
@@ -410,7 +410,7 @@ typedef struct myb_pck_writer myb_pck_writer;
 
 /* internal_name: the label of the file, at most 60 printable ASCII characters (NULL: "myb").
  * Errors: MYB_E_DOMAIN, MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_pck_writer_create(const char* internal_name,
+MYB_NODISCARD MYB_API myb_status myb_pck_writer_create(const char* internal_name,
                                                        const myb_allocator* allocator,
                                                        myb_pck_writer** writer);
 MYB_API void myb_pck_writer_destroy(myb_pck_writer* writer); /* accepts NULL */
@@ -431,23 +431,23 @@ MYB_API void myb_pck_writer_destroy(myb_pck_writer* writer); /* accepts NULL */
  * parts long enough for a positive radius —, a rotation that is not finite, the pole on the z
  * axis, angles or rates the reader could not give back within the range of doubles),
  * MYB_E_NOMEM, MYB_E_OVERFLOW, the statuses of the provider. */
-MYB_API MYB_NODISCARD myb_status myb_pck_writer_add_chebyshev(
+MYB_NODISCARD MYB_API myb_status myb_pck_writer_add_chebyshev(
     myb_pck_writer* writer, int32_t frame, int32_t base, const char* name,
     myb_orientation_function orientation, void* context, double start, double stop,
     size_t intervals, int degree, double* max_error);
 
 /* As myb_spk_writer_add_raw: a segment of any type from its words; those of the types 2, 3
  * and 20, which myb_pck_load_memory evaluates, must pass its validation of their layout. */
-MYB_API MYB_NODISCARD myb_status myb_pck_writer_add_raw(myb_pck_writer* writer, int32_t frame,
+MYB_NODISCARD MYB_API myb_status myb_pck_writer_add_raw(myb_pck_writer* writer, int32_t frame,
                                                         int32_t base, const char* name,
                                                         int type, double start, double stop,
                                                         const double* words, size_t count);
 
 /* As myb_spk_writer_size, _write and _write_file. */
 MYB_API size_t myb_pck_writer_size(const myb_pck_writer* writer);
-MYB_API MYB_NODISCARD myb_status myb_pck_writer_write(const myb_pck_writer* writer, void* buffer,
+MYB_NODISCARD MYB_API myb_status myb_pck_writer_write(const myb_pck_writer* writer, void* buffer,
                                                       size_t size);
-MYB_API MYB_NODISCARD myb_status myb_pck_writer_write_file(const myb_pck_writer* writer,
+MYB_NODISCARD MYB_API myb_status myb_pck_writer_write_file(const myb_pck_writer* writer,
                                                            const char* path);
 
 /* ---- Orientation providers -----------------------------------------------------------------
@@ -478,7 +478,7 @@ typedef struct myb_cip_orientation {
 } myb_cip_orientation;
 
 /* myb_orientation_function; context: const myb_cip_orientation*. */
-MYB_API MYB_NODISCARD myb_status myb_orientation_cip(void* context, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_orientation_cip(void* context, myb_time t,
                                                      myb_orientation* orientation);
 
 /* A frame of a binary PCK (myb_pck_rotation; t on the file's scale, TDB for NAIF files). The
@@ -492,7 +492,7 @@ typedef struct myb_pck_orientation {
 } myb_pck_orientation;
 
 /* myb_orientation_function; context: const myb_pck_orientation*. */
-MYB_API MYB_NODISCARD myb_status myb_orientation_pck(void* context, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_orientation_pck(void* context, myb_time t,
                                                      myb_orientation* orientation);
 
 /* A rotation model of the WGCCRE (myb_wgccre_rotation; t is TDB); base as above, relative to
@@ -503,17 +503,17 @@ typedef struct myb_wgccre_orientation {
 } myb_wgccre_orientation;
 
 /* myb_orientation_function; context: const myb_wgccre_orientation*. */
-MYB_API MYB_NODISCARD myb_status myb_orientation_wgccre(void* context, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_orientation_wgccre(void* context, myb_time t,
                                                         myb_orientation* orientation);
 
 /* A constant orientation. myb_orientation_function; context: const myb_rotation*. */
-MYB_API MYB_NODISCARD myb_status myb_orientation_fixed(void* rotation, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_orientation_fixed(void* rotation, myb_time t,
                                                        myb_orientation* orientation);
 
 /* Any orientation provider — those above, myb_orientation_graph, one of the caller's — at
  * count instants (array form): orientations[k] = what orientation(context, t[k]) gives. The
  * pole of a body, its rotation time and its polar motion over a series in one call. */
-MYB_API MYB_NODISCARD myb_status myb_orientation_many(myb_orientation_function orientation,
+MYB_NODISCARD MYB_API myb_status myb_orientation_many(myb_orientation_function orientation,
                                                       void* context, const myb_time* t,
                                                       size_t count,
                                                       myb_orientation* orientations,
@@ -542,7 +542,7 @@ typedef struct myb_frame_graph_options {
 
 /* options may be NULL. The time system must outlive the graph. Errors: MYB_E_DOMAIN (a time
  * system without a scale name), MYB_E_NOT_FOUND (the scale), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_frame_graph_create(const myb_frame_graph_options* options,
+MYB_NODISCARD MYB_API myb_status myb_frame_graph_create(const myb_frame_graph_options* options,
                                                         const myb_allocator* allocator,
                                                         myb_frame_graph** graph);
 MYB_API void myb_frame_graph_destroy(myb_frame_graph* graph); /* accepts NULL */
@@ -552,13 +552,13 @@ MYB_API void myb_frame_graph_destroy(myb_frame_graph* graph); /* accepts NULL */
  * context must outlive the graph; a frame is defined once. Errors: MYB_E_DOMAIN (a code of 0,
  * id == base, a frame defined already, a scale name without a time system),
  * MYB_E_NOT_FOUND (the scale), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_frame_graph_add(myb_frame_graph* graph, int32_t id,
+MYB_NODISCARD MYB_API myb_status myb_frame_graph_add(myb_frame_graph* graph, int32_t id,
                                                      int32_t base,
                                                      myb_orientation_function orientation,
                                                      void* context, const char* scale);
 
 /* A frame at a constant rotation base -> id (copied). Errors as above. */
-MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_fixed(myb_frame_graph* graph, int32_t id,
+MYB_NODISCARD MYB_API myb_status myb_frame_graph_add_fixed(myb_frame_graph* graph, int32_t id,
                                                            int32_t base,
                                                            const myb_rotation* rotation);
 
@@ -567,7 +567,7 @@ MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_fixed(myb_frame_graph* grap
  * (data/frames/naif-inertial.tk does for the inertial frames built into SPICE). Errors:
  * those of myb_tkframe and of myb_frame_graph_add_fixed; MYB_E_NOT_FOUND or MYB_E_FORMAT
  * (the code of the base). */
-MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_tkframe(myb_frame_graph* graph,
+MYB_NODISCARD MYB_API myb_status myb_frame_graph_add_tkframe(myb_frame_graph* graph,
                                                              const myb_kpool* pool, int32_t id,
                                                              myb_diag* diag);
 
@@ -575,12 +575,12 @@ MYB_API MYB_NODISCARD myb_status myb_frame_graph_add_tkframe(myb_frame_graph* gr
  * not in one tree), MYB_E_FORMAT (a chain of more than MYB_FRAME_GRAPH_MAX_DEPTH frames: a
  * cycle), the statuses of the providers and of the time system. Queries do not modify the
  * graph: it serves several threads if its providers do. */
-MYB_API MYB_NODISCARD myb_status myb_frame_graph_rotation(const myb_frame_graph* graph,
+MYB_NODISCARD MYB_API myb_status myb_frame_graph_rotation(const myb_frame_graph* graph,
                                                           int32_t from, int32_t to, myb_time t,
                                                           myb_rotation* rotation);
 
 /* The same at count instants (array form): rotations[k] at t[k]. */
-MYB_API MYB_NODISCARD myb_status myb_frame_graph_rotation_many(const myb_frame_graph* graph,
+MYB_NODISCARD MYB_API myb_status myb_frame_graph_rotation_many(const myb_frame_graph* graph,
                                                                int32_t from, int32_t to,
                                                                const myb_time* t, size_t count,
                                                                myb_rotation* rotations,
@@ -594,7 +594,7 @@ typedef struct myb_graph_orientation {
   int32_t to;
 } myb_graph_orientation;
 
-MYB_API MYB_NODISCARD myb_status myb_orientation_graph(void* context, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_orientation_graph(void* context, myb_time t,
                                                        myb_orientation* orientation);
 
 #ifdef __cplusplus

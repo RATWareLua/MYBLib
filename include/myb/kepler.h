@@ -32,11 +32,11 @@ typedef struct myb_pv {
 
 /* E - e sin E = M for 0 <= e < 1 and any finite M; E is in the same revolution as M.
  * MYB_E_DOMAIN for e outside [0, 1) or non-finite input. */
-MYB_API MYB_NODISCARD myb_status myb_kepler_elliptic(double mean_anomaly, double e,
+MYB_NODISCARD MYB_API myb_status myb_kepler_elliptic(double mean_anomaly, double e,
                                                      double* eccentric_anomaly);
 
 /* e sinh H - H = M for e > 1 and any finite M. MYB_E_DOMAIN otherwise. */
-MYB_API MYB_NODISCARD myb_status myb_kepler_hyperbolic(double mean_anomaly, double e,
+MYB_NODISCARD MYB_API myb_status myb_kepler_hyperbolic(double mean_anomaly, double e,
                                                        double* hyperbolic_anomaly);
 
 /* Barker's equation D + D^3 / 3 = M, D = tan(nu / 2), M = 2 sqrt(mu / p^3) (t - T_periapsis):
@@ -48,17 +48,17 @@ MYB_API double myb_kepler_parabolic(double mean_anomaly);
  * Angles in radians; true anomalies are returned in (-pi, pi]. MYB_E_DOMAIN for an
  * eccentricity outside the conic's range, or a true anomaly beyond the asymptotes of a
  * hyperbola. */
-MYB_API MYB_NODISCARD myb_status myb_anomaly_true_from_eccentric(double eccentric_anomaly, double e,
+MYB_NODISCARD MYB_API myb_status myb_anomaly_true_from_eccentric(double eccentric_anomaly, double e,
                                                                  double* nu);
-MYB_API MYB_NODISCARD myb_status myb_anomaly_eccentric_from_true(double nu, double e,
+MYB_NODISCARD MYB_API myb_status myb_anomaly_eccentric_from_true(double nu, double e,
                                                                  double* eccentric_anomaly);
-MYB_API MYB_NODISCARD myb_status myb_anomaly_mean_from_eccentric(double eccentric_anomaly, double e,
+MYB_NODISCARD MYB_API myb_status myb_anomaly_mean_from_eccentric(double eccentric_anomaly, double e,
                                                                  double* mean_anomaly);
-MYB_API MYB_NODISCARD myb_status myb_anomaly_true_from_hyperbolic(double hyperbolic_anomaly,
+MYB_NODISCARD MYB_API myb_status myb_anomaly_true_from_hyperbolic(double hyperbolic_anomaly,
                                                                   double e, double* nu);
-MYB_API MYB_NODISCARD myb_status myb_anomaly_hyperbolic_from_true(double nu, double e,
+MYB_NODISCARD MYB_API myb_status myb_anomaly_hyperbolic_from_true(double nu, double e,
                                                                   double* hyperbolic_anomaly);
-MYB_API MYB_NODISCARD myb_status myb_anomaly_mean_from_hyperbolic(double hyperbolic_anomaly,
+MYB_NODISCARD MYB_API myb_status myb_anomaly_mean_from_hyperbolic(double hyperbolic_anomaly,
                                                                   double e, double* mean_anomaly);
 
 /* ---- Orbital elements ----------------------------------------------------------------------- */
@@ -95,16 +95,16 @@ typedef struct myb_equinoctial {
 
 /* Errors: MYB_E_DOMAIN for mu <= 0, non-finite input, r = 0, or zero angular momentum
  * (rectilinear motion has no orbital plane). */
-MYB_API MYB_NODISCARD myb_status myb_elements_from_pv(double mu, const myb_pv* pv,
+MYB_NODISCARD MYB_API myb_status myb_elements_from_pv(double mu, const myb_pv* pv,
                                                       myb_elements* elements);
 /* MYB_E_DOMAIN for p <= 0, e < 0, or nu beyond the asymptotes (1 + e cos nu <= 0). */
-MYB_API MYB_NODISCARD myb_status myb_pv_from_elements(double mu, const myb_elements* elements,
+MYB_NODISCARD MYB_API myb_status myb_pv_from_elements(double mu, const myb_elements* elements,
                                                       myb_pv* pv);
 
 /* As above; additionally MYB_E_DOMAIN for i = pi (retrograde equatorial). */
-MYB_API MYB_NODISCARD myb_status myb_equinoctial_from_pv(double mu, const myb_pv* pv,
+MYB_NODISCARD MYB_API myb_status myb_equinoctial_from_pv(double mu, const myb_pv* pv,
                                                          myb_equinoctial* elements);
-MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial(double mu, const myb_equinoctial* elements,
+MYB_NODISCARD MYB_API myb_status myb_pv_from_equinoctial(double mu, const myb_equinoctial* elements,
                                                          myb_pv* pv);
 
 /* Array forms: the four conversions above for count states or sets of elements, element k
@@ -113,17 +113,17 @@ MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial(double mu, const myb_eq
  * The first element that fails stops the call with its status; *failed (may be NULL) then
  * gets its index — the outputs before it are filled, from it on they are not defined — and
  * count when all succeed. */
-MYB_API MYB_NODISCARD myb_status myb_elements_from_pv_many(double mu, const myb_pv* pv,
+MYB_NODISCARD MYB_API myb_status myb_elements_from_pv_many(double mu, const myb_pv* pv,
                                                            size_t count, myb_elements* elements,
                                                            size_t* failed);
-MYB_API MYB_NODISCARD myb_status myb_pv_from_elements_many(double mu, const myb_elements* elements,
+MYB_NODISCARD MYB_API myb_status myb_pv_from_elements_many(double mu, const myb_elements* elements,
                                                            size_t count, myb_pv* pv,
                                                            size_t* failed);
-MYB_API MYB_NODISCARD myb_status myb_equinoctial_from_pv_many(double mu, const myb_pv* pv,
+MYB_NODISCARD MYB_API myb_status myb_equinoctial_from_pv_many(double mu, const myb_pv* pv,
                                                               size_t count,
                                                               myb_equinoctial* elements,
                                                               size_t* failed);
-MYB_API MYB_NODISCARD myb_status myb_pv_from_equinoctial_many(double mu,
+MYB_NODISCARD MYB_API myb_status myb_pv_from_equinoctial_many(double mu,
                                                               const myb_equinoctial* elements,
                                                               size_t count, myb_pv* pv,
                                                               size_t* failed);
@@ -151,7 +151,7 @@ typedef struct myb_mean_elements {
  * arrange (a part of a revolution left over biases the means by that part of the
  * oscillation). Errors: MYB_E_DOMAIN (mu <= 0, too few states, times not increasing, a state
  * that is no ellipse), those of myb_equinoctial_from_pv. */
-MYB_API MYB_NODISCARD myb_status myb_mean_elements_average(double mu, const double* times,
+MYB_NODISCARD MYB_API myb_status myb_mean_elements_average(double mu, const double* times,
                                                            const double* states, size_t count,
                                                            myb_mean_elements* mean);
 
@@ -171,7 +171,7 @@ MYB_API MYB_NODISCARD myb_status myb_mean_elements_average(double mu, const doub
  * near-parabolic and near-circular orbits).
  * Errors: MYB_E_DOMAIN (mu <= 0, r0 = 0, non-finite input, or a state that overflows),
  * MYB_E_NOCONV (iteration budget exhausted; not expected). */
-MYB_API MYB_NODISCARD myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt,
+MYB_NODISCARD MYB_API myb_status myb_kepler_propagate(double mu, const myb_pv* pv0, double dt,
                                                       myb_pv* pv);
 
 /* State after dt (as myb_kepler_propagate, same routes) and the state transition matrix
@@ -181,17 +181,17 @@ MYB_API MYB_NODISCARD myb_status myb_kepler_propagate(double mu, const myb_pv* p
  * dependence on the energy explicitly (the secular term); a hyperbola far from its periapsis
  * is composed of two legs from the periapsis, Phi = Phi(p -> t) Phi(p -> t0)^-1, the inverse
  * of a symplectic matrix taken exactly. Errors as myb_kepler_propagate. */
-MYB_API MYB_NODISCARD myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt,
+MYB_NODISCARD MYB_API myb_status myb_kepler_stm(double mu, const myb_pv* pv0, double dt,
                                                 myb_pv* pv, double stm[36]);
 
 /* The two above from one state pv0 to count time offsets dt[k] (array forms as for the
  * elements: the same bits as the single calls in a loop; *failed, may be NULL, gets the index
  * of the offset that failed, count when none did): pv[k] after dt[k], and stm[36 k .. 36 k +
  * 35] its transition matrix. pv0 must not be one of the outputs. */
-MYB_API MYB_NODISCARD myb_status myb_kepler_propagate_many(double mu, const myb_pv* pv0,
+MYB_NODISCARD MYB_API myb_status myb_kepler_propagate_many(double mu, const myb_pv* pv0,
                                                            const double* dt, size_t count,
                                                            myb_pv* pv, size_t* failed);
-MYB_API MYB_NODISCARD myb_status myb_kepler_stm_many(double mu, const myb_pv* pv0, const double* dt,
+MYB_NODISCARD MYB_API myb_status myb_kepler_stm_many(double mu, const myb_pv* pv0, const double* dt,
                                                      size_t count, myb_pv* pv, double* stm,
                                                      size_t* failed);
 

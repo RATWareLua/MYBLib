@@ -9,6 +9,7 @@
 #              -P check_install.cmake
 # LIBDIR, INCLUDEDIR and DATADIR are the install directories of the build relative to the
 # prefix (CMAKE_INSTALL_LIBDIR is lib64 on some systems).
+cmake_minimum_required(VERSION 3.28)
 foreach(_required BUILD_DIR EXAMPLES_DIR WORK_DIR GENERATOR)
   if(NOT ${_required})
     message(FATAL_ERROR "check_install.cmake: ${_required} is not set")

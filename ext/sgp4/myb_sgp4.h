@@ -64,7 +64,7 @@ enum {
  * (digits, '-' = 1) unless flags has MYB_TLE_NO_CHECKSUM. Errors: MYB_E_FORMAT (diag tells the
  * line and column; among others an epoch day that is not a day of its year: 366 of a common
  * year). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_tle_parse(const char* line1, const char* line2,
+MYB_NODISCARD MYB_EXT_API myb_status myb_tle_parse(const char* line1, const char* line2,
                                                unsigned flags, myb_tle* tle, myb_diag* diag);
 
 /* The epoch as a UTC calendar date (the fraction of the day converted to seconds with one
@@ -84,7 +84,7 @@ MYB_EXT_API void myb_tle_epoch(const myb_tle* tle, myb_calendar* utc);
  * that myb_tle_parse would refuse: an epoch day that rounds past the end of its year, a
  * satnum of other characters than a catalogue number has; a blank classification or
  * characters of the designator that would not read back). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_tle_format(const myb_tle* tle, char line1[70],
+MYB_NODISCARD MYB_EXT_API myb_status myb_tle_format(const myb_tle* tle, char line1[70],
                                                     char line2[70]);
 
 /* The element set of a mean-elements message of the CCSDS (myb/ccsds.h; the message must give
@@ -97,8 +97,8 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tle_format(const myb_tle* tle, char lin
  * number above 339 999, an epoch that is no date of the calendar, numbers that are not finite,
  * an element set number beyond an int; of an element set an epoch day that is not a day of its
  * year). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle);
-MYB_EXT_API MYB_NODISCARD myb_status myb_omm_from_tle(const myb_tle* tle, myb_omm* omm);
+MYB_NODISCARD MYB_EXT_API myb_status myb_tle_from_omm(const myb_omm* omm, myb_tle* tle);
+MYB_NODISCARD MYB_EXT_API myb_status myb_omm_from_tle(const myb_tle* tle, myb_omm* omm);
 
 /* ---- The theory ---------------------------------------------------------------------------- */
 
@@ -149,13 +149,13 @@ typedef struct myb_sgp4 {
  * <= 0, elements that are not finite, an epoch day that is no moment of its year; a perigee
  * radius that is not positive). A perigee below the surface is no error: Vallado's revision
  * removed that check of sgp4init (2006), and myb_sgp4_propagate reports the decay (code 6). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_init(const myb_tle* tle, myb_sgp4_gravity gravity,
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_init(const myb_tle* tle, myb_sgp4_gravity gravity,
                                                myb_sgp4_mode mode, myb_sgp4* sgp4);
 
 /* The same from elements in the units of the theory (epoch: days since 1949 December 31 0h
  * UTC; angles rad, Kozai mean motion rad/min; the derivatives of the mean motion in a TLE are
  * not used by SGP4). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_init_elements(
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_init_elements(
     const myb_sgp4_constants* constants, myb_sgp4_mode mode, double epoch, double bstar,
     double eccentricity, double argument_of_perigee, double inclination, double mean_anomaly,
     double mean_motion, double node, myb_sgp4* sgp4);
@@ -176,7 +176,7 @@ typedef enum myb_sgp4_error {
  * minutes that are not finite, or elements far outside those of the catalogue (as finite
  * numbers of myb_sgp4_init_elements may be) whose state overflows — r, v unchanged.
  * Thread-safe. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes,
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_propagate(const myb_sgp4* sgp4, double minutes,
                                                     double r[3], double v[3],
                                                     myb_sgp4_error* error);
 
@@ -206,7 +206,7 @@ typedef struct myb_tle_fit_options {
  * positions that are not finite, elements that are no orbit of the theory, unknowns that
  * the positions do not determine), MYB_E_NOCONV (the budget of steps; *tle holds the best so
  * far), MYB_E_NOMEM, those of myb_sgp4_propagate. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_tle_fit(const double* minutes, const double* positions,
+MYB_NODISCARD MYB_EXT_API myb_status myb_tle_fit(const double* minutes, const double* positions,
                                              size_t count, const myb_tle_fit_options* options,
                                              myb_tle* tle, double* rms, int* iterations);
 
@@ -214,11 +214,11 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_tle_fit(const double* minutes, const do
  * of the set written as its mean ones — off by the short-period terms of the oblateness, some
  * kilometres. The epoch, B* and the identification of *tle are left as they are. Errors:
  * MYB_E_DOMAIN (not an ellipse), those of myb_elements_from_pv. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_tle_from_state(const double r[3], const double v[3],
+MYB_NODISCARD MYB_EXT_API myb_status myb_tle_from_state(const double r[3], const double v[3],
                                                     myb_sgp4_gravity gravity, myb_tle* tle);
 
 /* The same in the units of the theory (km, km/s), as printed by its verification program. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes,
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4, double minutes,
                                                        double r[3], double v[3],
                                                        myb_sgp4_error* error);
 
@@ -242,7 +242,7 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_propagate_km(const myb_sgp4* sgp4,
  * UTC table, or more than 2^32 s — 136 years — from the epoch of an element set it needs: the
  * resonance terms of deep space are integrated step by step from the epoch), statuses of the
  * propagation (MYB_E_DOMAIN). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index,
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_spk10_state(const myb_spk* spk, size_t index,
                                                       const myb_timesys* system,
                                                       const myb_equinox* equinox, myb_time et,
                                                       double state[6]);
@@ -261,7 +261,7 @@ MYB_EXT_API void myb_sgp4_spk10_constants(const myb_sgp4_constants* model, doubl
  * and in longitude with their rates at the epoch (IAU 1980; rad, rad/s) from equinox — or
  * zeros if it is NULL: SPICE since N0066 and myb_sgp4_spk10_state do not read them.
  * Errors: those of myb_timesys_from_utc. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_packet(const myb_tle* tle,
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_spk10_packet(const myb_tle* tle,
                                                        const myb_timesys* system,
                                                        const myb_equinox* equinox,
                                                        double packet[14]);
@@ -273,7 +273,7 @@ MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_packet(const myb_tle* tle,
  * outside [0, 1), a mean motion that is not positive, an epoch 2^40 s or more from J2000),
  * MYB_E_OVERFLOW (size < myb_sgp4_spk10_size(count)). */
 MYB_EXT_API size_t myb_sgp4_spk10_size(size_t count);
-MYB_EXT_API MYB_NODISCARD myb_status myb_sgp4_spk10_words(const double constants[8],
+MYB_NODISCARD MYB_EXT_API myb_status myb_sgp4_spk10_words(const double constants[8],
                                                       const double* packets, size_t count,
                                                       double* words, size_t size);
 

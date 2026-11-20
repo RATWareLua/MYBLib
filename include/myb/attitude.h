@@ -53,9 +53,9 @@ MYB_API void myb_quat_derivative(const double q[4], const double omega[3], doubl
  * (a, b, c): first a about axis i, then b about the new j, then c about the new k. From a
  * matrix: b in [0, pi] (proper) or [-pi/2, pi/2] (Tait-Bryan), a and c in (-pi, pi]; at the
  * singular b (gimbal lock) a = 0. Errors: MYB_E_DOMAIN (an invalid sequence). */
-MYB_API MYB_NODISCARD myb_status myb_euler_to_matrix(const int axes[3], const double angles[3],
+MYB_NODISCARD MYB_API myb_status myb_euler_to_matrix(const int axes[3], const double angles[3],
                                                      double m[9]);
-MYB_API MYB_NODISCARD myb_status myb_euler_from_matrix(const int axes[3], const double m[9],
+MYB_NODISCARD MYB_API myb_status myb_euler_from_matrix(const int axes[3], const double m[9],
                                                        double angles[3]);
 
 /* ---- Inertia ------------------------------------------------------------------------------- */
@@ -64,7 +64,7 @@ MYB_API MYB_NODISCARD myb_status myb_euler_from_matrix(const int axes[3], const 
  * from the given frame to the principal frame (rows = principal axes, det +1), so that
  * axes inertia axes^T = diag(moments). Cyclic Jacobi rotations to below roundoff.
  * Errors: MYB_E_DOMAIN (not symmetric, not finite). */
-MYB_API MYB_NODISCARD myb_status myb_principal_axes(const double inertia[9], double moments[3],
+MYB_NODISCARD MYB_API myb_status myb_principal_axes(const double inertia[9], double moments[3],
                                                     double axes[9]);
 
 /* ---- Equations of motion --------------------------------------------------------------------- */
@@ -84,7 +84,7 @@ MYB_API void myb_rigid_body_rates(const double moments[3], const double q[4], co
  *   I_c omega_c' = -omega_m x I_c omega_c - N_cmb   (components in the rotating mantle frame).
  * N is the external torque on the mantle. Units as above (per unit mass of the whole body, or
  * absolute). Errors: MYB_E_DOMAIN (I_m singular, core moments not positive). */
-MYB_API MYB_NODISCARD myb_status myb_core_mantle_rates(const double inertia_mantle[9],
+MYB_NODISCARD MYB_API myb_status myb_core_mantle_rates(const double inertia_mantle[9],
                                                        const double inertia_rate[9],
                                                        const double core[2], double kv,
                                                        const double omega_mantle[3],
@@ -112,7 +112,7 @@ MYB_API void myb_torque_field(double mass_ratio, const double r[3], const double
  * (myb/grav.h, myb_figure_figure; G Q row-major, both in the frame of r = x_B - x_A):
  * -2 axial(dU/dQ_A Q_A - Q_A dU/dQ_A) / gm_a, so that A's spin and the orbit exchange angular
  * momentum exactly. Errors: MYB_E_DOMAIN (r = 0, gm_a <= 0, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_torque_figure_figure(double gm_a, const double gq_a[9],
+MYB_NODISCARD MYB_API myb_status myb_torque_figure_figure(double gm_a, const double gq_a[9],
                                                           const double gq_b[9],
                                                           const double r[3], double torque[3]);
 
@@ -145,7 +145,7 @@ typedef struct myb_free_rotation {
 /* From principal moments (> 0), the attitude q and the body angular momentum l (principal axes)
  * at t = 0. Errors: MYB_E_DOMAIN (moments not positive or not finite, l = 0 is allowed, the
  * separatrix). */
-MYB_API MYB_NODISCARD myb_status myb_free_rotation_init(const double moments[3], const double q[4],
+MYB_NODISCARD MYB_API myb_status myb_free_rotation_init(const double moments[3], const double q[4],
                                                         const double l[3],
                                                         myb_free_rotation* rotation);
 
@@ -165,7 +165,7 @@ typedef myb_status (*myb_torque_function)(void* context, double t, const double 
 
 /* Advances (q, l) from t0 by `steps` steps of h. Errors: MYB_E_DOMAIN (order not 2, 4, 6, 8,
  * steps < 0, invalid moments, a free rotation on the separatrix), statuses of the torque. */
-MYB_API MYB_NODISCARD myb_status myb_rotation_split(const double moments[3],
+MYB_NODISCARD MYB_API myb_status myb_rotation_split(const double moments[3],
                                                     myb_torque_function torque, void* context,
                                                     int order, double t0, double h,
                                                     int64_t steps, double q[4], double l[3]);

@@ -73,11 +73,11 @@ typedef struct myb_calendar {
 
 /* Calendar date and time of a continuous scale -> instant of that scale. MYB_E_DOMAIN for an
  * invalid date or time (including second >= 60) or |year| > 10^9. */
-MYB_API MYB_NODISCARD myb_status myb_calendar_to_time(const myb_calendar* calendar, myb_time* t);
+MYB_NODISCARD MYB_API myb_status myb_calendar_to_time(const myb_calendar* calendar, myb_time* t);
 MYB_API void myb_time_to_calendar(myb_time t, myb_calendar* calendar);
 
 /* The array forms of the two (see "Array forms" above). */
-MYB_API MYB_NODISCARD myb_status myb_calendar_to_time_many(const myb_calendar* calendar,
+MYB_NODISCARD MYB_API myb_status myb_calendar_to_time_many(const myb_calendar* calendar,
                                                            size_t count, myb_time* t,
                                                            size_t* failed);
 MYB_API void myb_time_to_calendar_many(const myb_time* t, size_t count, myb_calendar* calendar);
@@ -97,13 +97,13 @@ typedef struct myb_scale {
  * than 2^40 s from J2000, a series unit that is not positive or not below 2^40 s, UTC days
  * beyond 10^8, TAI - UTC (base scale - UTC) reaching half a day anywhere in the table or
  * drifting by 1 s a day or more), MYB_E_NOMEM; diag names the offending variable. */
-MYB_API MYB_NODISCARD myb_status myb_timesys_create(const myb_kpool* pool,
+MYB_NODISCARD MYB_API myb_status myb_timesys_create(const myb_kpool* pool,
                                                     const myb_allocator* allocator,
                                                     myb_timesys** system, myb_diag* diag);
 MYB_API void myb_timesys_destroy(myb_timesys* system); /* NULL is allowed */
 
 /* Scale by name ("TT"). MYB_E_NOT_FOUND if the system has no such scale. */
-MYB_API MYB_NODISCARD myb_status myb_timesys_scale(const myb_timesys* system, const char* name,
+MYB_NODISCARD MYB_API myb_status myb_timesys_scale(const myb_timesys* system, const char* name,
                                                    myb_scale* scale);
 MYB_API const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale scale);
 
@@ -112,11 +112,11 @@ MYB_API const char* myb_timesys_scale_name(const myb_timesys* system, myb_scale 
  * relations are iterated to below 10^-15 s. Errors: the statuses of a function set by
  * myb_timesys_set_difference; MYB_E_DOMAIN (a series relation, or such a function, whose
  * difference is not finite or not below 2^40 s). */
-MYB_API MYB_NODISCARD myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_timesys_convert(const myb_timesys* system, myb_time t,
                                                      myb_scale from, myb_scale to, myb_time* out);
 
 /* The same for count instants (see "Array forms" above); out may be t. */
-MYB_API MYB_NODISCARD myb_status myb_timesys_convert_many(const myb_timesys* system,
+MYB_NODISCARD MYB_API myb_status myb_timesys_convert_many(const myb_timesys* system,
                                                           const myb_time* t, size_t count,
                                                           myb_scale from, myb_scale to,
                                                           myb_time* out, size_t* failed);
@@ -129,7 +129,7 @@ MYB_API MYB_NODISCARD myb_status myb_timesys_convert_many(const myb_timesys* sys
  * MYB_E_DOMAIN (a scale whose relation is not a series). */
 typedef myb_status (*myb_scale_difference)(void* context, myb_time t, double* difference);
 
-MYB_API MYB_NODISCARD myb_status myb_timesys_set_difference(myb_timesys* system, myb_scale scale,
+MYB_NODISCARD MYB_API myb_status myb_timesys_set_difference(myb_timesys* system, myb_scale scale,
                                                             myb_scale_difference function,
                                                             void* context);
 
@@ -141,28 +141,28 @@ MYB_API MYB_NODISCARD myb_status myb_timesys_set_difference(myb_timesys* system,
  * on the nodes only, not on what was asked before. A second call replaces the table.
  * Errors: MYB_E_DOMAIN (another kind of relation, t1 not after t0, a step that is negative
  * or not finite, more than 2^26 nodes), MYB_E_NOMEM, the statuses of the function. */
-MYB_API MYB_NODISCARD myb_status myb_timesys_tabulate(myb_timesys* system, myb_scale scale,
+MYB_NODISCARD MYB_API myb_status myb_timesys_tabulate(myb_timesys* system, myb_scale scale,
                                                       myb_time t0, myb_time t1, double step);
 
 /* UTC calendar label -> instant on scale `to`. MYB_E_DOMAIN for an invalid label (e.g.
  * 23:59:60 on a day without a leap second), MYB_E_RANGE before the first table row or from
  * the table's expiry date on, MYB_E_NOT_FOUND if the system has no UTC table. */
-MYB_API MYB_NODISCARD myb_status myb_timesys_from_utc(const myb_timesys* system,
+MYB_NODISCARD MYB_API myb_status myb_timesys_from_utc(const myb_timesys* system,
                                                       const myb_calendar* utc, myb_scale to,
                                                       myb_time* out);
 
 /* Instant on scale `from` -> UTC calendar label (23:59:60.x during a positive leap second).
  * Errors: MYB_E_RANGE (an instant before the first table row or from the table's expiry date
  * on), MYB_E_NOT_FOUND (no UTC table), the statuses of myb_timesys_convert. */
-MYB_API MYB_NODISCARD myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t,
+MYB_NODISCARD MYB_API myb_status myb_timesys_to_utc(const myb_timesys* system, myb_time t,
                                                     myb_scale from, myb_calendar* utc);
 
 /* The array forms of the two (see "Array forms" above). */
-MYB_API MYB_NODISCARD myb_status myb_timesys_from_utc_many(const myb_timesys* system,
+MYB_NODISCARD MYB_API myb_status myb_timesys_from_utc_many(const myb_timesys* system,
                                                            const myb_calendar* utc, size_t count,
                                                            myb_scale to, myb_time* out,
                                                            size_t* failed);
-MYB_API MYB_NODISCARD myb_status myb_timesys_to_utc_many(const myb_timesys* system,
+MYB_NODISCARD MYB_API myb_status myb_timesys_to_utc_many(const myb_timesys* system,
                                                          const myb_time* t, size_t count,
                                                          myb_scale from, myb_calendar* utc,
                                                          size_t* failed);

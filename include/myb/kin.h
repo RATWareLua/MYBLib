@@ -36,7 +36,7 @@ extern "C" {
 typedef struct myb_spk myb_spk;
 
 /* An empty set of SPK files. allocator may be NULL (malloc/free). */
-MYB_API MYB_NODISCARD myb_status myb_spk_create(const myb_allocator* allocator, myb_spk** spk);
+MYB_NODISCARD MYB_API myb_status myb_spk_create(const myb_allocator* allocator, myb_spk** spk);
 
 /* Unmaps the files; accepts NULL. */
 MYB_API void myb_spk_destroy(myb_spk* spk);
@@ -46,11 +46,11 @@ MYB_API void myb_spk_destroy(myb_spk* spk);
  * rule). Loading is atomic: on error nothing is added and diag tells why. Errors: MYB_E_IO,
  * MYB_E_FORMAT (not a DAF/SPK file, an inconsistent segment), MYB_E_NOMEM, MYB_E_OVERFLOW.
  * Not to be called while another thread queries the set. */
-MYB_API MYB_NODISCARD myb_status myb_spk_load_file(myb_spk* spk, const char* path, myb_diag* diag);
+MYB_NODISCARD MYB_API myb_status myb_spk_load_file(myb_spk* spk, const char* path, myb_diag* diag);
 
 /* The same for an SPK image in memory, which the caller keeps alive and unchanged until the
  * set is destroyed. */
-MYB_API MYB_NODISCARD myb_status myb_spk_load_memory(myb_spk* spk, const void* data, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_spk_load_memory(myb_spk* spk, const void* data, size_t size,
                                                      myb_diag* diag);
 
 typedef struct myb_spk_segment_info {
@@ -72,7 +72,7 @@ MYB_API void myb_spk_segment(const myb_spk* spk, size_t index, myb_spk_segment_i
  * byte order) — for evaluators of segment types outside the library (SPK type 10, two-line
  * elements, in ext/sgp4). Errors: MYB_E_RANGE (offset + count beyond the segment). */
 MYB_API size_t myb_spk_segment_size(const myb_spk* spk, size_t index);
-MYB_API MYB_NODISCARD myb_status myb_spk_segment_data(const myb_spk* spk, size_t index,
+MYB_NODISCARD MYB_API myb_status myb_spk_segment_data(const myb_spk* spk, size_t index,
                                                       size_t offset, size_t count,
                                                       double* values);
 
@@ -85,7 +85,7 @@ MYB_API MYB_NODISCARD myb_status myb_spk_segment_data(const myb_spk* spk, size_t
  * MYB_E_FORMAT (segments in different frames, an unsupported segment type, or data that turn
  * out invalid), MYB_E_DOMAIN (two-body propagation of types 5 and 15 failed). Thread-safe:
  * queries do not modify the set. */
-MYB_API MYB_NODISCARD myb_status myb_spk_state(const myb_spk* spk, int32_t target, int32_t center,
+MYB_NODISCARD MYB_API myb_status myb_spk_state(const myb_spk* spk, int32_t target, int32_t center,
                                                myb_time t, double state[6], int32_t* frame);
 
 /* The same with the segments in any frames that a graph of frames (myb/frames.h) joins to
@@ -93,7 +93,7 @@ MYB_API MYB_NODISCARD myb_status myb_spk_state(const myb_spk* spk, int32_t targe
  * velocities, the rotation of the frames included — before the sum. t is on the ephemeris'
  * scale, which must be the one the graph was created with. Errors: as myb_spk_state, less
  * the one of different frames; those of myb_frame_graph_rotation. */
-MYB_API MYB_NODISCARD myb_status myb_spk_state_in(const myb_spk* spk,
+MYB_NODISCARD MYB_API myb_status myb_spk_state_in(const myb_spk* spk,
                                                   const myb_frame_graph* graph, int32_t target,
                                                   int32_t center, myb_time t, int32_t frame,
                                                   double state[6]);
@@ -102,11 +102,11 @@ MYB_API MYB_NODISCARD myb_status myb_spk_state_in(const myb_spk* spk,
  * myb/time.h, "Array forms": the same bits as the single calls in a loop; *failed, may be
  * NULL, gets the index of the epoch that failed, count when none did): states[6 k .. 6 k + 5]
  * at t[k], and frames[k] (frames may be NULL) the frame code myb_spk_state reports for it. */
-MYB_API MYB_NODISCARD myb_status myb_spk_state_many(const myb_spk* spk, int32_t target,
+MYB_NODISCARD MYB_API myb_status myb_spk_state_many(const myb_spk* spk, int32_t target,
                                                     int32_t center, const myb_time* t,
                                                     size_t count, double* states,
                                                     int32_t* frames, size_t* failed);
-MYB_API MYB_NODISCARD myb_status myb_spk_state_in_many(const myb_spk* spk,
+MYB_NODISCARD MYB_API myb_status myb_spk_state_in_many(const myb_spk* spk,
                                                        const myb_frame_graph* graph,
                                                        int32_t target, int32_t center,
                                                        const myb_time* t, size_t count,
@@ -133,7 +133,7 @@ typedef struct myb_spk_body {
 } myb_spk_body;
 
 /* myb_state_function; context: const myb_spk_body*. */
-MYB_API MYB_NODISCARD myb_status myb_spk_body_state(void* body, myb_time t, double state[6]);
+MYB_NODISCARD MYB_API myb_status myb_spk_body_state(void* body, myb_time t, double state[6]);
 
 /* The time ephemeris of a planetary ephemeris: the JPL files with a "t" in their names
  * (de440t.bsp) hold, as the first coordinate of the "body" 1000000001 relative to
@@ -147,7 +147,7 @@ typedef struct myb_spk_time {
   int32_t center; /* 0: 1000000000 */
 } myb_spk_time;
 
-MYB_API MYB_NODISCARD myb_status myb_spk_time_difference(void* context, myb_time tdb,
+MYB_NODISCARD MYB_API myb_status myb_spk_time_difference(void* context, myb_time tdb,
                                                          double* difference);
 
 /* ---- Writing SPK files -----------------------------------------------------------------------
@@ -161,7 +161,7 @@ typedef struct myb_spk_writer myb_spk_writer;
 
 /* internal_name: the label of the file, at most 60 printable ASCII characters (NULL: "myb").
  * Errors: MYB_E_DOMAIN (the name), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_spk_writer_create(const char* internal_name,
+MYB_NODISCARD MYB_API myb_status myb_spk_writer_create(const char* internal_name,
                                                        const myb_allocator* allocator,
                                                        myb_spk_writer** writer);
 MYB_API void myb_spk_writer_destroy(myb_spk_writer* writer); /* accepts NULL */
@@ -183,7 +183,7 @@ typedef struct myb_spk_segment_header {
  * a target equal to its centre —, the type, the degree, fewer states than the window, epochs
  * not increasing or more than 2^51 s from J2000, values not finite), MYB_E_NOMEM,
  * MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_states(myb_spk_writer* writer,
+MYB_NODISCARD MYB_API myb_status myb_spk_writer_add_states(myb_spk_writer* writer,
                                                            const myb_spk_segment_header* header,
                                                            int type, int degree,
                                                            const double* epochs,
@@ -201,7 +201,7 @@ MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_states(myb_spk_writer* write
  * (k + 1) |c_k| over the coefficients of a component, in km, above 2^1000 / (4000 (degree +
  * 1)^2) — for type 2, whose velocity is the derivative, above that times the half-length of a
  * part in s), the statuses of the provider. */
-MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_chebyshev(
+MYB_NODISCARD MYB_API myb_status myb_spk_writer_add_chebyshev(
     myb_spk_writer* writer, const myb_spk_segment_header* header, int type,
     myb_state_function state, void* context, double start, double stop, size_t intervals,
     int degree, double* max_error);
@@ -215,7 +215,7 @@ MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_chebyshev(
  * Errors: MYB_E_DOMAIN (the header — also a target equal to its centre —, type < 1, start or
  * stop more than 2^51 s from J2000, stop < start, no words, words of an evaluated type that
  * the reader would refuse), MYB_E_NOMEM, MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_spk_writer_add_raw(myb_spk_writer* writer,
+MYB_NODISCARD MYB_API myb_status myb_spk_writer_add_raw(myb_spk_writer* writer,
                                                         const myb_spk_segment_header* header,
                                                         int type, double start, double stop,
                                                         const double* words, size_t count);
@@ -225,11 +225,11 @@ MYB_API size_t myb_spk_writer_size(const myb_spk_writer* writer);
 
 /* The file into a buffer of at least myb_spk_writer_size bytes. Errors: MYB_E_DOMAIN (no
  * segments), MYB_E_OVERFLOW (the buffer, or more than 2^31 words of data). */
-MYB_API MYB_NODISCARD myb_status myb_spk_writer_write(const myb_spk_writer* writer, void* buffer,
+MYB_NODISCARD MYB_API myb_status myb_spk_writer_write(const myb_spk_writer* writer, void* buffer,
                                                       size_t size);
 
 /* The file at path (UTF-8), created or replaced. Additional errors: MYB_E_IO, MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_spk_writer_write_file(const myb_spk_writer* writer,
+MYB_NODISCARD MYB_API myb_status myb_spk_writer_write_file(const myb_spk_writer* writer,
                                                            const char* path);
 
 /* ---- SP3 precise orbits ---------------------------------------------------------------------
@@ -242,10 +242,10 @@ MYB_API MYB_NODISCARD myb_status myb_spk_writer_write_file(const myb_spk_writer*
 typedef struct myb_sp3 myb_sp3;
 
 /* Errors: MYB_E_FORMAT (diag gives the line), MYB_E_NOMEM, MYB_E_OVERFLOW, MYB_E_IO (files). */
-MYB_API MYB_NODISCARD myb_status myb_sp3_load(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_sp3_load(const char* text, size_t size,
                                               const myb_allocator* allocator, myb_sp3** sp3,
                                               myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_sp3_load_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_sp3_load_file(const char* path,
                                                    const myb_allocator* allocator,
                                                    myb_sp3** sp3, myb_diag* diag);
 MYB_API void myb_sp3_destroy(myb_sp3* sp3); /* accepts NULL */
@@ -325,7 +325,7 @@ typedef struct myb_sp3_data {
  * nearest to no code of its field — below 1.25^-0.5 mm or above 1.25^99.5 mm, 1.025^999.5 ps,
  * the same per second of the velocities; in the header below 2^0.5 mm or above 2^999.5 mm —
  * which the writer would have written as the end of the codes). */
-MYB_API MYB_NODISCARD myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer,
+MYB_NODISCARD MYB_API myb_status myb_sp3_write(const myb_sp3_data* data, char* buffer,
                                                size_t size, size_t* length);
 
 #ifdef __cplusplus

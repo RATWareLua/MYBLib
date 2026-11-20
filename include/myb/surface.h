@@ -37,7 +37,7 @@ extern "C" {
  * model of D. P. Rubincam (Icarus 148, 2, 2000) whose torque, averaged over the rotation and
  * the orbit, is the YORP effect. Errors: MYB_E_DOMAIN (u not unit to 1e-12, fractions outside
  * [0, 1], values not finite). */
-MYB_API MYB_NODISCARD myb_status myb_force_radiation_mesh(const myb_polyhedron* shape,
+MYB_NODISCARD MYB_API myb_status myb_force_radiation_mesh(const myb_polyhedron* shape,
                                                           const myb_plate* surface,
                                                           double pressure, const double u[3],
                                                           int shadows, double force[3],
@@ -55,7 +55,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_radiation_mesh(const myb_polyhedron* 
  * change: [2] does not depend on theta. The other two — they turn the axis — do (D. Capek,
  * D. Vokrouhlicky, Icarus 172, 526, 2004). The momentum of the light absorbed is left out:
  * over a rotation and an orbit it averages away. Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_force_yorp(const myb_polyhedron* shape, double pressure,
+MYB_NODISCARD MYB_API myb_status myb_force_yorp(const myb_polyhedron* shape, double pressure,
                                                 double sun_colatitude, double theta,
                                                 int shadows, int phases, double torque[3]);
 
@@ -71,7 +71,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_yorp(const myb_polyhedron* shape, dou
  * of the moment. With theta = 0 this is myb_force_radiation_mesh; over a rotation its torque
  * averages to that of myb_force_yorp. Errors: MYB_E_DOMAIN (as myb_force_radiation_mesh; an
  * axis that is not unit to 1e-12, theta negative or not finite, phases outside 8 .. 256). */
-MYB_API MYB_NODISCARD myb_status myb_force_radiation_mesh_lagged(
+MYB_NODISCARD MYB_API myb_status myb_force_radiation_mesh_lagged(
     const myb_polyhedron* shape, const myb_plate* surface, double pressure, const double u[3],
     const double axis[3], double theta, int phases, int shadows, double force[3],
     double torque[3]);
@@ -93,14 +93,14 @@ typedef struct myb_gas {
 /* a += (1/2) rho V^2 / mass * sum A_i (C_D,i d + C_L,i l_i) over the plates (area and normal
  * used), v the velocity of the object relative to the gas in the frame of the plates. Errors:
  * MYB_E_DOMAIN (a gas, a mass, a density or a plate that is not valid; v = 0). */
-MYB_API MYB_NODISCARD myb_status myb_force_gas_plates(double density, const myb_gas* gas,
+MYB_NODISCARD MYB_API myb_status myb_force_gas_plates(double density, const myb_gas* gas,
                                                       double mass, const myb_plate* plates,
                                                       size_t count, const double v[3],
                                                       double a[3]);
 
 /* The drag coefficient of a sphere in the same flow (the closed form), referred to its
  * cross-section. Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_gas_sphere_cd(const myb_gas* gas, double speed, double* cd);
+MYB_NODISCARD MYB_API myb_status myb_gas_sphere_cd(const myb_gas* gas, double speed, double* cd);
 
 /* Between the free molecules and the continuum. The Knudsen number of a body of the given
  * length (m) in a gas of the given density: the mean free path M / (sqrt(2) pi d^2 rho N_A)
@@ -161,7 +161,7 @@ MYB_API double myb_air_heat_ratio(double monatomic, double diatomic);
 
 /* C_p,max at the Mach number (>= 0) in a gas of the heat ratio gamma (> 1). Errors:
  * MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_newtonian_cp_max(double mach, double heat_ratio,
+MYB_NODISCARD MYB_API myb_status myb_newtonian_cp_max(double mach, double heat_ratio,
                                                       double* cp_max);
 
 /* a += -(1/2) rho V^2 C_p,max / mass sum A_i sin^2 theta_i n_i over the plates that face the
@@ -169,7 +169,7 @@ MYB_API MYB_NODISCARD myb_status myb_newtonian_cp_max(double mach, double heat_r
  * of the plates, M = V / sqrt(gamma R T / molar mass). Plates have no places: none of them
  * hides another. Errors: MYB_E_DOMAIN (an air, a mass, a density or a plate that is not
  * valid; v = 0). */
-MYB_API MYB_NODISCARD myb_status myb_force_newtonian_plates(double density, const myb_air* air,
+MYB_NODISCARD MYB_API myb_status myb_force_newtonian_plates(double density, const myb_air* air,
                                                             double mass, const myb_plate* plates,
                                                             size_t count, const double v[3],
                                                             double a[3]);
@@ -183,7 +183,7 @@ MYB_API MYB_NODISCARD myb_status myb_force_newtonian_plates(double density, cons
  * pressure (1/4) rho V^2 C_p,max on a mirror, 2 p sin^2 theta along -n, and the faces hidden
  * from the flow are those in the shadow: the computation is myb_force_radiation_mesh with a
  * fully specular surface, its rays and its cost. Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_force_newtonian_mesh(const myb_polyhedron* shape,
+MYB_NODISCARD MYB_API myb_status myb_force_newtonian_mesh(const myb_polyhedron* shape,
                                                           double density, const myb_air* air,
                                                           const double v[3], int shadows,
                                                           double force[3], double torque[3]);
@@ -210,7 +210,7 @@ typedef myb_status (*myb_attitude_function)(void* context, double t, const doubl
                                             const double v[3], double m[9]);
 
 /* context: const double[9], a constant matrix. */
-MYB_API MYB_NODISCARD myb_status myb_attitude_fixed(void* matrix, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_attitude_fixed(void* matrix, double t, const double x[3],
                                                     const double v[3], double m[9]);
 
 /* Body axes along the orbit about a body: x from the body to the object, z along the orbital
@@ -220,7 +220,7 @@ typedef struct myb_orbital_attitude {
   size_t body;
 } myb_orbital_attitude;
 
-MYB_API MYB_NODISCARD myb_status myb_attitude_orbital(void* context, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_attitude_orbital(void* context, double t, const double x[3],
                                                       const double v[3], double m[9]);
 
 /* The yaw steering of a navigation satellite: z towards the body, y across the plane of the
@@ -232,7 +232,7 @@ typedef struct myb_sun_attitude {
   size_t source;
 } myb_sun_attitude;
 
-MYB_API MYB_NODISCARD myb_status myb_attitude_sun_nadir(void* context, double t,
+MYB_NODISCARD MYB_API myb_status myb_attitude_sun_nadir(void* context, double t,
                                                         const double x[3], const double v[3],
                                                         double m[9]);
 
@@ -244,7 +244,7 @@ typedef struct myb_spin_attitude {
   double phase; /* rad */
 } myb_spin_attitude;
 
-MYB_API MYB_NODISCARD myb_status myb_attitude_spin(void* context, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_attitude_spin(void* context, double t, const double x[3],
                                                    const double v[3], double m[9]);
 
 /* ---- Terms of a force model ------------------------------------------------------------------ */
@@ -270,7 +270,7 @@ typedef struct myb_surface_radiation_term {
   const myb_refraction* atmospheres; /* as in myb_radiation_term */
 } myb_surface_radiation_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_surface_radiation(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_surface_radiation(void* term, double t,
                                                             const double x[3], const double v[3],
                                                             double a[3]);
 /* The Jacobians of the three terms of this header are analytic (but that of the drag with a
@@ -283,7 +283,7 @@ MYB_API MYB_NODISCARD myb_status myb_term_surface_radiation(void* term, double t
  * parts of a mesh that are lit now. In a penumbra the light changes over tens of kilometres
  * and the Jacobian of this term is central differences of the term, as that of
  * myb_term_radiation. */
-MYB_API MYB_NODISCARD myb_status myb_term_surface_radiation_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_surface_radiation_jacobian(void* term, double t,
                                                                      const double x[3],
                                                                      const double v[3],
                                                                      double dadx[9],
@@ -325,7 +325,7 @@ typedef struct myb_surface_drag_term {
   const myb_continuum* continuum;
 } myb_surface_drag_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_surface_drag(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_surface_drag(void* term, double t, const double x[3],
                                                        const double v[3], double a[3]);
 /* As above; the gradients of the density and of the wind are central differences of their
  * functions, as in myb_term_drag_jacobian. With a continuum the Jacobian is central
@@ -333,7 +333,7 @@ MYB_API MYB_NODISCARD myb_status myb_term_surface_drag(void* term, double t, con
  * force goes through the Mach number, the air of the place and, on a mesh, the parts the flow
  * reaches, which change in steps — a step of the differences across such a change gives the
  * slope of the step. */
-MYB_API MYB_NODISCARD myb_status myb_term_surface_drag_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_surface_drag_jacobian(void* term, double t,
                                                                 const double x[3],
                                                                 const double v[3],
                                                                 double dadx[9], double dadv[9]);
@@ -356,10 +356,10 @@ typedef struct myb_recoil_term {
   void* attitude_context;
 } myb_recoil_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_recoil(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_recoil(void* term, double t, const double x[3],
                                                  const double v[3], double a[3]);
 /* As above: the recoil is fixed in the body, so its derivatives are those of the attitude. */
-MYB_API MYB_NODISCARD myb_status myb_term_recoil_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_recoil_jacobian(void* term, double t,
                                                           const double x[3], const double v[3],
                                                           double dadx[9], double dadv[9]);
 
@@ -372,7 +372,7 @@ MYB_API MYB_NODISCARD myb_status myb_term_recoil_jacobian(void* term, double t,
  * of the gas alone, 1.7415e-4 kg^1/2 m^-1 for the air of the Earth. The heat that the shock
  * layer radiates, which takes over above some 10 km/s for a large nose, is not in it.
  * Errors: MYB_E_DOMAIN (a negative or non-finite value, a radius that is not positive). */
-MYB_API MYB_NODISCARD myb_status myb_heating_sutton_graves(double k, double density,
+MYB_NODISCARD MYB_API myb_status myb_heating_sutton_graves(double k, double density,
                                                            double nose_radius, double speed,
                                                            double* q);
 
@@ -410,7 +410,7 @@ typedef struct myb_ablation {
  * the origin of the environment, at the model time t; either output may be NULL. Errors:
  * MYB_E_DOMAIN (values of the structure that are not valid), those of the environment and of
  * the density and wind functions. */
-MYB_API MYB_NODISCARD myb_status myb_ablation_rate(const myb_ablation* ablation, double t,
+MYB_NODISCARD MYB_API myb_status myb_ablation_rate(const myb_ablation* ablation, double t,
                                                    const double x[3], const double v[3],
                                                    double* heating, double* rate);
 
@@ -418,7 +418,7 @@ MYB_API MYB_NODISCARD myb_status myb_ablation_rate(const myb_ablation* ablation,
  * myb/integ.h; the context is a myb_ablation; 7 components): dx/dt = v, dv/dt = the field,
  * dm/dt = -q A / Q*. Errors: MYB_E_DOMAIN (a mass that is not positive or not finite: the
  * object is consumed), those of the field and of myb_ablation_rate. */
-MYB_API MYB_NODISCARD myb_status myb_ablation_rhs(void* ablation, double t, const double* y,
+MYB_NODISCARD MYB_API myb_status myb_ablation_rhs(void* ablation, double t, const double* y,
                                                   double* dydt);
 
 /* The mass function of an object that ablates (myb_mass_function; the context is the

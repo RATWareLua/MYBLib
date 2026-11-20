@@ -79,7 +79,7 @@ typedef struct myb_orbit_options {
  * those differentiated. options may be NULL (defaults). Errors: MYB_E_DOMAIN (negative
  * options, an integrator that is not one of the three, RKN12 with variational, an unknown
  * timescale), MYB_E_NOMEM, MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_orbit_create(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_orbit_create(myb_force_model* model,
                                                   const myb_orbit_options* options,
                                                   const myb_allocator* allocator,
                                                   myb_orbit** orbit);
@@ -88,7 +88,7 @@ MYB_API void myb_orbit_destroy(myb_orbit* orbit); /* accepts NULL */
 /* Starts at t0 from y0 = (x, v) towards t_end != t0, which sets the direction and is never
  * passed. Errors: MYB_E_DOMAIN (times or state not finite, t_end == t0; with RKN12 a model with
  * a term not declared a function of the place alone), the statuses of the model. */
-MYB_API MYB_NODISCARD myb_status myb_orbit_start(myb_orbit* orbit, double t0, const double y0[6],
+MYB_NODISCARD MYB_API myb_status myb_orbit_start(myb_orbit* orbit, double t0, const double y0[6],
                                                  double t_end);
 
 /* The time reached: that of the last state or event returned (t0 after the start). */
@@ -97,17 +97,17 @@ MYB_API double myb_orbit_time(const myb_orbit* orbit);
 /* The state at t, between the time reached and t_end. Errors: MYB_E_DOMAIN (t behind the time
  * reached, beyond t_end or not finite), MYB_E_NOCONV (step budget), the statuses of the
  * integrator and the model. */
-MYB_API MYB_NODISCARD myb_status myb_orbit_state(myb_orbit* orbit, double t, double y[6]);
+MYB_NODISCARD MYB_API myb_status myb_orbit_state(myb_orbit* orbit, double t, double y[6]);
 
 /* The states at count times in the order of the propagation: states[6 k .. 6 k + 5] at
  * times[k]. Errors: as myb_orbit_state (the states before the failing time are filled). */
-MYB_API MYB_NODISCARD myb_status myb_orbit_states(myb_orbit* orbit, const double* times,
+MYB_NODISCARD MYB_API myb_status myb_orbit_states(myb_orbit* orbit, const double* times,
                                                   size_t count, double* states);
 
 /* The state at t with phi[6 i + j] = d y_i / d y0_j and sensitivity[i np + k] = d y_i / d p_k
  * for the np parameters of the model (any output may be NULL). Errors: as myb_orbit_state;
  * MYB_E_DOMAIN for an object created without variational. */
-MYB_API MYB_NODISCARD myb_status myb_orbit_partials(myb_orbit* orbit, double t, double y[6],
+MYB_NODISCARD MYB_API myb_status myb_orbit_partials(myb_orbit* orbit, double t, double y[6],
                                                     double phi[36], double* sensitivity);
 
 /* The next root of g(t, y), y = (x, v), from the time reached up to t_limit (between it and
@@ -117,7 +117,7 @@ MYB_API MYB_NODISCARD myb_status myb_orbit_partials(myb_orbit* orbit, double t, 
  * where g grows with t, -1 only where it falls, 0 both. With *found != 0 the time reached
  * becomes the root (t_event; y_event may be NULL) — a root at the time reached itself is not
  * reported again; otherwise it becomes t_limit. Errors: as myb_orbit_state. */
-MYB_API MYB_NODISCARD myb_status myb_orbit_event(myb_orbit* orbit, myb_event_function g,
+MYB_NODISCARD MYB_API myb_status myb_orbit_event(myb_orbit* orbit, myb_event_function g,
                                                  void* context, double t_limit, int direction,
                                                  int* found, double* t_event, double y_event[6]);
 
@@ -127,7 +127,7 @@ MYB_API MYB_NODISCARD myb_status myb_orbit_event(myb_orbit* orbit, myb_event_fun
  * trajectory with the impulse, the impulse itself taken as given. A state asked at the time
  * of the impulse is the one after it. Errors: MYB_E_DOMAIN (dv not finite), the statuses of
  * the model. */
-MYB_API MYB_NODISCARD myb_status myb_orbit_kick(myb_orbit* orbit, const double dv[3]);
+MYB_NODISCARD MYB_API myb_status myb_orbit_kick(myb_orbit* orbit, const double dv[3]);
 
 /* Accepted steps since the start, and the breaks of the model met among them. */
 MYB_API int64_t myb_orbit_steps(const myb_orbit* orbit);

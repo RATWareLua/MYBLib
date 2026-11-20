@@ -6,6 +6,29 @@ Versions are major.minor.patch.tweak (`MYB_VERSION_*` in `include/myb/core.h`). 
 version the API only grows. Details, checks and measured accuracies of every phase:
 [`docs/PLAN.en.md`](docs/PLAN.en.md), §12.
 
+## 1.2.2.1 — 2026-11-20
+
+What the first run of CI, at the tag 1.2.2.0, found. The interface and the results are those
+of 1.2.2.0 (the same golden value of `test_repro`).
+
+### Fixed
+- The public headers under MSVC 2026: it ignores `[[nodiscard]]` after `__declspec(dllimport)`
+  (C5240, an error under /WX), and C++ allows a standard attribute only at the start of a
+  declaration or after its last specifier. Every declaration is `MYB_NODISCARD MYB_API …` now
+  (528 of them); in C23 and C++ the attribute takes effect with every compiler.
+- macOS: `cmake/toolchains/clang-macos.cmake`, which the `macos-*` presets name, was missing
+  from the repository (taken by a local exclusion rule), so they did not configure.
+- The scripts of the tests run by `cmake -P` set the policies of CMake 3.28, the minimum of the
+  project: under CMake 3.x they ran with the old behaviour, and `test_exports` failed on
+  `IN_LIST`.
+- `test_go_binding` on Windows with a Clang whose linker for MinGW is GNU ld by default (Clang
+  20): Go asked the compiler about its linker without the flags of cgo and gave lld a GNU
+  linker script; the linker of the build goes to `-extldflags` too.
+- `test_contact` builds its slopes with the library's correctly rounded `myb_sin`, `myb_cos`
+  and `myb_atan` instead of libm, whose last bits differ between versions of the C runtime: a
+  block held a part in a thousand below the angle of friction followed them past the bound of
+  its speed.
+
 ## 1.2.2.0 — 2026-11-20
 
 The first tagged release after 1.0.0.0: everything since 1.1.0.0 (phases 12–22, the bindings).

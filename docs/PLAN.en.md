@@ -248,6 +248,20 @@ turned the compilation directory of the coverage mapping into `build/`
 (`-fcoverage-compilation-dir=.` keeps it at the source tree). macOS and Linux on ARM64 are
 built and tested only by CI, which runs at the tag.
 
+The first run of CI, at the tag 1.2.2.0, found five more defects, fixed in 1.2.2.1 (the golden
+value of `test_repro` was the same on Linux x86-64 and ARM64 and on Windows under Clang 20).
+The toolchain of macOS was not in the repository: a local exclusion rule for the portable
+toolchains of the root (`toolchains/`) took `cmake/toolchains/clang-macos.cmake` too. The
+scripts run by `cmake -P` named no policy level, and under the CMake 3.28 of the CI image
+`IN_LIST` was unknown to them (`test_exports`); CMake 4, used here, has no old policies left.
+MSVC 2026 ignores `[[nodiscard]]` after `__declspec` (C5240, an error under /WX), so the
+attribute begins every declaration now: `MYB_NODISCARD MYB_API`. Go asks the C compiler which
+linker it is without the flags of cgo, took GNU ld (the default of Clang 20 for MinGW) and gave
+lld a GNU linker script; the linker of the build goes to `-extldflags` too. `test_contact`
+turned its slopes with the `sin` and `cos` of libm, whose last bits differ in the mingw-w64
+runtime of CI (14.0 against 13.0 here), and a block held a part in a thousand below the angle
+of friction followed them; the test uses the library's correctly rounded functions now.
+
 Phase 21 is the last phase of the roadmap: it came after phase 22 (the user's decision of
 2026-11-12), so that the bindings, the passports, fuzzing and the benchmarks were written over
 the final interface. What it leaves is at the end of the section; there is no later phase, so
@@ -345,8 +359,8 @@ those are the known limits of the release, each written in the passport of its m
   refuses a standard attribute after a GNU one, and every declaration was
   `__attribute__((visibility("default"))) [[nodiscard]] …`; Clang takes it, and the CI image
   has GCC 13, whose default is C17 with the GNU spelling of both. In C23 the visibility is
-  `[[gnu::visibility("default")]]` now (the other cure, [[nodiscard]] before the visibility,
-  would have changed 884 declarations). `test_gcc_consumer`
+  `[[gnu::visibility("default")]]` now; since 1.2.2.1 `[[nodiscard]]` also comes first in
+  every declaration (MSVC 2026, the first paragraph of these decisions). `test_gcc_consumer`
   (`tests/tools/check_gcc.cmake`): the headers, those of `ext/` among them, as C17 and C23
   under gcc and as C++17, C++20 and C++23 under g++ with `-Werror`, with the attributes of the
   shared library and with `MYB_STATIC`; `examples/low_orbit.c` and the C++ face built by gcc
@@ -358,8 +372,8 @@ those are the known limits of the release, each written in the passport of its m
   checks of the exports and the imports. CI: Linux on ARM64 (`linux-release`, `linux-asan`,
   `linux-ubsan` on ubuntu-24.04-arm), macOS on Apple silicon (macos-15, the three presets),
   the MSVC consumers in the Windows jobs, Go and GHC for the tests of the new bindings, jobs for
-  fuzzing and coverage. None of it has run yet: CI runs on a tag, and the tag comes after this
-  phase.
+  fuzzing and coverage. It first ran at the tag 1.2.2.0; what it found is fixed in 1.2.2.1
+  (the first paragraph of "Phase 21 decisions").
 - **Python and Rust under AddressSanitizer** (Linux, `linux-asan`): `test_python_binding_asan`
   loads the instrumented shared library into an interpreter built without the sanitizer — the
   runtime of Clang goes first through `LD_PRELOAD`, and leaks are not looked for (the

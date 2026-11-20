@@ -11,6 +11,7 @@
 #
 # Usage: cmake -DVCVARS=<vcvars64.bat> -DSOURCE_DIR=<repository> -DLIB_DIR=<dir of libmyb.dll>
 #              -DWORK_DIR=<scratch> -P check_msvc.cmake
+cmake_minimum_required(VERSION 3.28)
 foreach(_required VCVARS SOURCE_DIR LIB_DIR WORK_DIR)
   if(NOT ${_required})
     message(FATAL_ERROR "check_msvc.cmake: ${_required} is not set")

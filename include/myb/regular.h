@@ -67,22 +67,22 @@ MYB_API void myb_ks_from_cartesian(double mu, double t, const double x[3], const
 MYB_API void myb_ks_to_cartesian(const double y[10], double* t, double x[3], double v[3]);
 
 /* d y / ds of the KS equations; context: const myb_regular_problem*. */
-MYB_API MYB_NODISCARD myb_status myb_ks_rhs(void* problem, double s, const double* y, double* dy);
+MYB_NODISCARD MYB_API myb_status myb_ks_rhs(void* problem, double s, const double* y, double* dy);
 
 /* The same with the time element in place of the time: y = (u, u', h, tau). Errors:
  * MYB_E_DOMAIN (h <= 0: the orbit is not bound). */
-MYB_API MYB_NODISCARD myb_status myb_ks_element_from_cartesian(double mu, double t,
+MYB_NODISCARD MYB_API myb_status myb_ks_element_from_cartesian(double mu, double t,
                                                                const double x[3],
                                                                const double v[3], double y[10]);
-MYB_API MYB_NODISCARD myb_status myb_ks_element_to_cartesian(const double y[10], double* t,
+MYB_NODISCARD MYB_API myb_status myb_ks_element_to_cartesian(const double y[10], double* t,
                                                              double x[3], double v[3]);
-MYB_API MYB_NODISCARD myb_status myb_ks_element_rhs(void* problem, double s, const double* y,
+MYB_NODISCARD MYB_API myb_status myb_ks_element_rhs(void* problem, double s, const double* y,
                                                     double* dy);
 
 /* d y / ds of the Sundman-transformed Cartesian equations, y = (x, v, t). Any exponent
  * alpha >= 0: 1, 3/2 and 2 by multiplications and a square root, the others as
  * exp(alpha log r). Errors: MYB_E_DOMAIN (r = 0, alpha negative or not finite). */
-MYB_API MYB_NODISCARD myb_status myb_sundman_rhs(void* problem, double s, const double* y,
+MYB_NODISCARD MYB_API myb_status myb_sundman_rhs(void* problem, double s, const double* y,
                                                  double* dy);
 
 typedef enum myb_regular_kind {
@@ -98,7 +98,7 @@ typedef enum myb_regular_kind {
  * With the time element an orbit that a perturbation unbinds on the way ends with
  * MYB_E_DOMAIN or, the derivative of the element growing without bound as h comes to zero,
  * with MYB_E_STEP_MIN: use MYB_REGULAR_KS there. */
-MYB_API MYB_NODISCARD myb_status myb_regular_propagate(myb_regular_kind kind,
+MYB_NODISCARD MYB_API myb_status myb_regular_propagate(myb_regular_kind kind,
                                                        const myb_regular_problem* problem,
                                                        const myb_dop853_options* options,
                                                        double t0, const double x0[3],

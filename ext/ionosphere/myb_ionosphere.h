@@ -44,7 +44,7 @@ extern "C" {
  * station. alpha = 1 is the standard model (with R = 6371 km, H = 450 km of the IGS maps; the
  * values of a file: myb_ionex_shell); the modified model of CODE uses H = 506.7 km,
  * alpha = 0.9782. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_iono_pierce_point(double latitude, double longitude,
+MYB_NODISCARD MYB_EXT_API myb_status myb_iono_pierce_point(double latitude, double longitude,
                                                        double azimuth, double elevation,
                                                        double radius, double height,
                                                        double alpha, double* pierce_latitude,
@@ -64,7 +64,7 @@ typedef struct myb_ionex myb_ionex;
  * a grid definition that is not finite, an exponent, a map number, an epoch field or a value
  * that is not a whole number of its range — the exponent within -22 .. 22, the values I5 —,
  * a grid of more values than the text has characters), MYB_E_NOMEM. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_load(const char* text, size_t size,
+MYB_NODISCARD MYB_EXT_API myb_status myb_ionex_load(const char* text, size_t size,
                                                 const myb_allocator* allocator,
                                                 myb_ionex** maps, myb_diag* diag);
 MYB_EXT_API void myb_ionex_destroy(myb_ionex* maps); /* NULL is allowed */
@@ -84,7 +84,7 @@ MYB_EXT_API int myb_ionex_dimension(const myb_ionex* maps);
  * gives it. Errors: MYB_E_RANGE (time outside the maps, latitude outside the grid, a missing
  * value of the map — of a node around the place with a weight: on a node or an edge of the
  * grid the nodes beside it are not needed). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
+MYB_NODISCARD MYB_EXT_API myb_status myb_ionex_vtec(const myb_ionex* maps, double mjd,
                                                 double latitude, double longitude, double* vtec);
 
 /* ---- The density of electrons in space --------------------------------------------------------
@@ -108,7 +108,7 @@ typedef struct myb_iono_layer {
   double scale; /* the scale height, m (60 .. 100 km; the peak several of them up) */
 } myb_iono_layer;
 
-MYB_EXT_API MYB_NODISCARD myb_status myb_iono_layer_density(void* layer, double mjd,
+MYB_NODISCARD MYB_EXT_API myb_status myb_iono_layer_density(void* layer, double mjd,
                                                         const double r[3], double* density);
 
 /* Densities at the nodes of a grid of equal steps in the geocentric latitude, the longitude
@@ -139,13 +139,13 @@ typedef struct myb_iono_grid {
   const double* density; /* [map][height][latitude][longitude], m^-3 */
 } myb_iono_grid;
 
-MYB_EXT_API MYB_NODISCARD myb_status myb_iono_grid_density(void* grid, double mjd,
+MYB_NODISCARD MYB_EXT_API myb_status myb_iono_grid_density(void* grid, double mjd,
                                                        const double r[3], double* density);
 
 /* The three-dimensional maps of an IONEX file as a grid of densities: the grid points into the
  * maps and serves as long as they live. Errors: MYB_E_DOMAIN (two-dimensional maps, or
  * longitudes that fall). */
-MYB_EXT_API MYB_NODISCARD myb_status myb_ionex_density_grid(const myb_ionex* maps,
+MYB_NODISCARD MYB_EXT_API myb_status myb_ionex_density_grid(const myb_ionex* maps,
                                                         myb_iono_grid* grid);
 
 /* ---- The integrals along a ray and the orders of the delay ---------------------------------- */
@@ -165,7 +165,7 @@ typedef struct myb_iono_ray {
  * may be NULL (the two integrals with the field are then zero); `work` as for
  * myb_magnetic_field_eval. Errors: MYB_E_DOMAIN (the ends at one place, radii or panels that
  * are none, non-finite input), the statuses of the density and of the field. */
-MYB_EXT_API MYB_NODISCARD myb_status myb_iono_ray_integrals(myb_electron_density density,
+MYB_NODISCARD MYB_EXT_API myb_status myb_iono_ray_integrals(myb_electron_density density,
                                                         void* context,
                                                         const myb_magnetic_field* field,
                                                         myb_gravity_work* work, double mjd,

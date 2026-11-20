@@ -97,7 +97,7 @@ MYB_API double myb_event_eclipse(void* event, double t, const double* y);
 /* Declares the edges of the shadows of a radiation term to a model as breaks
  * (myb_force_model_add_break): two per occulter. events: 2 * term->occulter_count structures
  * that this call fills and that must outlive the model. Errors: MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_term_radiation_breaks(const myb_radiation_term* term,
+MYB_NODISCARD MYB_API myb_status myb_term_radiation_breaks(const myb_radiation_term* term,
                                                            myb_force_model* model,
                                                            myb_eclipse_event* events);
 

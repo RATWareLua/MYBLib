@@ -90,7 +90,7 @@ typedef struct myb_env_body {
  * MYB_E_DOMAIN (a step that is negative, not finite or above 1e15 s, timesys without a scale
  * name),
  * MYB_E_NOT_FOUND (the scale), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_env_create(const myb_env_options* options,
+MYB_NODISCARD MYB_API myb_status myb_env_create(const myb_env_options* options,
                                                 const myb_allocator* allocator, myb_env** env);
 MYB_API void myb_env_destroy(myb_env* env); /* accepts NULL */
 
@@ -99,14 +99,14 @@ MYB_API void myb_env_destroy(myb_env* env); /* accepts NULL */
  * second thread takes a copy (the providers and their contexts are shared and must
  * themselves be safe to call from several threads, as the ready-made ones on kernels opened
  * for reading are). Errors: MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_env_clone(const myb_env* env,
+MYB_NODISCARD MYB_API myb_status myb_env_clone(const myb_env* env,
                                                const myb_allocator* allocator, myb_env** clone);
 
 /* Adds a body (the description is copied) and returns its index. Errors: MYB_E_DOMAIN (a
  * value that is negative or not finite, a second body without a state provider, a scale name
  * without a time system), MYB_E_NOT_FOUND (a scale name), MYB_E_OVERFLOW (more than
  * MYB_ENV_MAX_BODIES bodies or MYB_ENV_MAX_SCALES scales). */
-MYB_API MYB_NODISCARD myb_status myb_env_add_body(myb_env* env, const myb_env_body* body,
+MYB_NODISCARD MYB_API myb_status myb_env_add_body(myb_env* env, const myb_env_body* body,
                                                   size_t* index);
 
 MYB_API size_t myb_env_body_count(const myb_env* env);
@@ -114,21 +114,21 @@ MYB_API double myb_env_gm(const myb_env* env, size_t body);
 MYB_API myb_time myb_env_epoch(const myb_env* env);
 
 /* The first body with the identifier id. Errors: MYB_E_NOT_FOUND. */
-MYB_API MYB_NODISCARD myb_status myb_env_find(const myb_env* env, int64_t id, size_t* index);
+MYB_NODISCARD MYB_API myb_status myb_env_find(const myb_env* env, int64_t id, size_t* index);
 
 /* The instant epoch + t on the scale `scale` (NULL: the model's). Errors: MYB_E_DOMAIN (t not
  * finite), MYB_E_RANGE (|t| beyond 1e17 s or 2^52 table steps), MYB_E_NOT_FOUND (a scale that
  * is neither the model's nor one of a provider). */
-MYB_API MYB_NODISCARD myb_status myb_env_time(myb_env* env, double t, const char* scale,
+MYB_NODISCARD MYB_API myb_status myb_env_time(myb_env* env, double t, const char* scale,
                                               myb_time* out);
 
 /* State of a body relative to the origin (zeros for the body at the origin) and its
  * orientation at the model time t, as the terms see them. Errors: MYB_E_DOMAIN (t or the
  * provider's result not finite), MYB_E_RANGE (as myb_env_time), the statuses of the
  * providers. */
-MYB_API MYB_NODISCARD myb_status myb_env_state(myb_env* env, double t, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_env_state(myb_env* env, double t, size_t body,
                                                double state[6]);
-MYB_API MYB_NODISCARD myb_status myb_env_orientation(myb_env* env, double t, size_t body,
+MYB_NODISCARD MYB_API myb_status myb_env_orientation(myb_env* env, double t, size_t body,
                                                      myb_orientation* orientation);
 
 /* ---- The object ------------------------------------------------------------------------------
@@ -159,9 +159,9 @@ typedef struct myb_point_mass_term {
   double gm;
 } myb_point_mass_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_point_mass(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_point_mass(void* term, double t, const double x[3],
                                                      const double v[3], double a[3]);
-MYB_API MYB_NODISCARD myb_status myb_term_point_mass_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_point_mass_jacobian(void* term, double t,
                                                               const double x[3],
                                                               const double v[3], double dadx[9],
                                                               double dadv[9]);
@@ -174,9 +174,9 @@ typedef struct myb_third_body_term {
   size_t body;
 } myb_third_body_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_third_body(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_third_body(void* term, double t, const double x[3],
                                                      const double v[3], double a[3]);
-MYB_API MYB_NODISCARD myb_status myb_term_third_body_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_third_body_jacobian(void* term, double t,
                                                               const double x[3],
                                                               const double v[3], double dadx[9],
                                                               double dadv[9]);
@@ -209,7 +209,7 @@ typedef struct myb_field_term {
   double cached_t;
 } myb_field_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_field(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_field(void* term, double t, const double x[3],
                                                 const double v[3], double a[3]);
 /* What the figure of the body at the origin adds to the motion about it when other bodies
  * pull on that figure: each of them (the raisers of the term) attracts the oblateness of the
@@ -220,12 +220,12 @@ MYB_API MYB_NODISCARD myb_status myb_term_field(void* term, double t, const doub
  * myb_field_term as myb_term_field of the body at the origin, and does not depend on the
  * object: its Jacobian is myb_term_no_jacobian. MYB_E_DOMAIN: the body is not at the
  * origin. */
-MYB_API MYB_NODISCARD myb_status myb_term_field_indirect(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_field_indirect(void* term, double t, const double x[3],
                                                          const double v[3], double a[3]);
 
 /* Analytic: the gradient of the field (myb_gravity_field_gradient) turned into the inertial
  * axes. */
-MYB_API MYB_NODISCARD myb_status myb_term_field_jacobian(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_field_jacobian(void* term, double t, const double x[3],
                                                          const double v[3], double dadx[9],
                                                          double dadv[9]);
 
@@ -250,12 +250,12 @@ typedef struct myb_radiation_term {
                                         no air) */
 } myb_radiation_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_radiation(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_radiation(void* term, double t, const double x[3],
                                                     const double v[3], double a[3]);
 /* Analytic in full light and in the umbra; in a penumbra, where the visible fraction changes
  * over tens of kilometres, central differences of the term itself (steps of 6e-6 of the
  * distance from the origin). */
-MYB_API MYB_NODISCARD myb_status myb_term_radiation_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_radiation_jacobian(void* term, double t,
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);
@@ -274,12 +274,12 @@ typedef struct myb_planet_radiation_term {
   int rings;
 } myb_planet_radiation_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_planet_radiation(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_planet_radiation(void* term, double t,
                                                            const double x[3], const double v[3],
                                                            double a[3]);
 /* The gradient of the field of that radiation (myb_force_planet_radiation_gradient) turned
  * into the inertial axes. */
-MYB_API MYB_NODISCARD myb_status myb_term_planet_radiation_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_planet_radiation_jacobian(void* term, double t,
                                                                     const double x[3],
                                                                     const double v[3],
                                                                     double dadx[9],
@@ -299,12 +299,12 @@ typedef struct myb_drag_term {
   void* wind_context;
 } myb_drag_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_drag(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_drag(void* term, double t, const double x[3],
                                                const double v[3], double a[3]);
 /* Analytic in the velocity and in the rotation of the atmosphere; the gradients of the density
  * and of the wind by central differences of their functions over 1e-7 of the distance from
  * the body's centre (about 1e-9 of the gradient for a scale height of tens of kilometres). */
-MYB_API MYB_NODISCARD myb_status myb_term_drag_jacobian(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_drag_jacobian(void* term, double t, const double x[3],
                                                         const double v[3], double dadx[9],
                                                         double dadv[9]);
 
@@ -319,23 +319,23 @@ typedef struct myb_relativity_term {
   size_t external; /* de Sitter only */
 } myb_relativity_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_schwarzschild(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_schwarzschild(void* term, double t, const double x[3],
                                                         const double v[3], double a[3]);
-MYB_API MYB_NODISCARD myb_status myb_term_lense_thirring(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_lense_thirring(void* term, double t, const double x[3],
                                                          const double v[3], double a[3]);
-MYB_API MYB_NODISCARD myb_status myb_term_de_sitter(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_de_sitter(void* term, double t, const double x[3],
                                                     const double v[3], double a[3]);
 /* Analytic (the Jacobians of myb/rel.h). */
-MYB_API MYB_NODISCARD myb_status myb_term_schwarzschild_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_schwarzschild_jacobian(void* term, double t,
                                                                  const double x[3],
                                                                  const double v[3],
                                                                  double dadx[9], double dadv[9]);
-MYB_API MYB_NODISCARD myb_status myb_term_lense_thirring_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_lense_thirring_jacobian(void* term, double t,
                                                                   const double x[3],
                                                                   const double v[3],
                                                                   double dadx[9],
                                                                   double dadv[9]);
-MYB_API MYB_NODISCARD myb_status myb_term_de_sitter_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_de_sitter_jacobian(void* term, double t,
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);
@@ -350,10 +350,10 @@ typedef struct myb_nongrav_term {
                    the source); 0: none */
 } myb_nongrav_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_nongrav(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_nongrav(void* term, double t, const double x[3],
                                                   const double v[3], double a[3]);
 /* Analytic; with a delay, central differences of the term. */
-MYB_API MYB_NODISCARD myb_status myb_term_nongrav_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_nongrav_jacobian(void* term, double t,
                                                            const double x[3], const double v[3],
                                                            double dadx[9], double dadv[9]);
 
@@ -369,10 +369,10 @@ typedef struct myb_yarkovsky_term {
   const myb_yarkovsky_season* season; /* NULL: the diurnal part alone */
 } myb_yarkovsky_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_yarkovsky(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_yarkovsky(void* term, double t, const double x[3],
                                                     const double v[3], double a[3]);
 /* Analytic (myb_force_yarkovsky_gradient, myb_force_yarkovsky_season_gradient). */
-MYB_API MYB_NODISCARD myb_status myb_term_yarkovsky_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_yarkovsky_jacobian(void* term, double t,
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);
@@ -389,10 +389,10 @@ typedef struct myb_tidal_lag_term {
   int with_static; /* != 0: also the tide without delay */
 } myb_tidal_lag_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_tidal_lag(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_tidal_lag(void* term, double t, const double x[3],
                                                     const double v[3], double a[3]);
 /* Analytic. */
-MYB_API MYB_NODISCARD myb_status myb_term_tidal_lag_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_tidal_lag_jacobian(void* term, double t,
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);
@@ -409,10 +409,10 @@ typedef struct myb_empirical_term {
   double sine[3];
 } myb_empirical_term;
 
-MYB_API MYB_NODISCARD myb_status myb_term_empirical(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_empirical(void* term, double t, const double x[3],
                                                     const double v[3], double a[3]);
 /* Analytic. */
-MYB_API MYB_NODISCARD myb_status myb_term_empirical_jacobian(void* term, double t,
+MYB_NODISCARD MYB_API myb_status myb_term_empirical_jacobian(void* term, double t,
                                                              const double x[3],
                                                              const double v[3], double dadx[9],
                                                              double dadv[9]);

@@ -203,7 +203,7 @@ typedef struct myb_contact_surface {
  * as myb_polyhedron_nearest) and the height of the position over it (m, negative inside); any
  * output may be NULL. Errors: MYB_E_DOMAIN (an invalid surface, a position that is not
  * finite), MYB_E_NOCONV (the ellipsoid, myb_ellipsoid_nearest). */
-MYB_API MYB_NODISCARD myb_status myb_contact_surface_nearest(const myb_contact_surface* surface,
+MYB_NODISCARD MYB_API myb_status myb_contact_surface_nearest(const myb_contact_surface* surface,
                                                              const double position[3],
                                                              double point[3], double normal[3],
                                                              double* height);
@@ -255,7 +255,7 @@ typedef struct myb_contact_result {
  * the body, v + omega x (s - x). Errors: MYB_E_DOMAIN (an invalid surface, law or point, no
  * points, a state that is not finite, a friction that sticks — it needs its state:
  * myb_contact_force_stick), MYB_E_NOCONV (an ellipsoid). */
-MYB_API MYB_NODISCARD myb_status myb_contact_force(const myb_contact_surface* surface,
+MYB_NODISCARD MYB_API myb_status myb_contact_force(const myb_contact_surface* surface,
                                                    const myb_contact_law* law,
                                                    const myb_contact_point* points, size_t count,
                                                    const double x[3], const double v[3],
@@ -268,7 +268,7 @@ MYB_API MYB_NODISCARD myb_status myb_contact_force(const myb_contact_surface* su
  * smooth friction both are ignored (may be NULL) and the result is that of myb_contact_force.
  * Errors: as myb_contact_force (but for the friction that sticks), MYB_E_DOMAIN for a
  * deflection that is not finite or missing. */
-MYB_API MYB_NODISCARD myb_status myb_contact_force_stick(
+MYB_NODISCARD MYB_API myb_status myb_contact_force_stick(
     const myb_contact_surface* surface, const myb_contact_law* law,
     const myb_contact_point* points, size_t count, const double x[3], const double v[3],
     const double attitude[9], const double omega[3], const double* deflection,
@@ -278,12 +278,12 @@ MYB_API MYB_NODISCARD myb_status myb_contact_force_stick(
  * along the normal, with no other force during it: the relation above, solved by Newton's
  * iteration (series where chi v is small). damping 0 or speed 0: 1. Errors: MYB_E_DOMAIN (a
  * value negative or not finite). */
-MYB_API MYB_NODISCARD myb_status myb_contact_restitution(double damping, double speed,
+MYB_NODISCARD MYB_API myb_status myb_contact_restitution(double damping, double speed,
                                                          double* restitution);
 
 /* The damping chi (s/m) that gives the restitution e at the approach speed v (m/s): 0 for
  * e = 1. Errors: MYB_E_DOMAIN (e outside (0, 1], v not positive, values not finite). */
-MYB_API MYB_NODISCARD myb_status myb_contact_damping(double restitution, double speed,
+MYB_NODISCARD MYB_API myb_status myb_contact_damping(double restitution, double speed,
                                                      double* damping);
 
 /* ---- A term of a force model ------------------------------------------------------------------
@@ -304,7 +304,7 @@ typedef struct myb_contact_term {
 
 /* myb_term_function. Errors: those of myb_contact_force (a friction that sticks among them)
  * and of the environment. */
-MYB_API MYB_NODISCARD myb_status myb_term_contact(void* term, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_contact(void* term, double t, const double x[3],
                                                   const double v[3], double a[3]);
 
 /* The height of the object over the surface less its radius (m; myb_contact_result.gap): its

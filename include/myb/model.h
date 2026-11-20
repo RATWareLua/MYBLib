@@ -33,17 +33,17 @@ typedef struct myb_force_model myb_force_model;
 
 enum { MYB_MODEL_MAX_TERMS = 64, MYB_MODEL_MAX_PARAMETERS = 16, MYB_MODEL_NAME = 32 };
 
-MYB_API MYB_NODISCARD myb_status myb_force_model_create(const myb_allocator* allocator,
+MYB_NODISCARD MYB_API myb_status myb_force_model_create(const myb_allocator* allocator,
                                                         myb_force_model** model);
 MYB_API void myb_force_model_destroy(myb_force_model* model); /* accepts NULL */
 
 /* Adds an enabled term; jacobian may be NULL; name: at most 31 characters, unique.
  * Errors: MYB_E_DOMAIN (name empty, too long or taken), MYB_E_OVERFLOW (64 terms). */
-MYB_API MYB_NODISCARD myb_status myb_force_model_add(myb_force_model* model, const char* name,
+MYB_NODISCARD MYB_API myb_status myb_force_model_add(myb_force_model* model, const char* name,
                                                      myb_term_function function,
                                                      myb_term_jacobian jacobian, void* context,
                                                      size_t* index);
-MYB_API MYB_NODISCARD myb_status myb_force_model_find(const myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_force_model_find(const myb_force_model* model,
                                                       const char* name, size_t* index);
 MYB_API size_t myb_force_model_count(const myb_force_model* model);
 
@@ -62,7 +62,7 @@ MYB_API void myb_force_model_set_enabled(myb_force_model* model, size_t index, i
 
 /* A parameter: *value (inside a term's context) and the step of its central differences.
  * Errors: MYB_E_DOMAIN (step <= 0, name invalid or taken), MYB_E_OVERFLOW (16 parameters). */
-MYB_API MYB_NODISCARD myb_status myb_force_model_add_parameter(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_force_model_add_parameter(myb_force_model* model,
                                                                const char* name, double* value,
                                                                double step, size_t* index);
 MYB_API size_t myb_force_model_parameter_count(const myb_force_model* model);
@@ -72,7 +72,7 @@ MYB_API double* myb_force_model_parameter(const myb_force_model* model, size_t i
 /* Binds a parameter to the one term it enters: its partial derivative is then the difference
  * of that term alone instead of the whole model (the same value, a fraction of the cost), and
  * zero while the term is switched off. Errors: MYB_E_DOMAIN (indices). */
-MYB_API MYB_NODISCARD myb_status myb_force_model_bind_parameter(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_force_model_bind_parameter(myb_force_model* model,
                                                                 size_t parameter, size_t term);
 
 /* Where the force is continuous but not smooth — the edge of a shadow, a thrust that switches
@@ -86,7 +86,7 @@ typedef double (*myb_break_function)(void* context, double t, const double* y);
 
 enum { MYB_MODEL_MAX_BREAKS = 32 };
 
-MYB_API MYB_NODISCARD myb_status myb_force_model_add_break(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_force_model_add_break(myb_force_model* model,
                                                            myb_break_function g, void* context);
 MYB_API size_t myb_force_model_break_count(const myb_force_model* model);
 MYB_API void myb_force_model_break(const myb_force_model* model, size_t index,
@@ -135,35 +135,35 @@ MYB_API myb_break_scheme myb_force_model_break_scheme(const myb_force_model* mod
 /* Scales of the central differences: steps cbrt(eps) * scale per component (defaults: the norm
  * of x, resp. v, at the point, at least length_scale, resp. velocity_scale; both 1 by default).
  * Errors: MYB_E_DOMAIN for non-positive scales. */
-MYB_API MYB_NODISCARD myb_status myb_force_model_set_scales(myb_force_model* model,
+MYB_NODISCARD MYB_API myb_status myb_force_model_set_scales(myb_force_model* model,
                                                             double length_scale,
                                                             double velocity_scale);
 
 /* Sum of the enabled terms. */
-MYB_API MYB_NODISCARD myb_status myb_force_model_acceleration(myb_force_model* model, double t,
+MYB_NODISCARD MYB_API myb_status myb_force_model_acceleration(myb_force_model* model, double t,
                                                               const double x[3],
                                                               const double v[3], double a[3]);
 /* One term, enabled or not. */
-MYB_API MYB_NODISCARD myb_status myb_force_model_term(myb_force_model* model, size_t index,
+MYB_NODISCARD MYB_API myb_status myb_force_model_term(myb_force_model* model, size_t index,
                                                       double t, const double x[3],
                                                       const double v[3], double a[3]);
 
 /* Jacobian of the sum of the enabled terms: d a / d x, d a / d v (3 x 3, row-major) and, if
  * dadp is not NULL, d a / d p (3 x parameter_count). Central differences for the terms without
  * an analytic Jacobian (relative error about 1e-10) and for the parameters. */
-MYB_API MYB_NODISCARD myb_status myb_force_model_jacobian(myb_force_model* model, double t,
+MYB_NODISCARD MYB_API myb_status myb_force_model_jacobian(myb_force_model* model, double t,
                                                           const double x[3], const double v[3],
                                                           double dadx[9], double dadv[9],
                                                           double* dadp);
 
 /* Adapter to the integrators (myb_accel_function of myb/integ.h, n = 3): context = model. */
-MYB_API MYB_NODISCARD myb_status myb_force_model_accel(void* model, double t, const double* x,
+MYB_NODISCARD MYB_API myb_status myb_force_model_accel(void* model, double t, const double* x,
                                                        const double* v, double* a);
 
 /* A Jacobian of zeros (myb_term_jacobian): for a term whose derivatives are left out of the
  * variational equations on purpose — a force so far below the others that its gradient does
  * not show in the partials, and whose differences would cost more than they bring. */
-MYB_API MYB_NODISCARD myb_status myb_term_no_jacobian(void* context, double t, const double x[3],
+MYB_NODISCARD MYB_API myb_status myb_term_no_jacobian(void* context, double t, const double x[3],
                                                       const double v[3], double dadx[9],
                                                       double dadv[9]);
 

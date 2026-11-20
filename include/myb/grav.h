@@ -35,7 +35,7 @@ typedef struct myb_gravity_field myb_gravity_field;
 
 /* Coefficient arrays are indexed by n (n + 1) / 2 + m, 0 <= m <= n <= degree. degree >= 0 and
  * <= 2700, gm > 0, radius > 0. Errors: MYB_E_DOMAIN, MYB_E_NOMEM, MYB_E_OVERFLOW. */
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_create(double gm, double radius, int degree,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_create(double gm, double radius, int degree,
                                                           const double* c, const double* s,
                                                           const myb_allocator* allocator,
                                                           myb_gravity_field** field);
@@ -46,12 +46,12 @@ MYB_API MYB_NODISCARD myb_status myb_gravity_field_create(double gm, double radi
  * (periodic terms with their period in years). Truncated to degree max_degree (0 = all).
  * Errors: MYB_E_FORMAT (diag gives the line; also coefficients beyond 1e20 in magnitude and
  * periods shorter than a second), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_load_icgem(const char* text, size_t size,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_load_icgem(const char* text, size_t size,
                                                               int max_degree,
                                                               const myb_allocator* allocator,
                                                               myb_gravity_field** field,
                                                               myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_load_icgem_file(const char* path,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_load_icgem_file(const char* path,
                                                                    int max_degree,
                                                                    const myb_allocator* allocator,
                                                                    myb_gravity_field** field,
@@ -62,7 +62,7 @@ MYB_API void myb_gravity_field_destroy(myb_gravity_field* field); /* accepts NUL
 /* An independent copy (coefficients, time-variable terms, current corrections): fields are
  * modified by set_time and the tides, so each thread evaluating at its own time needs its own.
  * Errors: MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_clone(const myb_gravity_field* field,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_clone(const myb_gravity_field* field,
                                                          const myb_allocator* allocator,
                                                          myb_gravity_field** copy);
 
@@ -79,16 +79,16 @@ MYB_API const char* myb_gravity_field_tide_system(const myb_gravity_field* field
  * next set_time. Both modify the field: not concurrently with evaluations. Errors:
  * MYB_E_DOMAIN (n, m outside the field, non-finite values). */
 MYB_API void myb_gravity_field_set_time(myb_gravity_field* field, myb_time t);
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_add_correction(myb_gravity_field* field,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_add_correction(myb_gravity_field* field,
                                                                   int n, int m, double dc,
                                                                   double ds);
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_coefficient(const myb_gravity_field* field,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_coefficient(const myb_gravity_field* field,
                                                                int n, int m, double* c,
                                                                double* s);
 
 /* Scratch memory for evaluations up to a degree; one per thread. */
 typedef struct myb_gravity_work myb_gravity_work;
-MYB_API MYB_NODISCARD myb_status myb_gravity_work_create(int degree, const myb_allocator* allocator,
+MYB_NODISCARD MYB_API myb_status myb_gravity_work_create(int degree, const myb_allocator* allocator,
                                                          myb_gravity_work** work);
 MYB_API void myb_gravity_work_destroy(myb_gravity_work* work); /* accepts NULL */
 
@@ -99,7 +99,7 @@ MYB_API void myb_gravity_work_destroy(myb_gravity_work* work); /* accepts NULL *
  * degrees outside the field or the work, a requested result that is not a finite number: r
  * deep inside the reference sphere, coefficients near the largest doubles). Thread-safe with
  * one work per thread. */
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_eval(const myb_gravity_field* field,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_eval(const myb_gravity_field* field,
                                                         myb_gravity_work* work, const double r[3],
                                                         int n_min, int n_max, double* potential,
                                                         double a[3]);
@@ -110,7 +110,7 @@ MYB_API MYB_NODISCARD myb_status myb_gravity_field_eval(const myb_gravity_field*
  * potential: every component is a series of harmonics two degrees higher (in the source),
  * with no division by cos(phi), so the poles are regular points. Errors: as
  * myb_gravity_field_eval; MYB_E_DOMAIN also for n_max above 2698. */
-MYB_API MYB_NODISCARD myb_status myb_gravity_field_gradient(const myb_gravity_field* field,
+MYB_NODISCARD MYB_API myb_status myb_gravity_field_gradient(const myb_gravity_field* field,
                                                             myb_gravity_work* work,
                                                             const double r[3], int n_min,
                                                             int n_max, double gradient[9]);
@@ -145,7 +145,7 @@ typedef struct myb_tides myb_tides;
 
 /* Errors: MYB_E_NOT_FOUND, MYB_E_FORMAT (diag names the variable; also numbers beyond 1e20 in
  * magnitude), MYB_E_DOMAIN (prefix longer than 20 characters), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_tides_create(const myb_kpool* pool, const char* prefix,
+MYB_NODISCARD MYB_API myb_status myb_tides_create(const myb_kpool* pool, const char* prefix,
                                                   const myb_allocator* allocator,
                                                   myb_tides** tides, myb_diag* diag);
 MYB_API void myb_tides_destroy(myb_tides* tides); /* accepts NULL */
@@ -153,10 +153,10 @@ MYB_API void myb_tides_destroy(myb_tides* tides); /* accepts NULL */
 /* Ocean tide coefficients up to max_degree (2 .. 360), replacing those loaded before.
  * Errors: MYB_E_FORMAT (diag gives the line; also coefficients beyond 1e20 in the units of
  * the file, 1e-11), MYB_E_DOMAIN, MYB_E_NOMEM, MYB_E_IO. */
-MYB_API MYB_NODISCARD myb_status myb_tides_load_ocean(myb_tides* tides, const char* text,
+MYB_NODISCARD MYB_API myb_status myb_tides_load_ocean(myb_tides* tides, const char* text,
                                                       size_t size, int max_degree,
                                                       myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_tides_load_ocean_file(myb_tides* tides, const char* path,
+MYB_NODISCARD MYB_API myb_status myb_tides_load_ocean_file(myb_tides* tides, const char* path,
                                                            int max_degree, myb_diag* diag);
 MYB_API size_t myb_tides_ocean_waves(const myb_tides* tides);
 
@@ -165,10 +165,10 @@ MYB_API size_t myb_tides_ocean_waves(const myb_tides* tides);
  * atmosphere given as coefficients of the geopotential. A wave that is already loaded counts
  * twice: its coefficients add. Errors as myb_tides_load_ocean; on an error the loaded waves
  * stay. */
-MYB_API MYB_NODISCARD myb_status myb_tides_add_waves(myb_tides* tides, const char* text,
+MYB_NODISCARD MYB_API myb_status myb_tides_add_waves(myb_tides* tides, const char* text,
                                                      size_t size, int max_degree,
                                                      myb_diag* diag);
-MYB_API MYB_NODISCARD myb_status myb_tides_add_waves_file(myb_tides* tides, const char* path,
+MYB_NODISCARD MYB_API myb_status myb_tides_add_waves_file(myb_tides* tides, const char* path,
                                                           int max_degree, myb_diag* diag);
 
 /* The secondary waves of the table of admittance that the loaded waves carry: those whose
@@ -213,7 +213,7 @@ typedef struct myb_tides_input {
  * are no finite numbers — raisers very close or very massive, a polar motion beyond the doubles
  * —, AUTO with a field that is neither zero-tide nor tide-free); on an error the field is
  * unchanged. */
-MYB_API MYB_NODISCARD myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
+MYB_NODISCARD MYB_API myb_status myb_tides_apply(const myb_tides* tides, myb_gravity_field* field,
                                                  const myb_tides_input* input);
 
 /* ---- Ellipsoidal harmonics ----------------------------------------------------------------------
@@ -234,35 +234,35 @@ typedef struct myb_ellipsoidal_field myb_ellipsoidal_field;
 
 /* axes: a > b > c > 0 (m); alpha: (degree + 1)^2 coefficients, index n^2 + p (NULL: zeros).
  * Errors: MYB_E_DOMAIN, MYB_E_NOMEM, MYB_E_NOCONV (Lamé functions not resolved). */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoidal_field_create(double gm, const double axes[3],
+MYB_NODISCARD MYB_API myb_status myb_ellipsoidal_field_create(double gm, const double axes[3],
                                                               int degree, const double* alpha,
                                                               const myb_allocator* allocator,
                                                               myb_ellipsoidal_field** field);
 MYB_API void myb_ellipsoidal_field_destroy(myb_ellipsoidal_field* field); /* accepts NULL */
 MYB_API int myb_ellipsoidal_field_degree(const myb_ellipsoidal_field* field);
-MYB_API MYB_NODISCARD myb_status myb_ellipsoidal_field_set_coefficients(
+MYB_NODISCARD MYB_API myb_status myb_ellipsoidal_field_set_coefficients(
     myb_ellipsoidal_field* field, const double* alpha);
 
 /* Potential (m^2 s^-2) and acceleration (m s^-2) at r (m, frame of the ellipsoid's axes);
  * either output may be NULL. Thread-safe. */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoidal_field_eval(const myb_ellipsoidal_field* field,
+MYB_NODISCARD MYB_API myb_status myb_ellipsoidal_field_eval(const myb_ellipsoidal_field* field,
                                                             const double r[3], double* potential,
                                                             double a[3]);
 
 /* The (degree + 1)^2 basis functions at r: the potential of each unit coefficient divided by
  * GM / a (for estimating alpha from data). */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoidal_field_basis(const myb_ellipsoidal_field* field,
+MYB_NODISCARD MYB_API myb_status myb_ellipsoidal_field_basis(const myb_ellipsoidal_field* field,
                                                              const double r[3], double* values);
 
 /* E_np(x) (m^n) for x >= 0, with |x^2 - h^2|, |x^2 - k^2| under the square roots. */
-MYB_API MYB_NODISCARD myb_status myb_ellipsoidal_lame(const myb_ellipsoidal_field* field, int n,
+MYB_NODISCARD MYB_API myb_status myb_ellipsoidal_lame(const myb_ellipsoidal_field* field, int n,
                                                       int p, double x, double* value);
 
 /* ---- Mass concentrations ----------------------------------------------------------------------
  * The field of count point masses gm[k] at positions[3 k .. 3 k + 2] (m, body frame): potential
  * sum gm / |p - r| and acceleration, summed with compensation in array order. potential and a
  * may be NULL. MYB_E_DOMAIN: r at a mascon or non-finite. */
-MYB_API MYB_NODISCARD myb_status myb_mascons_eval(const double* gm, const double* positions,
+MYB_NODISCARD MYB_API myb_status myb_mascons_eval(const double* gm, const double* positions,
                                                   size_t count, const double r[3],
                                                   double* potential, double a[3]);
 
@@ -290,7 +290,7 @@ MYB_API void myb_quadrupole_rotate(const double m[9], const double gq_body[9], d
 /* Accelerations of the centres of mass of A and B from U22 (both in the frame of r and the
  * quadrupoles), ADDED to a_a and a_b (either may be NULL). MYB_E_DOMAIN: r = 0, non-finite
  * input, gm <= 0. */
-MYB_API MYB_NODISCARD myb_status myb_figure_figure(double gm_a, const double gq_a[9], double gm_b,
+MYB_NODISCARD MYB_API myb_status myb_figure_figure(double gm_a, const double gq_a[9], double gm_b,
                                                    const double gq_b[9], const double r[3],
                                                    double a_a[3], double a_b[3]);
 
@@ -303,7 +303,7 @@ typedef struct myb_polyhedron myb_polyhedron;
  * G rho = g_rho (m^3 kg^-1 s^-2 times kg m^-3 = s^-2). Errors: MYB_E_DOMAIN (an index out of
  * range, a degenerate face, a mesh that is not closed: every edge must be shared by exactly two
  * faces in opposite directions), MYB_E_NOMEM. */
-MYB_API MYB_NODISCARD myb_status myb_polyhedron_create(const double* vertices, size_t vertex_count,
+MYB_NODISCARD MYB_API myb_status myb_polyhedron_create(const double* vertices, size_t vertex_count,
                                                        const size_t* faces, size_t face_count,
                                                        double g_rho,
                                                        const myb_allocator* allocator,
@@ -320,7 +320,7 @@ MYB_API double myb_polyhedron_volume(const myb_polyhedron* polyhedron, double ce
  * like r^2 while the potential falls like 1/r: the relative rounding error is about
  * 1e-16 (r / size)^2, so far from the body use its spherical-harmonic expansion.
  * Errors: MYB_E_DOMAIN (non-finite r). */
-MYB_API MYB_NODISCARD myb_status myb_polyhedron_eval(const myb_polyhedron* polyhedron,
+MYB_NODISCARD MYB_API myb_status myb_polyhedron_eval(const myb_polyhedron* polyhedron,
                                                      const double r[3], double* potential,
                                                      double a[3], double* laplacian);
 

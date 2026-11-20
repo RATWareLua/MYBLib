@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "myb"
-version = "1.2.2.0"
+version = "1.2.2.1"
 description = "Motion of bodies in space: N-body, orbits, transfers - the Python face of the C library myb"
 readme = "README.md"
 license = "BSD-3-Clause"

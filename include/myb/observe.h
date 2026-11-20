@@ -63,7 +63,7 @@ typedef struct myb_light_path {
 /* One-way light time between the observer state `observer` at t and a target. Errors:
  * MYB_E_DOMAIN (invalid model), MYB_E_NOCONV (no convergence in 32 iterations), statuses of the
  * state functions. */
-MYB_API MYB_NODISCARD myb_status myb_light_time(const myb_light_model* model,
+MYB_NODISCARD MYB_API myb_status myb_light_time(const myb_light_model* model,
                                                 myb_state_function target, void* context,
                                                 myb_time t, const double observer[6],
                                                 myb_light_direction direction,
@@ -77,7 +77,7 @@ MYB_API double myb_shapiro_delay(double gm, double c, double gamma, const double
 /* Round trip received at t by a station: up-link transmitted at t_transmit, reflected or
  * transponded by the target at t_bounce. *total = t - t_transmit (s); the other outputs may be
  * NULL. Errors as myb_light_time. */
-MYB_API MYB_NODISCARD myb_status myb_round_trip(const myb_light_model* model,
+MYB_NODISCARD MYB_API myb_status myb_round_trip(const myb_light_model* model,
                                                 myb_state_function station,
                                                 void* station_context,
                                                 myb_state_function target,
@@ -132,7 +132,7 @@ typedef struct myb_plasma_profile {
  * relative to the centre of the body, m): adaptive Gauss-Kronrod quadrature in the angle seen
  * from the centre, relative accuracy 1e-13. Errors: MYB_E_DOMAIN (invalid profile, a segment
  * through the centre, non-finite input), MYB_E_NOCONV (quadrature budget exhausted). */
-MYB_API MYB_NODISCARD myb_status myb_plasma_column(const myb_plasma_profile* profile,
+MYB_NODISCARD MYB_API myb_status myb_plasma_column(const myb_plasma_profile* profile,
                                                    const double p1[3], const double p2[3],
                                                    double* column);
 

@@ -9,6 +9,7 @@
 #              [-DREADOBJ=<llvm-readobj>] [-DNM=<llvm-nm>] [-DMINIMUM=<count>]
 #              [-DMAP=<version script>] -P check_exports.cmake
 # PE files are read with llvm-readobj --coff-exports, the others with llvm-nm -D.
+cmake_minimum_required(VERSION 3.28)
 if(NOT LIB OR NOT PREFIX)
   message(FATAL_ERROR "usage: cmake -DLIB=<library> -DPREFIX=<regex> -P check_exports.cmake")
 endif()

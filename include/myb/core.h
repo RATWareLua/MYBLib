@@ -19,8 +19,8 @@
 #define MYB_VERSION_MAJOR 1
 #define MYB_VERSION_MINOR 2
 #define MYB_VERSION_PATCH 2
-#define MYB_VERSION_TWEAK 0
-/* major.minor.patch.tweak, each below 100: 1.2.2.0 = 1020200 */
+#define MYB_VERSION_TWEAK 1
+/* major.minor.patch.tweak, each below 100: 1.2.2.1 = 1020201 */
 #define MYB_VERSION_NUMBER                                                              \
   ((MYB_VERSION_MAJOR * 1000000L) + (MYB_VERSION_MINOR * 10000L) +                      \
    (MYB_VERSION_PATCH * 100L) + MYB_VERSION_TWEAK)
@@ -28,9 +28,11 @@
 /* ---- Symbol visibility ------------------------------------------------------------------
  * MYB_STATIC  — the library is linked statically (set by the CMake target).
  * MYB_BUILDING — defined only while compiling the shared library itself.
- * MYB_API comes before MYB_NODISCARD. In C23 that is a standard attribute, and GCC refuses
- * a standard attribute after a GNU one (`__attribute__((...)) [[nodiscard]] int f(void);`),
- * so with standard attributes in C the visibility is spelt as one as well. */
+ * A declaration is `MYB_NODISCARD MYB_API type name(...)`: in C23 and C++ MYB_NODISCARD is the
+ * standard [[nodiscard]], whose place is the start of a declaration. After a specifier MSVC
+ * 2026 ignores it (C5240, an error under /WX) and GCC in C23 refuses it after a GNU attribute
+ * (`__attribute__((...)) [[nodiscard]] int f(void);`). With standard attributes in C the
+ * visibility is spelt as one as well. */
 #if defined(MYB_STATIC)
 #define MYB_API
 #elif defined(_WIN32)

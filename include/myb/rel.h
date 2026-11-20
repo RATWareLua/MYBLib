@@ -29,7 +29,7 @@ typedef struct myb_ppn {
 } myb_ppn;
 
 /* MYB_OK for c > 0 and finite c, beta, gamma; MYB_E_DOMAIN otherwise. */
-MYB_API MYB_NODISCARD myb_status myb_ppn_validate(const myb_ppn* ppn);
+MYB_NODISCARD MYB_API myb_status myb_ppn_validate(const myb_ppn* ppn);
 
 /* ---- Satellite in the local frame of its central body (IERS 2010 eq. 10.12) ----------------
  * r, v: position (m) and velocity (m/s) of the satellite relative to the central body of
@@ -38,14 +38,14 @@ MYB_API MYB_NODISCARD myb_status myb_ppn_validate(const myb_ppn* ppn);
 
 /* Schwarzschild field of the central body:
  *   gm / (c^2 r^3) { [2 (beta + gamma) gm / r - gamma v.v] r + 2 (1 + gamma) (r.v) v }. */
-MYB_API MYB_NODISCARD myb_status myb_rel_schwarzschild(const myb_ppn* ppn, double gm,
+MYB_NODISCARD MYB_API myb_status myb_rel_schwarzschild(const myb_ppn* ppn, double gm,
                                                        const double r[3], const double v[3],
                                                        double a[3]);
 
 /* Lense-Thirring (frame dragging) by the spin of the central body, j = its angular momentum
  * per unit mass (m^2/s) in the axes of r:
  *   (1 + gamma) gm / (c^2 r^3) [ (3 / r^2) (r x v) (r.j) + v x j ]. */
-MYB_API MYB_NODISCARD myb_status myb_rel_lense_thirring(const myb_ppn* ppn, double gm,
+MYB_NODISCARD MYB_API myb_status myb_rel_lense_thirring(const myb_ppn* ppn, double gm,
                                                         const double j[3], const double r[3],
                                                         const double v[3], double a[3]);
 
@@ -53,7 +53,7 @@ MYB_API MYB_NODISCARD myb_status myb_rel_lense_thirring(const myb_ppn* ppn, doub
  * gravitational parameter gm_external; R, V: position and velocity of the central body
  * relative to the external one:
  *   (1 + 2 gamma) [ V x (-gm_external R / (c^2 R^3)) ] x v. */
-MYB_API MYB_NODISCARD myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm_external,
+MYB_NODISCARD MYB_API myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm_external,
                                                    const double R[3], const double V[3],
                                                    const double v[3], double a[3]);
 
@@ -61,16 +61,16 @@ MYB_API MYB_NODISCARD myb_status myb_rel_de_sitter(const myb_ppn* ppn, double gm
  * velocity of the satellite: dadr[3 i + j] = d a_i / d r_j, dadv likewise (either may be
  * NULL), for the variational equations. The de Sitter term does not depend on r. Errors as
  * the accelerations. */
-MYB_API MYB_NODISCARD myb_status myb_rel_schwarzschild_jacobian(const myb_ppn* ppn, double gm,
+MYB_NODISCARD MYB_API myb_status myb_rel_schwarzschild_jacobian(const myb_ppn* ppn, double gm,
                                                                 const double r[3],
                                                                 const double v[3],
                                                                 double dadr[9], double dadv[9]);
-MYB_API MYB_NODISCARD myb_status myb_rel_lense_thirring_jacobian(const myb_ppn* ppn, double gm,
+MYB_NODISCARD MYB_API myb_status myb_rel_lense_thirring_jacobian(const myb_ppn* ppn, double gm,
                                                                  const double j[3],
                                                                  const double r[3],
                                                                  const double v[3],
                                                                  double dadr[9], double dadv[9]);
-MYB_API MYB_NODISCARD myb_status myb_rel_de_sitter_jacobian(const myb_ppn* ppn,
+MYB_NODISCARD MYB_API myb_status myb_rel_de_sitter_jacobian(const myb_ppn* ppn,
                                                             double gm_external,
                                                             const double R[3], const double V[3],
                                                             double dadv[9]);
@@ -257,7 +257,7 @@ typedef struct myb_pn_binary {
  * when the osculating Newtonian orbit is unbound or has e above about 0.83 and MYB_PN_TAILX is
  * not set, or, with MYB_PN_TAILX, when it is rectilinear), MYB_E_NOCONV (the quadrature budget
  * of MYB_PN_TAILX exhausted; not expected). */
-MYB_API MYB_NODISCARD myb_status myb_pn_binary_evaluate(const myb_pn_binary* binary,
+MYB_NODISCARD MYB_API myb_status myb_pn_binary_evaluate(const myb_pn_binary* binary,
                                                         const double x[3], const double v[3],
                                                         const double chi1[3],
                                                         const double chi2[3], double a[3],
@@ -265,7 +265,7 @@ MYB_API MYB_NODISCARD myb_status myb_pn_binary_evaluate(const myb_pn_binary* bin
 
 /* The same without spins and without the 3PN and 4PN terms (which need r0):
  * myb_pn_binary_evaluate with r0 unset. Errors: those of myb_pn_binary_evaluate. */
-MYB_API MYB_NODISCARD myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c,
+MYB_NODISCARD MYB_API myb_status myb_pn_binary_acceleration(double gm1, double gm2, double c,
                                                             unsigned orders, const double x[3],
                                                             const double v[3], double a[3]);
 

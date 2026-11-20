@@ -13,6 +13,7 @@
 #
 # Three steps: the lower layer must agree with the headers (myb-generate --check), the test
 # suite of the package runs, and the example of the README (examples/LowOrbit.hs).
+cmake_minimum_required(VERSION 3.28)
 foreach(_var CABAL GHC CLANG SOURCE BINARY LIBRARIES)
   if(NOT DEFINED ${_var})
     message(FATAL_ERROR "test.cmake: ${_var} is not given")

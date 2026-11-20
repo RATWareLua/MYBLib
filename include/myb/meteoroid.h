@@ -96,19 +96,19 @@ typedef struct myb_meteoroid_impact {
 } myb_meteoroid_impact;
 
 /* lambda: the impacts per second. Errors: MYB_E_DOMAIN (invalid options). */
-MYB_API MYB_NODISCARD myb_status myb_meteoroid_rate(const myb_meteoroid_options* options,
+MYB_NODISCARD MYB_API myb_status myb_meteoroid_rate(const myb_meteoroid_options* options,
                                                     double* rate);
 
 /* The mass (kg) below which a fraction u in [0, 1) of the impacts fall: the inverse of the
  * distribution of the masses. Errors: MYB_E_DOMAIN (invalid options, u outside [0, 1)),
  * MYB_E_NOCONV. */
-MYB_API MYB_NODISCARD myb_status myb_meteoroid_mass(const myb_meteoroid_options* options, double u,
+MYB_NODISCARD MYB_API myb_status myb_meteoroid_mass(const myb_meteoroid_options* options, double u,
                                                     double* mass);
 
 /* The next impact after the model time t. Errors: MYB_E_DOMAIN (invalid options, t not
  * finite, a speed or a direction drawn that is not valid), MYB_E_NOCONV, the statuses of the
  * functions of the caller. */
-MYB_API MYB_NODISCARD myb_status myb_meteoroid_next(const myb_meteoroid_options* options,
+MYB_NODISCARD MYB_API myb_status myb_meteoroid_next(const myb_meteoroid_options* options,
                                                     myb_rng* rng, double t,
                                                     myb_meteoroid_impact* impact);
 
@@ -120,7 +120,7 @@ MYB_API MYB_NODISCARD myb_status myb_meteoroid_next(const myb_meteoroid_options*
  * not the same impacts as one call over both intervals. Errors: MYB_E_DOMAIN (t_end behind the
  * time reached or not finite, invalid options), MYB_E_NOCONV (far more impacts than lambda T
  * allows: 1000 + lambda T + 20 sqrt(lambda T)), those of myb_meteoroid_next and of the orbit. */
-MYB_API MYB_NODISCARD myb_status myb_meteoroid_propagate(myb_orbit* orbit,
+MYB_NODISCARD MYB_API myb_status myb_meteoroid_propagate(myb_orbit* orbit,
                                                          const myb_meteoroid_options* options,
                                                          myb_rng* rng, double t_end,
                                                          myb_meteoroid_impact* impacts,

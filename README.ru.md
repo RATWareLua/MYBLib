@@ -1,6 +1,6 @@
 # MYBLib
 
-[![CI 1.2.2.0](https://github.com/RATWareLua/MYBLib/actions/workflows/ci.yml/badge.svg?branch=1.2.2.0)](https://github.com/RATWareLua/MYBLib/actions/workflows/ci.yml?query=branch%3A1.2.2.0)
+[![CI 1.2.2.1](https://github.com/RATWareLua/MYBLib/actions/workflows/ci.yml/badge.svg?branch=1.2.2.1)](https://github.com/RATWareLua/MYBLib/actions/workflows/ci.yml?query=branch%3A1.2.2.1)
 [![C23](https://img.shields.io/badge/C-C23%2C_%D0%B7%D0%B0%D0%B3%D0%BE%D0%BB%D0%BE%D0%B2%D0%BA%D0%B8_C17-A8B9CC?logo=c&logoColor=white)](include/myb)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)](bindings/cpp)
 [![Rust 1.82+](https://img.shields.io/badge/Rust-1.82%2B-B7410E?logo=rust&logoColor=white)](bindings/rust)
@@ -18,7 +18,7 @@
 Windows и Linux. Ядро не знает ни одного конкретного тела: Солнце, планеты и аппараты
 задаются данными.
 
-Состояние: **версия 1.2.2.0, фазы 0–22 (вся дорожная карта), привязки к C++, Python, Rust, Go и Haskell** — числовой фундамент, корректно округлённые функции, чтение данных,
+Состояние: **версия 1.2.2.1, фазы 0–22 (вся дорожная карта), привязки к C++, Python, Rust, Go и Haskell** — числовой фундамент, корректно округлённые функции, чтение данных,
 шкалы времени, модель тела, задача двух тел, задача Ламберта, интеграторы (DOP853,
 RKN12(10), IAS15, Гаусс–Джексон, симплектические композиции), задача N тел (прямое
 суммирование, граф взаимодействий, потоки, WH/WHFast, SABA, SBAB), эфемериды SPK и системы

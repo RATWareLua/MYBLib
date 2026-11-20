@@ -3,6 +3,7 @@
 # CTest itself reports such a process as an exception even when its output matches.
 #
 # Usage: cmake -DPROGRAM=<exe> -DEXPECT=<regex> -P expect_death.cmake
+cmake_minimum_required(VERSION 3.28)
 if(NOT PROGRAM OR NOT EXPECT)
   message(FATAL_ERROR "usage: cmake -DPROGRAM=<exe> -DEXPECT=<regex> -P expect_death.cmake")
 endif()

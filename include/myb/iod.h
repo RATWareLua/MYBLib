@@ -24,7 +24,7 @@ extern "C" {
  * r2 and r3, which measures how far the three are from one orbit. Close positions (a few
  * degrees apart) lose digits in the cross products: use myb_iod_herrick_gibbs there. Errors:
  * MYB_E_DOMAIN (a zero or non-finite vector, mu <= 0, positions on one line). */
-MYB_API MYB_NODISCARD myb_status myb_iod_gibbs(double mu, const double r1[3], const double r2[3],
+MYB_NODISCARD MYB_API myb_status myb_iod_gibbs(double mu, const double r1[3], const double r2[3],
                                                const double r3[3], double v2[3],
                                                double* out_of_plane);
 
@@ -33,7 +33,7 @@ MYB_API MYB_NODISCARD myb_status myb_iod_gibbs(double mu, const double r1[3], co
  * error falls as the fourth power of the spacing: three parts in a million for a tenth of a
  * radian of the orbit between neighbours, seven in 10^8 for a twenty-fifth. Errors:
  * MYB_E_DOMAIN (times not increasing, a zero or non-finite vector, mu <= 0). */
-MYB_API MYB_NODISCARD myb_status myb_iod_herrick_gibbs(double mu, const double r1[3], double t1,
+MYB_NODISCARD MYB_API myb_status myb_iod_herrick_gibbs(double mu, const double r1[3], double t1,
                                                        const double r2[3], double t2,
                                                        const double r3[3], double t3,
                                                        double v2[3]);
@@ -63,7 +63,7 @@ typedef struct myb_iod_solution {
  * came out, at most MYB_IOD_MAX_SOLUTIONS, in the order of the roots they started from. Errors:
  * MYB_E_DOMAIN (times not increasing, a sight that is not a unit vector to 1e-9, coplanar
  * sights, mu <= 0, non-finite input), MYB_E_NOCONV (no candidate settled). */
-MYB_API MYB_NODISCARD myb_status myb_iod_gauss(double mu, const double t[3],
+MYB_NODISCARD MYB_API myb_status myb_iod_gauss(double mu, const double t[3],
                                                const double observer[3][3],
                                                const double sight[3][3],
                                                myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS],
@@ -78,7 +78,7 @@ MYB_API MYB_NODISCARD myb_status myb_iod_gauss(double mu, const double t[3],
  * derivatives of three sights are those of a parabola: the candidates are near over short
  * arcs only, the refinement brings them to the orbit. Errors as myb_iod_gauss, and
  * MYB_E_DOMAIN for sights that do not turn (L, L', L'' in a plane). */
-MYB_API MYB_NODISCARD myb_status myb_iod_laplace(double mu, const double t[3],
+MYB_NODISCARD MYB_API myb_status myb_iod_laplace(double mu, const double t[3],
                                                  const double observer[3][3],
                                                  const double sight[3][3],
                                                  myb_iod_solution solutions[MYB_IOD_MAX_SOLUTIONS],
@@ -94,7 +94,7 @@ MYB_API MYB_NODISCARD myb_status myb_iod_laplace(double mu, const double t[3],
  * myb_iod_gauss. Less than a turn between the first and the second time and between the
  * second and the third; not for nearly parabolic orbits. Errors: MYB_E_DOMAIN (as
  * myb_iod_gauss; distances not positive), MYB_E_NOCONV (no orbit from these guesses). */
-MYB_API MYB_NODISCARD myb_status myb_iod_double_r(double mu, const double t[3],
+MYB_NODISCARD MYB_API myb_status myb_iod_double_r(double mu, const double t[3],
                                                   const double observer[3][3],
                                                   const double sight[3][3],
                                                   const double distance[2],
@@ -112,7 +112,7 @@ MYB_API MYB_NODISCARD myb_status myb_iod_double_r(double mu, const double t[3],
  * myb_iod_gauss. For long arcs and many revolutions where the methods above cannot go.
  * Errors: MYB_E_DOMAIN (as myb_iod_gauss; ranges not positive, revolutions or branch out of
  * range), MYB_E_NOCONV (no orbit from these guesses). */
-MYB_API MYB_NODISCARD myb_status myb_iod_gooding(double mu, const double t[3],
+MYB_NODISCARD MYB_API myb_status myb_iod_gooding(double mu, const double t[3],
                                                  const double observer[3][3],
                                                  const double sight[3][3], const double range[2],
                                                  int revolutions, int branch,

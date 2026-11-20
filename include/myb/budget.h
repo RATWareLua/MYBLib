@@ -44,7 +44,7 @@ typedef struct myb_budget_options {
 
 /* entries: myb_force_model_count(model) values, in the order of the terms. The model is left as
  * configured. Errors: MYB_E_DOMAIN (t1 == t0, invalid options), the statuses of the propagation. */
-MYB_API MYB_NODISCARD myb_status myb_budget(myb_force_model* model, double t0, const double y0[6],
+MYB_NODISCARD MYB_API myb_status myb_budget(myb_force_model* model, double t0, const double y0[6],
                                             double t1, const myb_budget_options* options,
                                             myb_budget_entry* entries);
 
@@ -63,7 +63,7 @@ MYB_API MYB_NODISCARD myb_status myb_budget(myb_force_model* model, double t0, c
  * (all the ready-made ones do); a term differentiated by differences costs 13 values per value
  * of the model, so that a few such terms are cheaper to switch one by one. Errors: as
  * myb_budget. */
-MYB_API MYB_NODISCARD myb_status myb_budget_linear(myb_force_model* model, double t0,
+MYB_NODISCARD MYB_API myb_status myb_budget_linear(myb_force_model* model, double t0,
                                                    const double y0[6], double t1,
                                                    const myb_budget_options* options,
                                                    myb_budget_entry* entries);

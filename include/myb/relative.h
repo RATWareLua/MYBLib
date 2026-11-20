@@ -24,10 +24,10 @@ extern "C" {
 
 /* The relative state of the deputy from the inertial states of both, exactly, and back.
  * Errors: MYB_E_DOMAIN (a chief at the centre or on a line through it, non-finite input). */
-MYB_API MYB_NODISCARD myb_status myb_relative_from_inertial(const myb_pv* chief,
+MYB_NODISCARD MYB_API myb_status myb_relative_from_inertial(const myb_pv* chief,
                                                             const myb_pv* deputy,
                                                             double relative[6]);
-MYB_API MYB_NODISCARD myb_status myb_relative_to_inertial(const myb_pv* chief,
+MYB_NODISCARD MYB_API myb_status myb_relative_to_inertial(const myb_pv* chief,
                                                           const double relative[6],
                                                           myb_pv* deputy);
 
@@ -35,7 +35,7 @@ MYB_API MYB_NODISCARD myb_status myb_relative_to_inertial(const myb_pv* chief,
  * two-body orbit of the centre mu (any conic); phi is 6 x 6, row-major. The error of the map
  * is of the second order of the separation: (separation / distance to the centre) of the
  * separation, growing with dt. Errors: those of myb_kepler_stm; MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_relative_stm(double mu, const myb_pv* chief, double dt,
+MYB_NODISCARD MYB_API myb_status myb_relative_stm(double mu, const myb_pv* chief, double dt,
                                                   double phi[36]);
 
 /* The same for a chief on a circle with the mean motion n (rad/s), in closed form
@@ -48,7 +48,7 @@ MYB_API void myb_cw_stm(double n, double dt, double phi[36]);
  * to the chief). dv0 and dv1 in the turning frame of the chief at the time of each (m/s).
  * Errors: as myb_relative_stm; MYB_E_DOMAIN (a dt for which the position does not depend on
  * the velocity at t0 in every direction, as after a whole revolution). */
-MYB_API MYB_NODISCARD myb_status myb_relative_rendezvous(double mu, const myb_pv* chief,
+MYB_NODISCARD MYB_API myb_status myb_relative_rendezvous(double mu, const myb_pv* chief,
                                                          double dt, const double relative[6],
                                                          const double target[3],
                                                          const double target_velocity[3],
@@ -62,7 +62,7 @@ MYB_API MYB_NODISCARD myb_status myb_relative_rendezvous(double mu, const myb_pv
  *   dix = i_d - i,             diy = (raan_d - raan) sin i,
  * u the mean argument of latitude. Both orbits must be ellipses; the elements are singular
  * for a chief in the equator of the frame. Errors: MYB_E_DOMAIN. */
-MYB_API MYB_NODISCARD myb_status myb_roe_from_states(double mu, const myb_pv* chief,
+MYB_NODISCARD MYB_API myb_status myb_roe_from_states(double mu, const myb_pv* chief,
                                                      const myb_pv* deputy, double roe[6]);
 
 /* The relative position (R, T, N) that the elements give at the mean argument of latitude u
