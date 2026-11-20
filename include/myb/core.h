@@ -19,8 +19,8 @@
 #define MYB_VERSION_MAJOR 1
 #define MYB_VERSION_MINOR 2
 #define MYB_VERSION_PATCH 2
-#define MYB_VERSION_TWEAK 1
-/* major.minor.patch.tweak, each below 100: 1.2.2.1 = 1020201 */
+#define MYB_VERSION_TWEAK 2
+/* major.minor.patch.tweak, each below 100: 1.2.2.2 = 1020202 */
 #define MYB_VERSION_NUMBER                                                              \
   ((MYB_VERSION_MAJOR * 1000000L) + (MYB_VERSION_MINOR * 10000L) +                      \
    (MYB_VERSION_PATCH * 100L) + MYB_VERSION_TWEAK)

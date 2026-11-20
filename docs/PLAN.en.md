@@ -260,7 +260,14 @@ linker it is without the flags of cgo, took GNU ld (the default of Clang 20 for 
 lld a GNU linker script; the linker of the build goes to `-extldflags` too. `test_contact`
 turned its slopes with the `sin` and `cos` of libm, whose last bits differ in the mingw-w64
 runtime of CI (14.0 against 13.0 here), and a block held a part in a thousand below the angle
-of friction followed them; the test uses the library's correctly rounded functions now.
+of friction followed them; the test uses the library's correctly rounded functions now. The
+second run, at 1.2.2.1, was green on Windows, on Linux and on macOS under AddressSanitizer and
+found two defects on macOS, fixed in 1.2.2.2: the linker of Apple takes a `.dylib` before the
+`.a` beside it, and rustc has no `-Bstatic` for it, so the tests of `myb-sys` got the shared
+library with no path to load it from (`build.rs` copies the archives into `OUT_DIR`, searched
+first); and the light-time solver of `src/estim/light.c` had a frame of 8544 bytes at -O0 on
+ARM64, over the budget of 8 KB (7480 on x86-64) — split in four, the largest frame of the file
+is 2504 bytes, the same bits.
 
 Phase 21 is the last phase of the roadmap: it came after phase 22 (the user's decision of
 2026-11-12), so that the bindings, the passports, fuzzing and the benchmarks were written over
@@ -373,7 +380,7 @@ those are the known limits of the release, each written in the passport of its m
   `linux-ubsan` on ubuntu-24.04-arm), macOS on Apple silicon (macos-15, the three presets),
   the MSVC consumers in the Windows jobs, Go and GHC for the tests of the new bindings, jobs for
   fuzzing and coverage. It first ran at the tag 1.2.2.0; what it found is fixed in 1.2.2.1
-  (the first paragraph of "Phase 21 decisions").
+  and 1.2.2.2 (the first paragraphs of "Phase 21 decisions").
 - **Python and Rust under AddressSanitizer** (Linux, `linux-asan`): `test_python_binding_asan`
   loads the instrumented shared library into an interpreter built without the sanitizer — the
   runtime of Clang goes first through `LD_PRELOAD`, and leaks are not looked for (the

@@ -18,9 +18,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=MYB_LINK");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_vendor = env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default();
     let directories: Vec<PathBuf> = env::var_os("MYB_LIB_DIR")
         .map(|value| env::split_paths(&value).collect())
         .unwrap_or_default();
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     // dependents first: a static library is searched for what was asked for before it
     let mut libraries = Vec::new();
     for (feature, name) in [
@@ -36,6 +38,7 @@ fn main() {
     }
     libraries.push("myb");
 
+    let mut search = directories.clone();
     if directories.is_empty() {
         // an installed library: pkg-config knows where it is and what it needs
         let asked = Command::new("pkg-config").args(["--libs", "--static", "myb"]).output();
@@ -43,14 +46,11 @@ fn main() {
             if output.status.success() {
                 for word in String::from_utf8_lossy(&output.stdout).split_whitespace() {
                     if let Some(directory) = word.strip_prefix("-L") {
-                        println!("cargo:rustc-link-search=native={directory}");
+                        search.push(PathBuf::from(directory));
                     }
                 }
             }
         }
-    }
-    for directory in &directories {
-        println!("cargo:rustc-link-search=native={}", directory.display());
     }
     let has_static = directories.iter().any(|d| d.join("libmyb.a").exists());
     let kind = match env::var("MYB_LINK").as_deref() {
@@ -63,11 +63,32 @@ fn main() {
     if kind == "static" && target_env == "msvc" {
         panic!("libmyb.a is built for the GNU ABI: link the shared library (MYB_LINK=dylib)");
     }
+    // The linker of Apple takes lib<name>.dylib before lib<name>.a in the same directory, and
+    // rustc has no -Bstatic for it: where a build tree holds both, a binary linked with -l
+    // (this crate's own tests; the crates that depend on it take the archives bundled into its
+    // rlib) would get the shared library, with no path to load it from. The archives are copied
+    // into OUT_DIR, where no dylib is, and that directory is searched first.
+    if kind == "static" && target_vendor == "apple" {
+        for name in &libraries {
+            let archive = search
+                .iter()
+                .map(|d| d.join(format!("lib{name}.a")))
+                .find(|path| path.exists());
+            if let Some(path) = archive {
+                std::fs::copy(&path, out_dir.join(format!("lib{name}.a")))
+                    .expect("the archive could not be copied into OUT_DIR");
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+    }
+    for directory in &search {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
     // The MSVC linker looks for <name>.lib, not for the lib<name>.dll.a of the GNU toolchain:
     // the import library is copied under that name into OUT_DIR. (Naming the file itself with
     // rustc-link-arg would reach only this crate's own binaries — such arguments do not pass to
     // the crates that depend on it, and their tests would miss every symbol.)
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     let mut copied = false;
     for name in &libraries {
         let import = directories

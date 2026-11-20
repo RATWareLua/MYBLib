@@ -5,8 +5,8 @@
 pub const MYB_VERSION_MAJOR: u32 = 1;
 pub const MYB_VERSION_MINOR: u32 = 2;
 pub const MYB_VERSION_PATCH: u32 = 2;
-pub const MYB_VERSION_TWEAK: u32 = 1;
-pub const MYB_VERSION_NUMBER: u32 = 1020201;
+pub const MYB_VERSION_TWEAK: u32 = 2;
+pub const MYB_VERSION_NUMBER: u32 = 1020202;
 pub const MYB_OK: myb_status = 0;
 pub const MYB_E_DOMAIN: myb_status = 1;
 pub const MYB_E_RANGE: myb_status = 2;

@@ -6,6 +6,21 @@ Versions are major.minor.patch.tweak (`MYB_VERSION_*` in `include/myb/core.h`). 
 version the API only grows. Details, checks and measured accuracies of every phase:
 [`docs/PLAN.en.md`](docs/PLAN.en.md), §12.
 
+## 1.2.2.2 — 2026-11-20
+
+What the second run of CI, at the tag 1.2.2.1, found on macOS (16 of its 18 jobs were green,
+macOS under AddressSanitizer among them). The interface and the results are those of 1.2.2.0.
+
+### Fixed
+- The Rust binding linked from a build tree on macOS: the linker of Apple takes
+  `lib<name>.dylib` before `lib<name>.a` in the same directory and rustc has no `-Bstatic`
+  for it, so the tests of `myb-sys` got the shared library with no path to load it from.
+  `build.rs` copies the archives into `OUT_DIR`, searched first.
+- The stack frame of the light-time solver (`src/estim/light.c`) at -O0 on ARM64: 8544 bytes,
+  over the budget of 8 KB (7480 on x86-64). It is split in four (the motion about the mass,
+  the rate of the down leg, the up leg); the largest frame of the file is 2504 bytes at -O0,
+  and the arithmetic is the same to the bit.
+
 ## 1.2.2.1 — 2026-11-20
 
 What the first run of CI, at the tag 1.2.2.0, found. The interface and the results are those

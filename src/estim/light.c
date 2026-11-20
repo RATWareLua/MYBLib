@@ -105,64 +105,39 @@ static myb_status solve_leg(const leg* g, const myb_dual* fixed_back, double c, 
   return MYB_E_NOCONV;
 }
 
-static myb_status solve(const myb_light_measure* m, double t, const double y[6],
-                        light_path* path) {
-  MYB_CHECK(m != NULL && m->station != NULL && m->station->env != NULL && y != NULL);
-  if (!(m->c > 0.0) || !isfinite(m->c) || !(m->gm >= 0.0) || !isfinite(m->gm)) {
-    return MYB_E_DOMAIN;
-  }
-  myb_status status = myb_station_state(m->station, t, path->station);
-  if (status == MYB_OK) {
-    status = myb_env_orientation(m->station->env, t, m->station->body, &path->axes);
-  }
-  if (status != MYB_OK) {
-    return status;
-  }
-  myb_dual x[3];
-  myb_dual v[3];
-  myb_dual a[3];
-  myb_dual j[3];
-  myb_dual_state(y, y + 3, NULL, x, v);
+/* The motion of the object about the point mass: a = -gm x / r^3 and its rate along the motion
+ * j = -gm (v / r^3 - 3 x (x.v) / r^5); both zero without a mass. */
+static myb_status motion(double gm, const myb_dual x[3], const myb_dual v[3], myb_dual a[3],
+                         myb_dual j[3]) {
   for (int i = 0; i < 3; ++i) {
     a[i] = myb_dual_constant(0.0);
     j[i] = myb_dual_constant(0.0);
   }
-  if (m->gm > 0.0) {
-    /* a = -gm x / r^3, j = -gm (v / r^3 - 3 x (x.v) / r^5) */
+  if (gm > 0.0) {
     const myb_dual r2 = myb_dual_dot(x, x);
     const myb_dual r = myb_dual_sqrt(r2);
     if (!(r.v > 0.0) || !isfinite(r.v)) {
       return MYB_E_DOMAIN;
     }
-    const myb_dual k3 = myb_dual_div(myb_dual_constant(-m->gm), myb_dual_mul(r2, r));
+    const myb_dual k3 = myb_dual_div(myb_dual_constant(-gm), myb_dual_mul(r2, r));
     const myb_dual along = myb_dual_scale(myb_dual_div(myb_dual_dot(x, v), r2), 3.0);
     for (int i = 0; i < 3; ++i) {
       a[i] = myb_dual_mul(x[i], k3);
       j[i] = myb_dual_mul(myb_dual_sub(v[i], myb_dual_mul(x[i], along)), k3);
     }
   }
-  const double from[3] = {y[0] - path->station[0], y[1] - path->station[1],
-                          y[2] - path->station[2]};
-  const double first = sqrt(from[0] * from[0] + from[1] * from[1] + from[2] * from[2]) / m->c;
-  if (!(first > 0.0) || !isfinite(first)) {
-    return MYB_E_DOMAIN;
-  }
-  /* the leg to the station */
-  const leg down = {.x = x, .v = v, .a = a, .j = j, .other = path->station,
-                    .lead = myb_dual_constant(0.0)};
-  myb_dual p[3];
-  myb_dual e[3];
-  path->down = myb_dual_constant(first);
-  status = solve_leg(&down, NULL, m->c, &path->down, p, e);
-  if (status != MYB_OK) {
-    return status;
-  }
-  /* the velocity of the object then, and the direction station -> object */
-  myb_dual ve[3];
+  return MYB_OK;
+}
+
+/* After the down leg: the velocity v_e of the object when the light left it, the direction
+ * station -> object (path->d) and the rate of the down light time in the time of reception,
+ * d tau / dt = u.(v_e - v_s) / (c + u.v_e). */
+static void down_rate(const leg* g, const myb_dual p[3], const myb_dual e[3], double c,
+                      light_path* path, myb_dual ve[3]) {
   const myb_dual half = myb_dual_scale(myb_dual_mul(path->down, path->down), 0.5);
   for (int i = 0; i < 3; ++i) {
-    ve[i] = myb_dual_add(myb_dual_sub(v[i], myb_dual_mul(a[i], path->down)),
-                         myb_dual_mul(j[i], half));
+    ve[i] = myb_dual_add(myb_dual_sub(g->v[i], myb_dual_mul(g->a[i], path->down)),
+                         myb_dual_mul(g->j[i], half));
     path->d[i] = myb_dual_sub(p[i], e[i]);
   }
   const myb_dual range = myb_dual_norm(path->d);
@@ -172,24 +147,24 @@ static myb_status solve(const myb_light_measure* m, double t, const double y[6],
     u[i] = myb_dual_div(path->d[i], range);
     closing[i] = myb_dual_sub(ve[i], myb_dual_constant(path->station[3 + i]));
   }
-  /* d tau / dt = u.(v_e - v_s) / (c + u.v_e) */
   path->down_rate = myb_dual_div(myb_dual_dot(u, closing),
-                                 myb_dual_add(myb_dual_constant(m->c), myb_dual_dot(u, ve)));
-  path->up = myb_dual_constant(0.0);
-  path->up_rate = myb_dual_constant(0.0);
-  if (!m->two_way) {
-    return MYB_OK;
-  }
-  /* the leg from the station: the station two light times before t, then where it was when
-   * the light that met the object left it */
+                                 myb_dual_add(myb_dual_constant(c), myb_dual_dot(u, ve)));
+}
+
+/* The leg from the station (two-way): the station two light times before t, then where it was
+ * when the light that met the object left it; the rate of the up light time. `down` is the
+ * down leg (the object's motion), p and e the room for the ends. */
+static myb_status solve_up(const myb_light_measure* m, double t, const leg* down,
+                           const myb_dual ve[3], light_path* path, myb_dual p[3],
+                           myb_dual e[3]) {
   const double shift = 2.0 * path->down.v;
   double earlier[6];
-  status = myb_station_state(m->station, t - shift, earlier);
+  myb_status status = myb_station_state(m->station, t - shift, earlier);
   if (status != MYB_OK) {
     return status;
   }
-  const leg up = {.x = x, .v = v, .a = a, .j = j, .other = earlier, .lead = path->down,
-                  .shift = shift, .up = 1};
+  const leg up = {.x = down->x, .v = down->v, .a = down->a, .j = down->j, .other = earlier,
+                  .lead = path->down, .shift = shift, .up = 1};
   path->up = path->down;
   status = solve_leg(&up, &path->down, m->c, &path->up, p, e);
   if (status != MYB_OK) {
@@ -220,6 +195,54 @@ static myb_status solve(const myb_light_measure* m, double t, const double y[6],
                    myb_dual_dot(w, about)),
       myb_dual_sub(myb_dual_constant(m->c), station_part));
   return MYB_OK;
+}
+
+static myb_status solve(const myb_light_measure* m, double t, const double y[6],
+                        light_path* path) {
+  MYB_CHECK(m != NULL && m->station != NULL && m->station->env != NULL && y != NULL);
+  if (!(m->c > 0.0) || !isfinite(m->c) || !(m->gm >= 0.0) || !isfinite(m->gm)) {
+    return MYB_E_DOMAIN;
+  }
+  myb_status status = myb_station_state(m->station, t, path->station);
+  if (status == MYB_OK) {
+    status = myb_env_orientation(m->station->env, t, m->station->body, &path->axes);
+  }
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_dual x[3];
+  myb_dual v[3];
+  myb_dual a[3];
+  myb_dual j[3];
+  myb_dual_state(y, y + 3, NULL, x, v);
+  status = motion(m->gm, x, v, a, j);
+  if (status != MYB_OK) {
+    return status;
+  }
+  const double from[3] = {y[0] - path->station[0], y[1] - path->station[1],
+                          y[2] - path->station[2]};
+  const double first = sqrt(from[0] * from[0] + from[1] * from[1] + from[2] * from[2]) / m->c;
+  if (!(first > 0.0) || !isfinite(first)) {
+    return MYB_E_DOMAIN;
+  }
+  /* the leg to the station */
+  const leg down = {.x = x, .v = v, .a = a, .j = j, .other = path->station,
+                    .lead = myb_dual_constant(0.0)};
+  myb_dual p[3];
+  myb_dual e[3];
+  path->down = myb_dual_constant(first);
+  status = solve_leg(&down, NULL, m->c, &path->down, p, e);
+  if (status != MYB_OK) {
+    return status;
+  }
+  myb_dual ve[3];
+  down_rate(&down, p, e, m->c, path, ve);
+  path->up = myb_dual_constant(0.0);
+  path->up_rate = myb_dual_constant(0.0);
+  if (!m->two_way) {
+    return MYB_OK;
+  }
+  return solve_up(m, t, &down, ve, path, p, e);
 }
 
 static void put(myb_dual value, double* out, double* partials) {
