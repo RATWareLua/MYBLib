@@ -71,7 +71,7 @@ jobs:
           cache: false
 
       - name: GHC and cabal (the test of bindings/haskell)
-        if: ${{ matrix.preset == 'linux-release' && matrix.arch == 'x86-64' }}
+        if: ${{ matrix.preset == 'linux-release' }}
         uses: haskell-actions/setup@v2
         with:
           ghc-version: "9.10.3"
@@ -130,7 +130,7 @@ jobs:
               grep -q test_python_binding registered.txt
               grep -q test_gcc_consumer registered.txt
             fi
-            if [ "${{ matrix.preset }}" = linux-release ] && [ "${{ matrix.arch }}" = x86-64 ]; then
+            if [ "${{ matrix.preset }}" = linux-release ]; then
               grep -q test_haskell_binding registered.txt
             fi
           fi
@@ -257,6 +257,13 @@ jobs:
           go-version: "1.26"
           cache: false
 
+      - name: GHC and cabal (the test of bindings/haskell)
+        if: ${{ matrix.preset != 'macos-asan' }}
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.3"
+          cabal-version: "latest"
+
       - name: Python with cffi (a virtual environment) and Rust (the tests of bindings/)
         shell: bash
         run: |
@@ -292,6 +299,7 @@ jobs:
           grep -q test_cpp_binding registered.txt
           grep -q test_rust_binding registered.txt
           grep -q test_go_binding registered.txt
+          grep -q test_haskell_binding registered.txt
           if grep -q 'MYB_BUILD_SHARED:BOOL=ON' build/${{ matrix.preset }}/CMakeCache.txt; then
             grep -q test_python_binding registered.txt
           fi
